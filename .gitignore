@@ -15,3 +15,4 @@ tools/compare_vcf
 tools/test_a76
 tools/test_notes
 tools/trace_fundamental
+tools/compare_dsp

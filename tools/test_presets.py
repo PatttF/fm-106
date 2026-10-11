@@ -96,7 +96,33 @@ def calc_rms(samples):
         return 0.0
     return math.sqrt(sum(x * x for x in samples) / len(samples))
 
-def test_preset(preset_idx, name, pat_bytes, midi_port="Felucca", audio_device=":0"):
+def find_midi_port():
+    ports = mido.get_output_names()
+    for p in ports:
+        if "FM-106" in p or "Felucca" in p:
+            return p
+    return ports[0] if ports else None
+
+def find_audio_device():
+    cmd = ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    in_audio = False
+    for line in p.stderr.splitlines():
+        if "audio devices" in line.lower():
+            in_audio = True
+            continue
+        if in_audio:
+            import re
+            m = re.search(r'\[(\d+)\]\s*FM-106', line)
+            if m:
+                return f":{m.group(1)}"
+    return ":1"
+
+def test_preset(preset_idx, name, pat_bytes, midi_port=None, audio_device=None):
+    if midi_port is None:
+        midi_port = find_midi_port()
+    if audio_device is None:
+        audio_device = find_audio_device()
     mid_file = f"/tmp/p_{preset_idx:02d}_test.mid"
     ref_wav = f"/tmp/p_{preset_idx:02d}_ref.wav"
     hw_wav = f"/tmp/p_{preset_idx:02d}_hw.wav"
