@@ -1,0 +1,1721 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     FM-106 Synthesizer Firmware Web Installer for M-VAVE FM-1
+     Based on Felucca / SLOOP platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM-106 // Synthesizer Firmware Installer</title>
+<style>
+:root {
+  --bg-dark: #0c0d11;
+  --panel-base: #171920;
+  --panel-elevated: #20242e;
+  --panel-recessed: #101217;
+  --panel-border: #2c303c;
+  --panel-border-bright: #3d4354;
+  --accent-cyan: #00a4e4;
+  --accent-cyan-hover: #1cc0ff;
+  --accent-cyan-glow: rgba(0, 164, 228, 0.45);
+  --accent-red: #e62c1e;
+  --accent-red-hover: #ff3c2e;
+  --accent-red-glow: rgba(230, 44, 30, 0.55);
+  --accent-amber: #f89e1b;
+  --accent-amber-glow: rgba(248, 158, 27, 0.5);
+  --accent-green: #2ecc71;
+  --accent-green-glow: rgba(46, 204, 113, 0.55);
+  --text-white: #f5f7fa;
+  --text-cream: #e2e6ee;
+  --text-muted: #8b93a5;
+  --text-dim: #545b6b;
+  --fader-stripe: #e62c1e;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", Monaco, "Cascadia Code", "Courier New", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text-cream);
+  font-family: var(--font-ui);
+  line-height: 1.5;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 0 40px;
+}
+
+/* Master Top Faceplate */
+header.synth-header {
+  width: 100%;
+  background: linear-gradient(180deg, #262a34 0%, #171920 100%);
+  border-bottom: 2px solid #000;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+  padding: 14px 24px 10px;
+  position: relative;
+}
+
+.header-top {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-badge {
+  background: var(--accent-red);
+  color: #fff;
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  box-shadow: 0 2px 8px var(--accent-red-glow), inset 0 1px 0 rgba(255,255,255,0.3);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+
+.model-title {
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: var(--accent-cyan);
+  text-shadow: 0 2px 8px var(--accent-cyan-glow);
+  line-height: 1;
+}
+
+.model-subtitle {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+
+.header-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.synth-pill-btn {
+  background: var(--panel-elevated);
+  color: var(--text-cream);
+  border: 1px solid var(--panel-border-bright);
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.synth-pill-btn:hover {
+  background: #2b313e;
+  border-color: var(--accent-cyan);
+  color: #fff;
+}
+
+.synth-pill-btn.active {
+  background: var(--accent-cyan);
+  color: #0b111a;
+  border-color: var(--accent-cyan);
+  box-shadow: 0 2px 10px var(--accent-cyan-glow);
+}
+
+/* Iconic Cyan Horizontal Racing Stripe */
+.cyan-racing-stripe {
+  width: 100%;
+  height: 4px;
+  background: var(--accent-cyan);
+  box-shadow: 0 0 12px var(--accent-cyan-glow);
+  margin-top: 12px;
+}
+
+/* Main Chassis Container */
+main.synth-chassis {
+  max-width: 960px;
+  width: calc(100% - 32px);
+  margin: 24px auto 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Modular Synth Sections */
+.synth-module {
+  background: var(--panel-base);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 18px 22px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255,255,255,0.04);
+  position: relative;
+}
+
+.module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--panel-border);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.module-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: var(--accent-cyan);
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.module-title::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--accent-red);
+  border-radius: 1px;
+}
+
+.module-tag {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+/* Hardware Status / LED Panel */
+.status-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+@media (max-width: 680px) {
+  .status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.device-status-box {
+  background: var(--panel-recessed);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.led-jewel {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #301010;
+  border: 2px solid #20242e;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.8);
+  transition: all 0.25s ease;
+}
+
+.led-jewel.connected {
+  background: var(--accent-green);
+  box-shadow: 0 0 10px var(--accent-green-glow), inset 0 1px 2px rgba(255,255,255,0.6);
+}
+
+.led-jewel.flashing {
+  background: var(--accent-amber);
+  box-shadow: 0 0 12px var(--accent-amber-glow), inset 0 1px 2px rgba(255,255,255,0.6);
+  animation: pulse-led 0.8s infinite alternate;
+}
+
+.led-jewel.error {
+  background: var(--accent-red);
+  box-shadow: 0 0 12px var(--accent-red-glow), inset 0 1px 2px rgba(255,255,255,0.6);
+}
+
+@keyframes pulse-led {
+  0% { opacity: 0.5; filter: brightness(0.8); }
+  100% { opacity: 1; filter: brightness(1.3); }
+}
+
+.status-texts {
+  display: flex;
+  flex-direction: column;
+}
+
+.status-main {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-white);
+}
+
+.status-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+/* 6 Voice Activity LEDs */
+.voices-rack {
+  display: flex;
+  gap: 8px;
+  background: var(--panel-recessed);
+  padding: 10px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--panel-border);
+}
+
+.voice-unit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.voice-led {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #201010;
+  border: 1px solid #333a48;
+  transition: all 0.15s ease;
+}
+
+.voice-led.active {
+  background: var(--accent-red);
+  box-shadow: 0 0 8px var(--accent-red-glow);
+}
+
+.voice-label {
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+/* Package Info Card */
+.package-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  background: var(--panel-recessed);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 14px 18px;
+}
+
+.package-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.package-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text-white);
+  letter-spacing: 1.5px;
+}
+
+.package-meta {
+  font-size: 12px;
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.package-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* 7-Segment LED Progress Display */
+.programmer-rack {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 20px;
+  align-items: center;
+  background: var(--panel-recessed);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 18px 20px;
+}
+
+@media (max-width: 600px) {
+  .programmer-rack {
+    grid-template-columns: 1fr;
+  }
+}
+
+.segment-housing {
+  background: #080303;
+  border: 3px solid #1f232d;
+  border-radius: 6px;
+  padding: 6px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.9), 0 2px 6px rgba(0,0,0,0.5);
+}
+
+.segment-display {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 38px;
+  font-weight: 900;
+  color: #ff2a1a;
+  letter-spacing: 4px;
+  text-shadow: 0 0 14px var(--accent-red-glow), 0 0 3px #ff2a1a;
+  line-height: 1.1;
+  min-width: 76px;
+  text-align: center;
+}
+
+.segment-label {
+  font-size: 9px;
+  font-weight: 800;
+  color: #801818;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* Synth Fader Progress Bar */
+.fader-rack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fader-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.fader-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.fader-pct {
+  font-size: 12px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+}
+
+.fader-groove {
+  width: 100%;
+  height: 14px;
+  background: #080a0e;
+  border: 1px solid #282d39;
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.8);
+}
+
+.fader-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-red) 100%);
+  box-shadow: 0 0 10px var(--accent-cyan-glow);
+  transition: width 0.15s ease-out;
+}
+
+/* Master Action Button */
+.action-box {
+  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+button.primary-install-btn {
+  width: 100%;
+  min-height: 54px;
+  background: linear-gradient(180deg, #f03527 0%, #c41e12 100%);
+  color: #fff;
+  border: 1px solid #ff574a;
+  border-radius: 5px;
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 4px 16px var(--accent-red-glow), inset 0 1px 0 rgba(255,255,255,0.4);
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
+button.primary-install-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ff4c3f 0%, #db2619 100%);
+  box-shadow: 0 6px 22px var(--accent-red-glow), inset 0 1px 0 rgba(255,255,255,0.5);
+  transform: translateY(-1px);
+}
+
+button.primary-install-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 2px 8px var(--accent-red-glow);
+}
+
+button.primary-install-btn:disabled {
+  background: #252832;
+  border-color: #353a48;
+  color: #656c7d;
+  box-shadow: none;
+  cursor: not-allowed;
+  text-shadow: none;
+}
+
+/* Warnings and Instructions */
+.instructions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-cream);
+  line-height: 1.6;
+}
+
+.instruction-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.instruction-pip {
+  color: var(--accent-cyan);
+  font-weight: 900;
+  line-height: 1.3;
+}
+
+.alert-card {
+  background: rgba(230, 44, 30, 0.08);
+  border: 1px solid rgba(230, 44, 30, 0.3);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #ff9990;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Recovery Details Accordion */
+details.recovery-drawer {
+  background: var(--panel-recessed);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 12px 16px;
+  margin-top: 10px;
+}
+
+details.recovery-drawer summary {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  cursor: pointer;
+  outline: none;
+}
+
+details.recovery-drawer summary:hover {
+  color: var(--accent-cyan);
+}
+
+.recovery-body {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-cream);
+  border-top: 1px solid var(--panel-border);
+  padding-top: 14px;
+}
+
+input[type="file"] {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* CRT System Terminal / Log Window */
+.terminal-window {
+  background: #090a0d;
+  border: 1px solid #20242e;
+  border-radius: 4px;
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #38ef7d;
+  max-height: 160px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  line-height: 1.6;
+  box-shadow: inset 0 2px 8px rgba(0,0,0,0.8);
+}
+
+.terminal-window:empty::before {
+  content: "Awaiting USB MIDI initialization...";
+  color: var(--text-dim);
+}
+
+/* Custom File Selector Fallback */
+.file-drop-box {
+  border: 2px dashed var(--panel-border-bright);
+  border-radius: 4px;
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: var(--panel-recessed);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.file-drop-box:hover {
+  border-color: var(--accent-cyan);
+  color: var(--text-white);
+}
+
+/* Footer */
+footer.synth-footer {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.8;
+}
+
+footer.synth-footer a {
+  color: var(--accent-cyan);
+  text-decoration: none;
+}
+
+footer.synth-footer a:hover {
+  text-decoration: underline;
+}
+
+.hidden {
+  display: none !important;
+}
+</style>
+</head>
+<body>
+
+<header class="synth-header">
+  <div class="header-top">
+    <div class="brand-block">
+      <div class="brand-badge">FM</div>
+      <div>
+        <div class="model-title">FM-106</div>
+        <div class="model-subtitle">6-Voice Polyphonic Synthesizer // Web Firmware Programmer</div>
+      </div>
+    </div>
+    <div class="header-nav">
+      <a href="index.html" class="synth-pill-btn active" data-t="installerTab">Programmer</a>
+      <a href="Librarian.html" class="synth-pill-btn" data-t="librarianTab">Web Librarian</a>
+      <a href="https://github.com/PatttF/fm-106/releases/tag/release" target="_blank" rel="noopener" class="synth-pill-btn">Release</a>
+      <button class="synth-pill-btn" id="lang-btn">日本語</button>
+    </div>
+  </div>
+  <div class="cyan-racing-stripe"></div>
+</header>
+
+<main class="synth-chassis">
+
+  <!-- MODULE 01: HARDWARE INTERFACE -->
+  <section class="synth-module">
+    <div class="module-header">
+      <div class="module-title" data-t="mod1Title">// 01: USB HARDWARE INTERFACE</div>
+      <div class="module-tag">M-VAVE FM-1 CLASS-COMPLIANT MIDI</div>
+    </div>
+    
+    <div class="status-grid">
+      <div class="device-status-box">
+        <div class="status-indicator">
+          <div class="led-jewel" id="main-led"></div>
+          <div class="status-texts">
+            <div class="status-main" id="status-title" data-t="statusIdle">FM-1 Standby</div>
+            <div class="status-sub" id="status-desc" data-t="statusDesc">Connect FM-1 directly via USB (Chrome / Edge)</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="voices-rack" title="6 Voice Polyphony Activity">
+        <div class="voice-unit"><div class="voice-led" id="vled-1"></div><span class="voice-label">V1</span></div>
+        <div class="voice-unit"><div class="voice-led" id="vled-2"></div><span class="voice-label">V2</span></div>
+        <div class="voice-unit"><div class="voice-led" id="vled-3"></div><span class="voice-label">V3</span></div>
+        <div class="voice-unit"><div class="voice-led" id="vled-4"></div><span class="voice-label">V4</span></div>
+        <div class="voice-unit"><div class="voice-led" id="vled-5"></div><span class="voice-label">V5</span></div>
+        <div class="voice-unit"><div class="voice-led" id="vled-6"></div><span class="voice-label">V6</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- MODULE 02: FIRMWARE TARGET -->
+  <section class="synth-module">
+    <div class="module-header">
+      <div class="module-title" data-t="mod2Title">// 02: TARGET FIRMWARE PACKAGE</div>
+      <div class="module-tag">DUAL-CORE DSP SYNTHESIS</div>
+    </div>
+
+    <div class="package-row">
+      <div class="package-details">
+        <div class="package-name">FM-106 Synthesizer Firmware</div>
+        <div class="package-meta" id="pkg-meta-text">Target: FM-1_906 &bull; Size: 610,112 B &bull; Dual-Core DSP</div>
+      </div>
+      <div class="package-actions">
+        <a href="https://github.com/PatttF/fm-106/releases/download/release/fm106.fwsc" class="synth-pill-btn" download data-t="downloadPkg">Download .fwsc</a>
+        <a href="https://github.com/PatttF/fm-106/releases/tag/release" target="_blank" rel="noopener" class="synth-pill-btn" data-t="viewRelease">Release Notes</a>
+      </div>
+    </div>
+
+    <!-- Drag & drop fallback / custom file selection -->
+    <div id="custom-file-box" style="margin-top: 12px;">
+      <label class="file-drop-box" id="drop-zone" style="display: block;">
+        <span data-t="dropPrompt">Or drop custom FM-1 package (.fwsc) here to install</span>
+        <input type="file" id="fw-file" accept=".fwsc" style="display: none;">
+      </label>
+    </div>
+  </section>
+
+  <!-- MODULE 03: PROGRAMMER & 7-SEGMENT DISPLAY -->
+  <section class="synth-module">
+    <div class="module-header">
+      <div class="module-title" data-t="mod3Title">// 03: FLASH PROGRAMMER</div>
+      <div class="module-tag">SYSEX BLOCK STREAMING</div>
+    </div>
+
+    <div class="programmer-rack">
+      <div class="segment-housing">
+        <div class="segment-display" id="seg-display">--</div>
+        <div class="segment-label" data-t="stageLabel">STAGE</div>
+      </div>
+
+      <div class="fader-rack">
+        <div class="fader-header">
+          <div class="fader-title" id="action-state-text" data-t="readyToWrite">READY TO FLASH</div>
+          <div class="fader-pct" id="fader-pct-text">0%</div>
+        </div>
+        <div class="fader-groove">
+          <div class="fader-fill" id="fader-fill-bar"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="action-box">
+      <button class="primary-install-btn" id="go" disabled>
+        <span data-t="installBtn">INSTALL FM-106 FIRMWARE</span>
+      </button>
+
+      <div class="alert-card">
+        <span>&#9888;</span>
+        <span data-t="warnNotice">Do not unplug the USB cable or power-cycle the device while writing. This is an unofficial firmware and installed at your own risk.</span>
+      </div>
+
+      <div class="instructions-list">
+        <div class="instruction-item">
+          <span class="instruction-pip">&#9658;</span>
+          <span data-t="step1Guide">Connect the FM-1 with a direct USB data cable to your computer. Close any other software using MIDI.</span>
+        </div>
+        <div class="instruction-item">
+          <span class="instruction-pip">&#9658;</span>
+          <span data-t="step2Guide">Click 'Install FM-106 Firmware'. Allow Web MIDI permissions in your browser when prompted.</span>
+        </div>
+        <div class="instruction-item">
+          <span class="instruction-pip">&#9658;</span>
+          <span data-t="step3Guide">The firmware validates the image, enters update loader mode, flashes high-speed blocks, and restarts.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Official Stock Recovery -->
+    <details class="recovery-drawer" style="margin-top: 20px;">
+      <summary data-t="stockHeader">Return to Official V15 Stock Firmware</summary>
+      <div class="recovery-body">
+        <p data-t="stockHelp">Select your unmodified official FM-1 V15 package (FM-1.fwsc) from M-VAVE to revert back to stock firmware. The package is checked locally in your browser.</p>
+        <p><input id="stock-file" type="file" accept=".fwsc"></p>
+        <p><label><input id="stock-recovery" type="checkbox"> <span data-t="stockResume">Resume interrupted update (backup already saved)</span></label></p>
+        <p><button class="synth-pill-btn" id="stock-go" disabled data-t="stockButton">Back up and Restore Stock V15</button></p>
+      </div>
+    </details>
+  </section>
+
+  <!-- MODULE 04: SYSTEM LOG -->
+  <section class="synth-module">
+    <div class="module-header">
+      <div class="module-title" data-t="mod4Title">// 04: SYSTEM DIAGNOSTIC LOG</div>
+      <div class="module-tag">SYSEX MONITOR</div>
+    </div>
+    <pre class="terminal-window" id="log"></pre>
+  </section>
+
+  <footer class="synth-footer">
+    <p>FM-106 Polyphonic Synthesizer Firmware &bull; 6-Voice Dual-Core DSP &bull; GPL-3.0 License</p>
+    <p>Source repository: <a href="https://github.com/PatttF/fm-106" target="_blank" rel="noopener">github.com/PatttF/fm-106</a> &bull; Release: <a href="https://github.com/PatttF/fm-106/releases/tag/release" target="_blank" rel="noopener">v1.0 (Release)</a></p>
+    <p>Built upon Felucca / SLOOP platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89.</p>
+  </footer>
+
+</main>
+
+<script type="module">
+// SPDX-License-Identifier: GPL-3.0-only
+// FM-106 Synthesizer Firmware WebMIDI Programmer for M-VAVE FM-1
+
+const BLOCKS = 20, BLK = 0x30, KEEP = 0x2F;
+const STOCK_V15_SHA256 = "db1642b2b6fa5c2cccb11ffd13878068bb28601678d3644049f99dc40e7edb8a";
+const STOCK_APP_SIZE = 0x8DFBC;
+const STOCK_V15_SIZE = 699956;
+
+const T = new Uint16Array(256);
+for (let i = 0; i < 256; i++) {
+  let c = i << 8;
+  for (let k = 0; k < 8; k++) c = c & 0x8000 ? (c << 1) ^ 0x1021 : c << 1;
+  T[i] = c & 0xFFFF;
+}
+
+function crc16(d, crc = 0) {
+  for (let i = 0; i < d.length; i++) crc = ((crc << 8) & 0xFFFF) ^ T[((crc >> 8) ^ d[i]) & 0xFF];
+  return crc;
+}
+
+function enc(buf, off, size, key = 0xFFFF) {
+  for (let i = 0; i < size; i++) {
+    buf[off + i] ^= key & 0xFF;
+    key = ((key * 2) ^ (key & 0x8000 ? 0x1021 : 0)) & 0xFFFF;
+  }
+}
+
+function sfc(buf, off, size, base, key) {
+  for (let i = 0; i < size; i += 32) enc(buf, off + i, Math.min(size - i, 32), key ^ ((off + i - base) >> 2));
+}
+
+function chipkeyDecode(d) {
+  let sum = 0;
+  for (let i = 0; i < 16; i++) sum += d[i];
+  sum &= 0xFF;
+  sum = sum >= 0xE0 ? 0xAA : sum <= 0x10 ? 0x55 : sum;
+  let k = 0;
+  for (let i = 0; i < 16; i++) if ((d[16 + i] ^ d[15 - i]) < sum) k |= 1 << i;
+  return k;
+}
+
+const align32 = (v) => (v + 31) & ~31;
+const u16 = (b, o) => b[o] | (b[o + 1] << 8);
+const u32 = (b, o) => (b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)) >>> 0;
+function w16(b, o, v) { b[o] = v & 0xFF; b[o + 1] = (v >> 8) & 0xFF; }
+function w32(b, o, v) { w16(b, o, v & 0xFFFF); w16(b, o + 2, (v >>> 16) & 0xFFFF); }
+
+class Entry {
+  constructor(raw, off) {
+    this.hdrOff = off;
+    this.hcrc = u16(raw, off);
+    this.dcrc = u16(raw, off + 2);
+    this.offset = u32(raw, off + 4);
+    this.size = u32(raw, off + 8);
+    this.flags = raw[off + 12];
+    this.resvd = raw[off + 13];
+    this.index = u16(raw, off + 14);
+    this.rawName = raw.slice(off + 16, off + 32);
+    const z = this.rawName.indexOf(0);
+    this.name = String.fromCharCode(...this.rawName.slice(0, z < 0 ? 16 : z));
+    if (crc16(raw.subarray(off + 2, off + 32)) !== this.hcrc) throw new Error(`JLFS header CRC mismatch @${off.toString(16)}`);
+  }
+  packInto(buf) {
+    const o = this.hdrOff;
+    w16(buf, o + 2, this.dcrc); w32(buf, o + 4, this.offset); w32(buf, o + 8, this.size);
+    buf[o + 12] = this.flags; buf[o + 13] = this.resvd; w16(buf, o + 14, this.index);
+    buf.set(this.rawName, o + 16);
+    this.hcrc = crc16(buf.subarray(o + 2, o + 32));
+    w16(buf, o, this.hcrc);
+  }
+}
+
+class Package {
+  constructor(bytes) {
+    this.raw = new Uint8Array(bytes);
+    this.parseUfw();
+    this.flash = this.raw.slice(this.flashFileOff, this.flashFileOff + this.flashSize);
+    this.parseFlash();
+  }
+
+  get product() { return productOf(this.raw); }
+
+  headerBytes() {
+    const h = new Uint8Array(BLOCKS * KEEP);
+    for (let i = 0; i < BLOCKS; i++) h.set(this.raw.subarray(i * BLK, i * BLK + KEEP), i * KEEP);
+    return h;
+  }
+
+  hdrFileOff(i) { return Math.floor(i / KEEP) * BLK + (i % KEEP); }
+
+  parseUfw() {
+    const h = this.headerBytes();
+    enc(h, 0, 0x40);
+    const hcrc = u16(h, 0), lcrc = u16(h, 2), nent = u16(h, 8);
+    if (crc16(h.subarray(2, 0x40)) !== hcrc) throw new Error("not an FM-1 .fwsc (UFW header CRC mismatch)");
+    this.skew = BLOCKS * BLK - h.length;
+    this.ufw = h;
+    this.nent = nent;
+    const hsize = 0x40 + nent * 0x50;
+    if (crc16(h.subarray(0x40, hsize)) !== lcrc) throw new Error("UFW entry list CRC mismatch");
+    this.entries = [];
+    for (let off = 0x40; off < hsize; off += 0x50) {
+      const e = h.slice(off, off + 0x50);
+      enc(e, 0, 0x50);
+      const z = e.subarray(0x40, 0x50).indexOf(0);
+      this.entries.push({ off, type: u16(e, 0), dcrc: u16(e, 4), dataOff: u32(e, 8), size: u32(e, 12),
+        name: String.fromCharCode(...e.subarray(0x40, z < 0 ? 0x50 : 0x40 + z)), plain: e });
+    }
+    const fl = this.entries.find((e) => e.type === 0);
+    if (!fl) throw new Error("no flash.bin in the package");
+    this.flashEntry = fl;
+    this.flashFileOff = fl.dataOff + this.skew;
+    this.flashSize = fl.size;
+    if (crc16(this.raw.subarray(this.flashFileOff, this.flashFileOff + fl.size)) !== fl.dcrc) throw new Error("flash.bin CRC mismatch");
+  }
+
+  parseFlash() {
+    const dec = this.flash.slice();
+    const h = dec.slice(0, 32);
+    enc(h, 0, 32);
+    if (crc16(h.subarray(2, 32)) !== u16(h, 0)) throw new Error("flash header CRC mismatch");
+    this.chipKey = null; this.appBase = null;
+    for (let off = 32; ; off += 32) {
+      enc(dec, off, 32);
+      const e = new Entry(dec, off);
+      if (e.name === "isd_config.ini") {
+        const blob = dec.subarray(e.offset, e.offset + 34);
+        if (crc16(blob.subarray(0, 32)) === u16(blob, 32)) this.chipKey = chipkeyDecode(blob.subarray(0, 32));
+      }
+      if (e.flags === 0x81 && e.name === "app_dir_head" && this.appBase === null) this.appBase = e.offset;
+      if (e.index) break;
+    }
+    if (this.chipKey === null || this.appBase === null) throw new Error("chip key or app_dir_head not found");
+    const b = this.appBase, k = this.chipKey, end = align32(b + 32);
+    sfc(dec, b, end - b, b, k);
+    const head = new Entry(dec, b);
+    const blkEnd = b + head.size;
+    if (blkEnd > end) sfc(dec, end, blkEnd - end, b, k);
+    this.sfcEnd = Math.max(end, blkEnd);
+    this.cfgLen = 0;
+    const probe = this.flash.slice(b, align32(blkEnd) + 32);
+    sfc(probe, 0, probe.length, 0, k);
+    try {
+      const cfg = new Entry(probe, blkEnd - b);
+      if (cfg.name === "cfg" && blkEnd + cfg.size <= this.flash.length) this.cfgLen = cfg.size;
+    } catch (_) { }
+    if (this.cfgLen) {
+      const region = this.flash.slice(b, blkEnd + this.cfgLen);
+      sfc(region, 0, region.length, 0, k);
+      dec.set(region, b);
+      this.sfcEnd = blkEnd + this.cfgLen;
+    }
+    this.head = head;
+    this.app = null;
+    for (let off = b + 32; ; off += 32) {
+      const e = new Entry(dec, off);
+      if (e.flags === 0x82 && e.name === "app.bin") this.app = e;
+      if (e.index) break;
+    }
+    if (!this.app) throw new Error("app.bin not found in app area");
+    this.appOff = b + this.app.offset;
+    this.dec = dec;
+  }
+}
+
+function productOf(fwsc) {
+  if (fwsc.length < BLOCKS * BLK) throw new Error("not an FM-1 package (too short)");
+  let s = "";
+  for (let i = 0; i < BLOCKS; i++) {
+    const m = fwsc[i * BLK + KEEP];
+    if (m !== 0x7D) s += String.fromCharCode((m - i - 1) & 0xFF);
+  }
+  return s;
+}
+
+function logicalImage(fwsc) {
+  const out = new Uint8Array(fwsc.length - BLOCKS);
+  for (let i = 0; i < BLOCKS; i++) out.set(fwsc.subarray(i * BLK, i * BLK + KEEP), i * KEEP);
+  out.set(fwsc.subarray(BLOCKS * BLK), BLOCKS * KEEP);
+  return out;
+}
+
+async function sha256hex(bytes) {
+  const d = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(d)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function validateStockPackage(bytes) {
+  if (bytes.length !== STOCK_V15_SIZE || await sha256hex(bytes) !== STOCK_V15_SHA256)
+    throw new Error("Select the unmodified official FM-1 V15 file (FM-1.fwsc).");
+  const pkg = new Package(bytes);
+  if (pkg.product !== "FM-1_015" || pkg.flashFileOff !== 1044 || pkg.flashSize !== 602112 ||
+      pkg.appBase !== 16384 || pkg.appOff !== 16672 || pkg.app.size !== STOCK_APP_SIZE ||
+      !pkg.entries.some((e) => e.type === 100 && e.name === "ota.bin" && e.size === 19969))
+    throw new Error("The official firmware has an unsupported FM-1 layout.");
+  return { product: pkg.product, image: logicalImage(bytes), sha256: STOCK_V15_SHA256 };
+}
+
+// ------------------------------------------------------------ MIDI SysEx ---
+const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
+const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
+const MAXDATA = 512;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const IS_OTA = (id) => /^ota-/i.test(id.model);
+
+function fail(code, msg, detail = "") { const e = new Error(msg); e.code = code; e.detail = detail; return e; }
+
+function pack7(data) {
+  const out = []; let acc = 0, nb = 0;
+  for (const b of data) {
+    acc |= b << nb; nb += 8;
+    while (nb >= 7) { out.push(acc & 0x7F); acc >>>= 7; nb -= 7; }
+  }
+  if (nb) out.push(acc & 0x7F);
+  return out;
+}
+
+function unpack7(s) {
+  const out = []; let acc = 0, nb = 0;
+  for (const b of s) {
+    acc |= (b & 0x7F) << nb; nb += 7;
+    while (nb >= 8) { out.push(acc & 0xFF); acc >>>= 8; nb -= 8; }
+  }
+  return out;
+}
+
+function response(addr, data, fl = 0) {
+  const len = data.length;
+  const body = [0x00, 0x59, 0x30, (len + 8) & 0xFF, ((len + 8) >> 8) & 0xFF, 0, fl,
+    addr & 0xFF, (addr >>> 8) & 0xFF, (addr >>> 16) & 0xFF, (addr >>> 24) & 0xFF,
+    len & 0xFF, (len >> 8) & 0xFF, 0, ...data];
+  let s = 0;
+  for (let i = 6; i < body.length; i++) s += body[i];
+  body.push(~s & 0xFF);
+  return [0xF0, ...pack7(body), 0xF7];
+}
+
+function parseRequest(pkt) {
+  if (pkt[0] !== 0xF0 || pkt[pkt.length - 1] !== 0xF7) return null;
+  const u = unpack7(pkt.slice(1, -1));
+  if (u.length !== 15 || u[0] !== 0 || u[1] !== 0x59 || u[2] !== 0x30) return null;
+  let s = 0;
+  for (let i = 6; i < 14; i++) s += u[i];
+  if ((~s & 0xFF) !== u[14]) return null;
+  return { fl: u[6], addr: (u[7] | (u[8] << 8) | (u[9] << 16) | (u[10] << 24)) >>> 0, len: u[11] | (u[12] << 8) | (u[13] << 16) };
+}
+
+function parseIdentity(pkt) {
+  if (!pkt || pkt.length < 2) return null;
+  const d = unpack7(pkt.slice(1, -1));
+  if (d.length < 8 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
+  const txt = String.fromCharCode(...d.slice(6, d.length - 1)).replace(/\0+$/, "");
+  const m = /^([^_]+)_(\d+)$/.exec(txt);
+  if (m) {
+    return { text: txt, model: m[1], version: parseInt(m[2], 10) };
+  }
+  const modelPart = txt.split("_")[0];
+  return { text: txt, model: modelPart || txt, version: 0 };
+}
+
+const IS_OTA = (id) => Boolean(id && (/^ota[-_]/i.test(id.model) || /^ota[-_]/i.test(id.text)));
+
+class Link {
+  constructor(input, output) {
+    this.input = input; this.output = output; this.q = []; this.waiter = null;
+    input.onmidimessage = (ev) => {
+      if (ev.data[0] !== 0xF0) return;
+      this.q.push(Array.from(ev.data));
+      if (this.waiter) { const w = this.waiter; this.waiter = null; w(); }
+    };
+  }
+  get lost() { return this.input.state === "disconnected" || this.output.state === "disconnected"; }
+  send(bytes) {
+    try { this.output.send(bytes); return true; } catch (_) { return false; }
+  }
+  drain() { this.q.length = 0; }
+  async read(ms) {
+    if (!this.q.length) {
+      let tm;
+      await Promise.race([new Promise((r) => { this.waiter = r; }), new Promise((r) => { tm = setTimeout(r, ms); })]);
+      clearTimeout(tm);
+      this.waiter = null;
+    }
+    return this.q.shift() || null;
+  }
+  async close() {
+    this.input.onmidimessage = null;
+    try { await this.input.close(); } catch (_) {}
+    try { await this.output.close(); } catch (_) {}
+  }
+}
+
+async function handshake(link, tries = 4) {
+  link.drain();
+  for (let t = 0; t < tries; t++) {
+    if (!link.send(HS_QUERY)) return null;
+    const end = Date.now() + 1000;
+    while (Date.now() < end) {
+      const p = await link.read(end - Date.now());
+      if (!p) break;
+      const id = parseIdentity(p);
+      if (id) return id;
+    }
+    await sleep(150);
+  }
+  return null;
+}
+
+const PORT_RE = /fm-1|felucca|ota|composite|sinco|usb[\s_-]?midi|m-vave|m-upgrade|upgrade|update|jieli|audio/i;
+
+function findMatchingOutput(input, outputs, inputsToProbe) {
+  const outs = [...outputs.values()].filter(o => o.state !== "disconnected");
+  if (!outs.length) return null;
+
+  // 1. Exact match
+  let out = outs.find(o => o.name === input.name);
+  if (out) return out;
+
+  // 2. Normalized match (strip IN/OUT, numbers, etc.)
+  const clean = (s) => (s || "")
+    .replace(/^(?:midi\s*in\d*|midi\s*out\d*|\d+[\s_-]+)/i, "")
+    .replace(/[\s\-_]*(?:in(?:put)?|out(?:put)?|\d+|rx|tx|\(\d+\)|\[\d+\])[\s\-_]*$/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+  const inClean = clean(input.name);
+  if (inClean) {
+    out = outs.find(o => clean(o.name) === inClean);
+    if (out) return out;
+
+    // 3. Substring match
+    out = outs.find(o => {
+      const oc = clean(o.name);
+      return oc && (oc.includes(inClean) || inClean.includes(oc));
+    });
+    if (out) return out;
+  }
+
+  // 4. Candidate match based on regex
+  const candidates = outs.filter(o => PORT_RE.test(o.name || ""));
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    const idx = inputsToProbe ? inputsToProbe.indexOf(input) : -1;
+    if (idx >= 0 && idx < candidates.length) return candidates[idx];
+    return candidates[0];
+  }
+
+  // 5. Fallback: single output available
+  if (outs.length === 1) return outs[0];
+
+  return null;
+}
+
+class Updater {
+  constructor(access, log) {
+    this.access = access;
+    this.log = log || (() => {});
+  }
+
+  async find(filter) {
+    const allInputs = [...this.access.inputs.values()].filter(i => i.state !== "disconnected");
+    let inputsToProbe = allInputs.filter(i => PORT_RE.test(i.name || ""));
+    if (!inputsToProbe.length) {
+      inputsToProbe = allInputs;
+    }
+
+    for (const input of inputsToProbe) {
+      const output = findMatchingOutput(input, this.access.outputs, inputsToProbe);
+      if (!output) continue;
+      try {
+        await input.open();
+        await output.open();
+      } catch (_) {
+        continue;
+      }
+      const link = new Link(input, output);
+      await sleep(200);
+      const id = await handshake(link, 3);
+      if (id && (!filter || filter(id))) {
+        return { link, id, name: input.name };
+      }
+      await link.close();
+    }
+    return null;
+  }
+
+  async waitFor(filter, ms, onTick) {
+    const end = Date.now() + ms;
+    let attempt = 0;
+    while (Date.now() < end) {
+      attempt++;
+      try {
+        if (navigator.requestMIDIAccess) {
+          this.access = await navigator.requestMIDIAccess({ sysex: true });
+        }
+      } catch (_) {}
+
+      const remainingSec = Math.max(0, Math.round((end - Date.now()) / 1000));
+      if (onTick) onTick(remainingSec, attempt);
+
+      const dev = await this.find(filter);
+      if (dev) return dev;
+      await sleep(1000);
+    }
+    return null;
+  }
+
+  async serve(link, image, finishAddr, idleMs, onProgress) {
+    let served = 0, last = Date.now();
+    for (;;) {
+      const pkt = await link.read(1000);
+      if (!pkt) {
+        if (link.lost) return { served, finished: false, lost: true };
+        if (Date.now() - last > idleMs) return { served, finished: false };
+        continue;
+      }
+      const r = parseRequest(pkt);
+      if (!r) continue;
+      last = Date.now();
+      if (r.addr === 0xE0000000 || r.addr === 0xF0000000) {
+        link.send(response(r.addr, [...new TextEncoder().encode("success"), 0]));
+        if (r.addr === finishAddr) return { served, finished: true };
+        continue;
+      }
+      if (r.len > MAXDATA || r.addr + r.len > image.length) throw fail("badreq", `bad request ${r.addr.toString(16)}+${r.len}`);
+      await sleep(10);
+      if (!link.send(response(r.addr, Array.from(image.subarray(r.addr, r.addr + r.len)), r.fl))) {
+        return { served, finished: false, lost: true };
+      }
+      served++;
+      if (onProgress) onProgress(served, r.addr);
+    }
+  }
+
+  async install(image, product, onStep) {
+    const step = onStep || (() => {});
+    const dev = await this.find((id) => !IS_OTA(id));
+    if (!dev) throw fail("notfound", "FM-1 not found (check USB cable and close other MIDI applications)");
+    const [model] = product.split("_");
+    if (dev.id.model !== model && !dev.id.model.toLowerCase().includes("fm-1")) {
+      await dev.link.close();
+      throw fail("model", `Device is ${dev.id.text}, package is for ${product}`);
+    }
+    step("start", dev.id.text);
+    dev.link.send(UPGRADE);
+    await sleep(2000);
+    const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n) => step("verify", n));
+    await dev.link.close();
+    if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `Device ${s1.lost ? "disconnected" : "stopped"} after ${s1.served} reads: nothing written`);
+    step("loader");
+    await sleep(3000);
+    const ota = await this.waitFor((id) => IS_OTA(id), 60000, (remainingSec) => {
+      setProgress(28, `${t("loader")} (${remainingSec}s)`);
+    });
+    if (!ota) throw fail("noloader", t("noloader"));
+    const s2 = await this.write(ota, image, step);
+    if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `Loader ${s2.lost ? "disconnected" : "stopped"} after ${s2.served} requests. Replug and install again to resume.`);
+    step("reboot");
+    await sleep(3000);
+    const back = await this.waitFor((id) => !IS_OTA(id), 45000);
+    if (!back) throw fail("noreturn", "Device did not return after restart: power-cycle it");
+    await back.link.close();
+    if (back.id.text !== product) throw fail("mismatch", `Installed, but device reports ${back.id.text}`, back.id.text);
+    step("done", back.id.text);
+    return back.id.text;
+  }
+
+  async write(ota, image, step) {
+    ota.link.send(UPGRADE);
+    await sleep(2000);
+    const s2 = await this.serve(ota.link, image, 0xF0000000, 180000, (n) => step("write", n));
+    await ota.link.close();
+    return s2;
+  }
+
+  async resume(image, onStep, product = null) {
+    const ota = await this.find((id) => IS_OTA(id));
+    if (!ota) return false;
+    const step = onStep || (() => {});
+    const result = await this.write(ota, image, step);
+    if (!result.finished) return false;
+    if (product) {
+      step("reboot");
+      await sleep(3000);
+      const back = await this.waitFor((id) => !IS_OTA(id), 45000);
+      if (!back) throw fail("noreturn", "FM-1 did not return after resuming write");
+      await back.link.close();
+      if (back.id.text !== product) throw fail("mismatch", "Device reports different firmware after resuming", back.id.text);
+      step("done", back.id.text);
+    }
+    return true;
+  }
+}
+
+// ------------------------------------------------------------- UI & App ---
+const $ = (id) => document.getElementById(id);
+
+const TEXT = {
+  en: {
+    installerTab: "Programmer",
+    librarianTab: "Web Librarian",
+    mod1Title: "// 01: USB HARDWARE INTERFACE",
+    statusIdle: "FM-1 Standby",
+    statusDesc: "Connect FM-1 directly via USB (Chrome / Edge)",
+    statusConnected: "FM-1 Connected",
+    statusWriting: "Writing Firmware...",
+    mod2Title: "// 02: TARGET FIRMWARE PACKAGE",
+    downloadPkg: "Download .fwsc",
+    viewRelease: "Release Notes",
+    dropPrompt: "Or drop custom FM-1 package (.fwsc) here to install",
+    mod3Title: "// 03: FLASH PROGRAMMER",
+    stageLabel: "STAGE",
+    readyToWrite: "READY TO FLASH",
+    installBtn: "INSTALL FM-106 FIRMWARE",
+    warnNotice: "Do not unplug the USB cable or power-cycle the device while writing. This is an unofficial firmware and installed at your own risk.",
+    step1Guide: "Connect the FM-1 with a direct USB data cable to your computer. Close any other software using MIDI.",
+    step2Guide: "Click 'Install FM-106 Firmware'. Allow Web MIDI permissions in your browser when prompted.",
+    step3Guide: "The firmware validates the image, enters update loader mode, flashes high-speed blocks, and restarts.",
+    stockHeader: "Return to Official V15 Stock Firmware",
+    stockHelp: "Select your unmodified official FM-1 V15 package (FM-1.fwsc) from M-VAVE to revert back to stock firmware. The package is checked locally in your browser.",
+    stockResume: "Resume interrupted update (backup already saved)",
+    stockButton: "Back up and Restore Stock V15",
+    mod4Title: "// 04: SYSTEM DIAGNOSTIC LOG",
+    nomidi: "Web MIDI is not supported in this browser. Please open in Google Chrome or Microsoft Edge.",
+    denied: "MIDI (SysEx) permission was denied. Please allow MIDI access in site permissions.",
+    badpkg: "The firmware package file is damaged or signature mismatch. Please reload.",
+    notfound: "FM-1 not found. Ensure USB data cable is connected and no other DAW / MIDI app is running.",
+    model: "Connected device model does not match this firmware package.",
+    lost: "USB MIDI connection was lost during operation. Reconnect and click install again.",
+    noloader: "The update loader was not detected within 60s. If the device screen is dark, the FM-1 is in update mode! Simply replug the USB cable and click Install again to immediately resume.",
+    noreturn: "FM-1 did not reboot within timeout. Please power-cycle the device.",
+    mismatch: "Write completed, but device identity reports: ",
+    start: "Starting update handshake...",
+    verify: "Validating firmware blocks...",
+    loader: "Switching device to OTA loader mode...",
+    write: "Flashing blocks to memory...",
+    reboot: "Restarting synthesizer...",
+    done: "Installation successfully completed!",
+    leave: "Writing firmware. Do not close or leave this page.",
+    error: "Error: ",
+  },
+  ja: {
+    installerTab: "プログラマー",
+    librarianTab: "ウェブ・ライブラリアン",
+    mod1Title: "// 01: USB ハードウェア接続",
+    statusIdle: "FM-1 待機中",
+    statusDesc: "FM-1 を USB で直接接続してください (Chrome / Edge)",
+    statusConnected: "FM-1 接続中",
+    statusWriting: "ファームウェア書き込み中...",
+    mod2Title: "// 02: インストール対象パッケージ",
+    downloadPkg: ".fwsc をダウンロード",
+    viewRelease: "リリースノート",
+    dropPrompt: "または自作パッケージ (.fwsc) をここにドロップ",
+    mod3Title: "// 03: フラッシュ・プログラマー",
+    stageLabel: "段階",
+    readyToWrite: "書き込み準備完了",
+    installBtn: "FM-106 ファームウェアを書き込む",
+    warnNotice: "書き込み中は絶対に USB ケーブルや電源を抜かないでください。本ファームウェアは非公式であり、自己責任で導入してください。",
+    step1Guide: "FM-1 を USB データケーブルで直接つないでください。他の MIDI アプリは閉じてください。",
+    step2Guide: "「FM-106 ファームウェアを書き込む」を押して、ブラウザの MIDI アクセスを許可してください。",
+    step3Guide: "パッケージ検証後、更新ローダーへ移行してフラッシュメモリへ書き込み、自動再起動します。",
+    stockHeader: "公式 V15 ファームウェアに戻す",
+    stockHelp: "M-VAVE 公式の未変更 FM-1 V15 パッケージ (FM-1.fwsc) を選択すると公式ファームウェアに戻せます。",
+    stockResume: "中断された更新の再開",
+    stockButton: "バックアップして公式 V15 へ戻す",
+    mod4Title: "// 04: システム診断ログ",
+    nomidi: "このブラウザは Web MIDI に対応していません。Chrome または Edge をお使いください。",
+    denied: "MIDI (SysEx) の利用が拒否されました。ブラウザの設定で MIDI を許可してください。",
+    badpkg: "ファームウェアファイルが破損しているか署名が一致しません。",
+    notfound: "FM-1 が見つかりません。USB ケーブルを確認し、MIDI を使う他のアプリを閉じてください。",
+    model: "接続された機器の型番が一致しません。",
+    lost: "USB 接続が途切れました。接続し直して再度お試しください。",
+    noloader: "書き込みモードが検出されませんでした。画面が消えている場合、FM-1はすでに書き込みモードになっています！USBケーブルを一度抜き差しして「インストール」を押すとそのまま続きから書き込まれます。",
+    noreturn: "再起動後の復帰を確認できませんでした。電源を入れ直してください。",
+    mismatch: "書き込みは終了しましたが、報告されたバージョンが異なります: ",
+    start: "更新のハンドシェイクを開始中...",
+    verify: "パッケージブロックを検証中...",
+    loader: "書き込みモード (OTA) に切り替え中...",
+    write: "フラッシュメモリへ書き込み中...",
+    reboot: "シンセサイザーを再起動中...",
+    done: "インストールが正常に完了しました！",
+    leave: "ファームウェア書き込み中です。このページを閉じないでください。",
+    error: "エラー: ",
+  }
+};
+
+let currentLang = (navigator.language || "en").toLowerCase().startsWith("ja") ? "ja" : "en";
+const t = (k) => TEXT[currentLang][k] || TEXT["en"][k] || k;
+
+function applyLanguage() {
+  document.querySelectorAll("[data-t]").forEach((el) => {
+    const key = el.dataset.t;
+    if (TEXT[currentLang][key]) el.textContent = TEXT[currentLang][key];
+  });
+  $("lang-btn").textContent = currentLang === "ja" ? "English" : "日本語";
+}
+
+$("lang-btn").addEventListener("click", () => {
+  currentLang = currentLang === "ja" ? "en" : "ja";
+  applyLanguage();
+});
+
+const log = (msg) => {
+  const ts = new Date().toTimeString().split(" ")[0];
+  const el = $("log");
+  el.textContent += `[${ts}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+};
+
+// Target metadata for release
+const meta = {
+  version: "1.0",
+  name: "FM-106",
+  product: "FM-1_906",
+  releaseUrl: "https://github.com/PatttF/fm-106/releases/tag/release",
+  releasePkg: "https://github.com/PatttF/fm-106/releases/download/release/fm106.fwsc",
+  localPkg: "./fm106.fwsc",
+  size: 610112,
+  sha256: "5d484548b05e3b91b004d5018aba59b6acfc15c53cc5587b16fd17138c9802ff"
+};
+
+const pinned = async (b) => (meta.size == null || b.length === meta.size) && (!meta.sha256 || await sha256hex(b) === meta.sha256);
+
+let image = null, pkgBytes = null, flashSize = 0, isWriting = false;
+
+function updateLedDisplay(text) {
+  $("seg-display").textContent = text;
+}
+
+function setProgress(pct, statusText) {
+  const p = Math.max(0, Math.min(100, Math.round(pct)));
+  $("fader-fill-bar").style.width = `${p}%`;
+  $("fader-pct-text").textContent = `${p}%`;
+  if (statusText) $("action-state-text").textContent = statusText;
+}
+
+function animateVoiceLeds(enable) {
+  for (let i = 1; i <= 6; i++) {
+    const led = $(`vled-${i}`);
+    if (!led) continue;
+    if (enable) {
+      if (Math.random() > 0.4) led.classList.add("active");
+      else led.classList.remove("active");
+    } else {
+      led.classList.remove("active");
+    }
+  }
+}
+
+function lockUi(locked) {
+  isWriting = locked;
+  $("go").disabled = locked || !image;
+  $("stock-go").disabled = locked;
+  $("stock-file").disabled = locked;
+  $("stock-recovery").disabled = locked;
+  if (locked) {
+    $("main-led").className = "led-jewel flashing";
+  }
+}
+
+window.addEventListener("beforeunload", (e) => {
+  if (isWriting) {
+    e.preventDefault();
+    e.returnValue = t("leave");
+  }
+});
+
+// Load firmware package (try local served file first, then release asset)
+async function initFirmware() {
+  if (!navigator.requestMIDIAccess) {
+    $("status-title").textContent = "Web MIDI Unsupported";
+    $("status-desc").textContent = t("nomidi");
+    $("main-led").className = "led-jewel error";
+    log("Web MIDI API not supported in this browser");
+    return;
+  }
+
+  log(`Locating FM-106 package (target: ${meta.product}, SHA-256: ${meta.sha256.slice(0, 12)}...)`);
+  
+  const sources = [meta.localPkg, meta.releasePkg];
+  for (const src of sources) {
+    try {
+      const res = await fetch(src);
+      if (res.ok) {
+        const buf = new Uint8Array(await res.arrayBuffer());
+        if (productOf(buf) === meta.product && (await pinned(buf))) {
+          pkgBytes = buf;
+          try { flashSize = new Package(buf).flashSize; } catch (_) { flashSize = 0; }
+          image = logicalImage(buf);
+          $("go").disabled = false;
+          $("main-led").className = "led-jewel connected";
+          $("status-title").textContent = `FM-106 Ready`;
+          $("status-desc").textContent = `Package loaded (${(buf.length / 1024).toFixed(1)} KB, verified)`;
+          updateLedDisplay("RD");
+          log(`Loaded verified package from ${src}`);
+          return;
+        }
+      }
+    } catch (e) {
+      log(`Note: ${src} fetch check: ${e.message}`);
+    }
+  try {
+    const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
+    const checkLiveDevice = async () => {
+      if (isWriting) return;
+      try {
+        const up = new Updater(midiAccess, () => {});
+        const ota = await up.find((id) => IS_OTA(id));
+        if (ota) {
+          await ota.link.close();
+          $("status-title").textContent = "FM-1 in Update Mode";
+          $("status-desc").textContent = "Update loader active. Click Install to flash!";
+          $("main-led").className = "led-jewel flashing";
+          updateLedDisplay("LD");
+          $("action-state-text").textContent = "UPDATE LOADER READY TO FLASH";
+          if (image) $("go").disabled = false;
+          return;
+        }
+        const dev = await up.find((id) => !IS_OTA(id));
+        if (dev) {
+          await dev.link.close();
+          $("status-title").textContent = `${dev.id.text} Connected`;
+          $("status-desc").textContent = "Synthesizer connected. Ready to flash FM-106.";
+          $("main-led").className = "led-jewel connected";
+          if (image) $("go").disabled = false;
+        }
+      } catch (_) {}
+    };
+
+    midiAccess.onstatechange = () => checkLiveDevice();
+    checkLiveDevice();
+  } catch (e) {
+    log(`Web MIDI note: ${e.message}`);
+  }
+
+  log("Automatic download was not completed. You can choose or drop fm106.fwsc manually.");
+}
+
+// User-provided custom package drop / selection
+const fwFileInput = $("fw-file");
+const dropZone = $("drop-zone");
+
+async function handleFile(file) {
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const prod = productOf(buf);
+    pkgBytes = buf;
+    try { flashSize = new Package(buf).flashSize; } catch (_) { flashSize = 0; }
+    image = logicalImage(buf);
+    meta.product = prod;
+    $("go").disabled = false;
+    $("main-led").className = "led-jewel connected";
+    $("status-title").textContent = `${prod} Ready`;
+    $("status-desc").textContent = `Loaded ${file.name} (${buf.length} bytes)`;
+    $("pkg-meta-text").textContent = `File: ${file.name} • Product: ${prod} • Size: ${buf.length.toLocaleString()} B`;
+    updateLedDisplay("RD");
+    log(`Selected file verified: ${file.name} (${prod})`);
+  } catch (e) {
+    alert(`Invalid FM-1 package: ${e.message}`);
+    log(`File error: ${e.message}`);
+  }
+}
+
+fwFileInput.addEventListener("change", (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+dropZone.addEventListener("click", () => fwFileInput.click());
+dropZone.addEventListener("dragover", (e) => { e.preventDefault(); dropZone.style.borderColor = "var(--accent-cyan)"; });
+dropZone.addEventListener("dragleave", () => { dropZone.style.borderColor = "var(--panel-border-bright)"; });
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.style.borderColor = "var(--panel-border-bright)";
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+
+// Flash execution
+$("go").addEventListener("click", async () => {
+  if (isWriting || !image) return;
+  lockUi(true);
+
+  let midi;
+  try {
+    midi = await navigator.requestMIDIAccess({ sysex: true });
+  } catch (e) {
+    log(`MIDI access denied: ${e.message}`);
+    alert(t("denied"));
+    lockUi(false);
+    return;
+  }
+
+  let wrote = false;
+  let voiceTimer = setInterval(() => animateVoiceLeds(true), 120);
+
+  try {
+    const up = new Updater(midi, log);
+    let writes = flashSize ? Math.ceil(flashSize / 512) * 2 : 1167;
+
+    const step = (k, a) => {
+      log(`Step [${k}]: ${a ?? ""}`);
+      if (k === "start") {
+        updateLedDisplay("ST");
+        setProgress(5, t("start"));
+      } else if (k === "verify") {
+        updateLedDisplay("VF");
+        const pct = Math.min(25, (a / 74) * 25);
+        setProgress(pct, t("verify"));
+      } else if (k === "loader") {
+        updateLedDisplay("LD");
+        setProgress(28, t("loader"));
+      } else if (k === "write") {
+        wrote = true;
+        writes = Math.max(writes, a);
+        const pct = Math.min(98, 30 + Math.round((a / writes) * 68));
+        const numStr = String(Math.min(99, Math.max(1, pct))).padStart(2, "0");
+        updateLedDisplay(numStr);
+        setProgress(pct, `${t("write")} (${pct}%)`);
+      } else if (k === "reboot") {
+        updateLedDisplay("RB");
+        setProgress(99, t("reboot"));
+      } else if (k === "done") {
+        updateLedDisplay("OK");
+        setProgress(100, t("done"));
+      }
+    };
+
+    const ota = await up.find((id) => IS_OTA(id));
+    if (ota) {
+      await ota.link.close();
+      wrote = true;
+      log("FM-1 detected in update mode (resuming write)...");
+      const resumed = await up.resume(image, step, meta.product);
+      if (resumed) {
+        updateLedDisplay("OK");
+        setProgress(100, t("done"));
+      }
+    } else {
+      await up.install(image, meta.product, step);
+    }
+
+    $("main-led").className = "led-jewel connected";
+    $("status-title").textContent = "FM-106 Active";
+    $("status-desc").textContent = "Firmware verified and running";
+    log("FM-106 installation completed successfully!");
+  } catch (e) {
+    clearInterval(voiceTimer);
+    animateVoiceLeds(false);
+    updateLedDisplay("ER");
+    $("main-led").className = "led-jewel error";
+    const msg = e.code && TEXT[currentLang][e.code] ? TEXT[currentLang][e.code] : (e.message || String(e));
+    $("action-state-text").textContent = `ERROR: ${msg}`;
+    log(`Flash error [${e.code || "unknown"}]: ${e.message}`);
+    alert(`${t("error")} ${msg}`);
+  } finally {
+    clearInterval(voiceTimer);
+    animateVoiceLeds(false);
+    lockUi(false);
+  }
+});
+
+// Return to Stock V15 logic
+let stockPkg = null;
+$("stock-file").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    if (file.size !== STOCK_V15_SIZE) throw new Error("File size must match FM-1 V15 (FM-1.fwsc)");
+    const verified = await validateStockPackage(new Uint8Array(await file.arrayBuffer()));
+    stockPkg = verified;
+    $("stock-go").disabled = false;
+    log("Official V15 stock package verified locally");
+  } catch (err) {
+    $("stock-go").disabled = true;
+    stockPkg = null;
+    alert(`Stock file error: ${err.message}`);
+  }
+});
+
+$("stock-go").addEventListener("click", async () => {
+  if (!stockPkg || isWriting) return;
+  if (!confirm("Revert synthesizer back to official M-VAVE V15 stock firmware?")) return;
+  lockUi(true);
+
+  try {
+    const midi = await navigator.requestMIDIAccess({ sysex: true });
+    const up = new Updater(midi, log);
+    const step = (k, n) => {
+      log(`Stock revert [${k}]: ${n ?? ""}`);
+      if (k === "done") {
+        updateLedDisplay("OK");
+        setProgress(100, "Official V15 Restored");
+      }
+    };
+    await up.install(stockPkg.image, stockPkg.product, step);
+    alert("Official stock V15 restored successfully!");
+  } catch (e) {
+    alert(`Stock restore failed: ${e.message}`);
+    log(`Stock error: ${e.message}`);
+  } finally {
+    lockUi(false);
+  }
+});
+
+applyLanguage();
+initFirmware();
+</script>
+</body>
+</html>

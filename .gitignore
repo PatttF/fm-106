@@ -16,3 +16,4 @@ tools/test_a76
 tools/test_notes
 tools/trace_fundamental
 tools/compare_dsp
+tools/rec_hal
