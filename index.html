@@ -1015,7 +1015,6 @@ const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
 const MAXDATA = 512;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const IS_OTA = (id) => /^ota-/i.test(id.model);
 
 function fail(code, msg, detail = "") { const e = new Error(msg); e.code = code; e.detail = detail; return e; }
 
@@ -1512,6 +1511,7 @@ async function initFirmware() {
     } catch (e) {
       log(`Note: ${src} fetch check: ${e.message}`);
     }
+  }
   try {
     const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
     const checkLiveDevice = async () => {
