@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/fm106_screen.png" width="240" alt="FM-106: Authentic 1980s Roland Juno-106 on the M-VAVE FM-1"></p>
+
 
 # FM-106
 
