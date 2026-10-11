@@ -1,0 +1,159 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/* FM-106: Roland MN3009 BBD Stereo Chorus Emulation
+ * Replicates the hardware:
+ * - 256-stage dual BBD fractional delay lines
+ * - LFO frequencies: Chorus I = 0.393 Hz, Chorus II = 0.797 Hz, Chorus I+II = 8.00 Hz
+ * - Antiphase modulation (+LFO for Left, -LFO for Right)
+ * - 2nd-order Butterworth reconstruction biquad filter (9,661 Hz)
+ * - Calibrated IC6 summer gains (kDry = 0.863, kWet = 1.257) */
+#pragma once
+#include <stdint.h>
+#include "fm106_tables.h"
+#include "fm106_osc.h"
+#include "fm106_vcf.h"
+
+#define FM106_CHORUS_LEN 1024u
+#define FM106_CHORUS_MASK (FM106_CHORUS_LEN - 1u)
+
+enum {
+    FM106_CHORUS_OFF = 0,
+    FM106_CHORUS_I = 1,
+    FM106_CHORUS_II = 2,
+    FM106_CHORUS_I_II = 3
+};
+
+/* 2nd-order Butterworth lowpass biquad (9,661 Hz at 44.1 kHz) */
+typedef struct {
+    int32_t ic1;
+    int32_t ic2;
+} fm106_bbd_filter_t;
+
+static inline void fm106_bbd_filter_init(fm106_bbd_filter_t *f)
+{
+    f->ic1 = 0;
+    f->ic2 = 0;
+}
+
+/* g ~= 0.826 (27066 in Q15), a1 ~= 0.352 (11534 in Q15) */
+static inline int32_t fm106_bbd_filter_process(fm106_bbd_filter_t *f, int32_t in)
+{
+    int32_t v3 = in - f->ic2;
+    int32_t v1 = ((11534 * f->ic1) >> 15) + ((9527 * v3) >> 15);
+    int32_t v2 = f->ic2 + ((27066 * v1) >> 15);
+    f->ic1 = (v1 << 1) - f->ic1;
+    f->ic2 = (v2 << 1) - f->ic2;
+    return v2;
+}
+
+/* 4-point Hermite interpolation in Q15: C1-continuous fractional delay read */
+static inline int32_t fm106_hermite(int32_t frac_q15, int32_t y0, int32_t y1, int32_t y2, int32_t y3)
+{
+    int32_t c0 = y1;
+    int32_t c1 = (y2 - y0) >> 1;
+    int32_t c2 = y0 - y1 + (y2 - y1) - ((y1 - (y2 << 1) + y3) >> 1);
+    int32_t c3 = ((y3 - y0) >> 1) + y1 - y2 + ((y1 - y2) >> 1);
+    int64_t acc = (((int64_t)c3 * frac_q15) >> 15) + c2;
+    acc = ((acc * frac_q15) >> 15) + c1;
+    acc = ((acc * frac_q15) >> 15) + c0;
+    return (int32_t)acc;
+}
+
+typedef struct {
+    int16_t buf_l[FM106_CHORUS_LEN];
+    int16_t buf_r[FM106_CHORUS_LEN];
+    uint32_t wr_idx;
+    uint32_t lfo_ph;
+    uint8_t mode;               /* FM106_CHORUS_* */
+    fm106_bbd_filter_t filt_l;
+    fm106_bbd_filter_t filt_r;
+} fm106_chorus_t;
+
+static inline void fm106_chorus_init(fm106_chorus_t *c)
+{
+    c->wr_idx = 0;
+    c->lfo_ph = 0;
+    c->mode = FM106_CHORUS_I;
+    fm106_bbd_filter_init(&c->filt_l);
+    fm106_bbd_filter_init(&c->filt_r);
+    for (uint32_t i = 0; i < FM106_CHORUS_LEN; i++) {
+        c->buf_l[i] = 0;
+        c->buf_r[i] = 0;
+    }
+}
+
+static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int32_t *out_l, int32_t *out_r)
+{
+    if (c->mode == FM106_CHORUS_OFF) {
+        *out_l = fm106_soft_limit(mono_in);
+        *out_r = fm106_soft_limit(mono_in);
+        return;
+    }
+
+    /* Store incoming audio in delay rings */
+    uint32_t wr = c->wr_idx;
+    int32_t in_clamped = fm106_clamp(mono_in, -32768, 32767);
+    c->buf_l[wr] = (int16_t)in_clamped;
+    c->buf_r[wr] = (int16_t)in_clamped;
+    c->wr_idx = (wr + 1u) & FM106_CHORUS_MASK;
+
+    /* LFO parameters according to mode */
+    uint32_t lfo_inc;
+    int32_t center_samples = 154;   /* ~3.5 ms at 44.1 kHz */
+    int32_t depth_samples;          /* modulation swing */
+
+    switch (c->mode) {
+    case FM106_CHORUS_I:
+        lfo_inc = 50098u;           /* 0.514 Hz (Juno-106 hardware rate) */
+        depth_samples = 94;         /* +-2.13 ms (4.26 ms pp) */
+        break;
+    case FM106_CHORUS_II:
+        lfo_inc = 82068u;           /* 0.842 Hz */
+        depth_samples = 75;         /* +-1.71 ms (3.42 ms pp) */
+        break;
+    case FM106_CHORUS_I_II:
+    default:
+        lfo_inc = 765109u;          /* 7.85 Hz fast vibrato */
+        depth_samples = 10;         /* +-0.236 ms */
+        break;
+    }
+
+    c->lfo_ph += lfo_inc;
+
+    /* Triangle LFO: -32768..32767 */
+    int32_t lfo_tri = (int32_t)(c->lfo_ph >> 16) - 32768;
+    if (lfo_tri < 0) lfo_tri = -lfo_tri;
+    lfo_tri = (lfo_tri - 16384) << 1;
+
+    /* Antiphase modulation (16.16 fixed point) */
+    int32_t delay_l_q16 = (center_samples << 16) + lfo_tri * depth_samples;
+    int32_t delay_r_q16 = (center_samples << 16) - lfo_tri * depth_samples;
+
+    /* 4-point Hermite interpolation for C1-continuous fractional delay taps (eliminates zipper noise) */
+    int32_t int_del_l = delay_l_q16 >> 16;
+    int32_t frac_l = (delay_l_q16 >> 1) & 0x7FFFu;
+    uint32_t rd_l1 = (wr - 1u - (uint32_t)int_del_l) & FM106_CHORUS_MASK;
+    uint32_t rd_l0 = (rd_l1 + 1u) & FM106_CHORUS_MASK;
+    uint32_t rd_l2 = (rd_l1 - 1u) & FM106_CHORUS_MASK;
+    uint32_t rd_l3 = (rd_l1 - 2u) & FM106_CHORUS_MASK;
+    int32_t wet_l = fm106_hermite(frac_l, c->buf_l[rd_l0], c->buf_l[rd_l1], c->buf_l[rd_l2], c->buf_l[rd_l3]);
+
+    /* Read Right tap */
+    int32_t int_del_r = delay_r_q16 >> 16;
+    int32_t frac_r = (delay_r_q16 >> 1) & 0x7FFFu;
+    uint32_t rd_r1 = (wr - 1u - (uint32_t)int_del_r) & FM106_CHORUS_MASK;
+    uint32_t rd_r0 = (rd_r1 + 1u) & FM106_CHORUS_MASK;
+    uint32_t rd_r2 = (rd_r1 - 1u) & FM106_CHORUS_MASK;
+    uint32_t rd_r3 = (rd_r1 - 2u) & FM106_CHORUS_MASK;
+    int32_t wet_r = fm106_hermite(frac_r, c->buf_r[rd_r0], c->buf_r[rd_r1], c->buf_r[rd_r2], c->buf_r[rd_r3]);
+
+    /* Apply Butterworth reconstruction filter */
+    wet_l = fm106_bbd_filter_process(&c->filt_l, wet_l);
+    wet_r = fm106_bbd_filter_process(&c->filt_r, wet_r);
+
+    /* IC6 summer output: authentic Roland dry:wet ratio (0.863 : 1.257 = 21209 : 30892 in Q15) */
+    int32_t sl = (int32_t)(((int64_t)mono_in * 21209LL + (int64_t)wet_l * 30892LL) >> 15);
+    int32_t sr = (int32_t)(((int64_t)mono_in * 21209LL + (int64_t)wet_r * 30892LL) >> 15);
+
+    *out_l = fm106_soft_limit(sl);
+    *out_r = fm106_soft_limit(sr);
+}

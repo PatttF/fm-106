@@ -1,0 +1,17 @@
+# Build output
+build/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Core dumps
+core
+core.*
+*.core
+
+# Host test/tool binaries
+tools/compare_spectrum
+tools/compare_vcf
+tools/test_a76
+tools/test_notes
+tools/trace_fundamental
