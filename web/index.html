@@ -763,7 +763,7 @@ footer.synth-footer a:hover {
 
       <div class="alert-card">
         <span>&#9888;</span>
-        <span data-t="warnNotice">Do not unplug the USB cable or power-cycle the device while writing. This is an unofficial firmware and installed at your own risk.</span>
+        <span data-t="warnNotice">Do not unplug the USB cable or power-cycle the device while writing.</span>
       </div>
 
       <div class="instructions-list">
@@ -1060,19 +1060,12 @@ function parseRequest(pkt) {
 }
 
 function parseIdentity(pkt) {
-  if (!pkt || pkt.length < 2) return null;
   const d = unpack7(pkt.slice(1, -1));
-  if (d.length < 8 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
-  const txt = String.fromCharCode(...d.slice(6, d.length - 1)).replace(/\0+$/, "");
+  if (d.length !== 34 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
+  const txt = String.fromCharCode(...d.slice(6, 33)).replace(/\0+$/, "");
   const m = /^([^_]+)_(\d+)$/.exec(txt);
-  if (m) {
-    return { text: txt, model: m[1], version: parseInt(m[2], 10) };
-  }
-  const modelPart = txt.split("_")[0];
-  return { text: txt, model: modelPart || txt, version: 0 };
+  return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : null;
 }
-
-const IS_OTA = (id) => Boolean(id && (/^ota[-_]/i.test(id.model) || /^ota[-_]/i.test(id.text)));
 
 class Link {
   constructor(input, output) {
@@ -1097,14 +1090,10 @@ class Link {
     }
     return this.q.shift() || null;
   }
-  async close() {
-    this.input.onmidimessage = null;
-    try { await this.input.close(); } catch (_) {}
-    try { await this.output.close(); } catch (_) {}
-  }
+  close() { this.input.onmidimessage = null; }
 }
 
-async function handshake(link, tries = 4) {
+async function handshake(link, tries = 3) {
   link.drain();
   for (let t = 0; t < tries; t++) {
     if (!link.send(HS_QUERY)) return null;
@@ -1115,52 +1104,7 @@ async function handshake(link, tries = 4) {
       const id = parseIdentity(p);
       if (id) return id;
     }
-    await sleep(150);
   }
-  return null;
-}
-
-const PORT_RE = /fm-1|felucca|ota|composite|sinco|usb[\s_-]?midi|m-vave|m-upgrade|upgrade|update|jieli|audio/i;
-
-function findMatchingOutput(input, outputs, inputsToProbe) {
-  const outs = [...outputs.values()].filter(o => o.state !== "disconnected");
-  if (!outs.length) return null;
-
-  // 1. Exact match
-  let out = outs.find(o => o.name === input.name);
-  if (out) return out;
-
-  // 2. Normalized match (strip IN/OUT, numbers, etc.)
-  const clean = (s) => (s || "")
-    .replace(/^(?:midi\s*in\d*|midi\s*out\d*|\d+[\s_-]+)/i, "")
-    .replace(/[\s\-_]*(?:in(?:put)?|out(?:put)?|\d+|rx|tx|\(\d+\)|\[\d+\])[\s\-_]*$/i, "")
-    .replace(/[^a-z0-9]/gi, "")
-    .toLowerCase();
-  const inClean = clean(input.name);
-  if (inClean) {
-    out = outs.find(o => clean(o.name) === inClean);
-    if (out) return out;
-
-    // 3. Substring match
-    out = outs.find(o => {
-      const oc = clean(o.name);
-      return oc && (oc.includes(inClean) || inClean.includes(oc));
-    });
-    if (out) return out;
-  }
-
-  // 4. Candidate match based on regex
-  const candidates = outs.filter(o => PORT_RE.test(o.name || ""));
-  if (candidates.length === 1) return candidates[0];
-  if (candidates.length > 1) {
-    const idx = inputsToProbe ? inputsToProbe.indexOf(input) : -1;
-    if (idx >= 0 && idx < candidates.length) return candidates[idx];
-    return candidates[0];
-  }
-
-  // 5. Fallback: single output available
-  if (outs.length === 1) return outs[0];
-
   return null;
 }
 
@@ -1171,46 +1115,24 @@ class Updater {
   }
 
   async find(filter) {
-    const allInputs = [...this.access.inputs.values()].filter(i => i.state !== "disconnected");
-    let inputsToProbe = allInputs.filter(i => PORT_RE.test(i.name || ""));
-    if (!inputsToProbe.length) {
-      inputsToProbe = allInputs;
-    }
-
-    for (const input of inputsToProbe) {
-      const output = findMatchingOutput(input, this.access.outputs, inputsToProbe);
+    const outs = [...this.access.outputs.values()];
+    for (const input of this.access.inputs.values()) {
+      if (input.state === "disconnected") continue;
+      if (!/fm-1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;
+      const output = outs.find((o) => o.name === input.name && o.state !== "disconnected");
       if (!output) continue;
-      try {
-        await input.open();
-        await output.open();
-      } catch (_) {
-        continue;
-      }
+      try { await input.open(); await output.open(); } catch (_) { continue; }
       const link = new Link(input, output);
-      await sleep(200);
-      const id = await handshake(link, 3);
-      if (id && (!filter || filter(id))) {
-        return { link, id, name: input.name };
-      }
-      await link.close();
+      const id = await handshake(link, 2);
+      if (id && (!filter || filter(id))) return { link, id, name: input.name };
+      link.close();
     }
     return null;
   }
 
-  async waitFor(filter, ms, onTick) {
+  async waitFor(filter, ms) {
     const end = Date.now() + ms;
-    let attempt = 0;
     while (Date.now() < end) {
-      attempt++;
-      try {
-        if (navigator.requestMIDIAccess) {
-          this.access = await navigator.requestMIDIAccess({ sysex: true });
-        }
-      } catch (_) {}
-
-      const remainingSec = Math.max(0, Math.round((end - Date.now()) / 1000));
-      if (onTick) onTick(remainingSec, attempt);
-
       const dev = await this.find(filter);
       if (dev) return dev;
       await sleep(1000);
@@ -1250,29 +1172,24 @@ class Updater {
     const dev = await this.find((id) => !IS_OTA(id));
     if (!dev) throw fail("notfound", "FM-1 not found (check USB cable and close other MIDI applications)");
     const [model] = product.split("_");
-    if (dev.id.model !== model && !dev.id.model.toLowerCase().includes("fm-1")) {
-      await dev.link.close();
-      throw fail("model", `Device is ${dev.id.text}, package is for ${product}`);
-    }
+    if (dev.id.model !== model) { dev.link.close(); throw fail("model", `Device is ${dev.id.text}, package is for ${product}`); }
     step("start", dev.id.text);
     dev.link.send(UPGRADE);
     await sleep(2000);
     const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n) => step("verify", n));
-    await dev.link.close();
+    dev.link.close();
     if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `Device ${s1.lost ? "disconnected" : "stopped"} after ${s1.served} reads: nothing written`);
     step("loader");
     await sleep(3000);
-    const ota = await this.waitFor((id) => IS_OTA(id), 60000, (remainingSec) => {
-      setProgress(28, `${t("loader")} (${remainingSec}s)`);
-    });
-    if (!ota) throw fail("noloader", t("noloader"));
+    const ota = await this.waitFor((id) => id.model === "ota-" + model, 30000);
+    if (!ota) throw fail("noloader", "Update loader did not appear. Replug USB and install again.");
     const s2 = await this.write(ota, image, step);
     if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `Loader ${s2.lost ? "disconnected" : "stopped"} after ${s2.served} requests. Replug and install again to resume.`);
     step("reboot");
     await sleep(3000);
-    const back = await this.waitFor((id) => !IS_OTA(id), 45000);
+    const back = await this.waitFor((id) => !IS_OTA(id), 40000);
     if (!back) throw fail("noreturn", "Device did not return after restart: power-cycle it");
-    await back.link.close();
+    back.link.close();
     if (back.id.text !== product) throw fail("mismatch", `Installed, but device reports ${back.id.text}`, back.id.text);
     step("done", back.id.text);
     return back.id.text;
@@ -1282,12 +1199,13 @@ class Updater {
     ota.link.send(UPGRADE);
     await sleep(2000);
     const s2 = await this.serve(ota.link, image, 0xF0000000, 180000, (n) => step("write", n));
-    await ota.link.close();
+    ota.link.close();
     return s2;
   }
 
   async resume(image, onStep, product = null) {
-    const ota = await this.find((id) => IS_OTA(id));
+    const model = product && product.split("_")[0];
+    const ota = await this.find((id) => model ? id.model === "ota-" + model : IS_OTA(id));
     if (!ota) return false;
     const step = onStep || (() => {});
     const result = await this.write(ota, image, step);
@@ -1295,9 +1213,9 @@ class Updater {
     if (product) {
       step("reboot");
       await sleep(3000);
-      const back = await this.waitFor((id) => !IS_OTA(id), 45000);
+      const back = await this.waitFor((id) => id.model === model, 40000);
       if (!back) throw fail("noreturn", "FM-1 did not return after resuming write");
-      await back.link.close();
+      back.link.close();
       if (back.id.text !== product) throw fail("mismatch", "Device reports different firmware after resuming", back.id.text);
       step("done", back.id.text);
     }
@@ -1325,7 +1243,7 @@ const TEXT = {
     stageLabel: "STAGE",
     readyToWrite: "READY TO FLASH",
     installBtn: "INSTALL FM-106 FIRMWARE",
-    warnNotice: "Do not unplug the USB cable or power-cycle the device while writing. This is an unofficial firmware and installed at your own risk.",
+    warnNotice: "Do not unplug the USB cable or power-cycle the device while writing.",
     step1Guide: "Connect the FM-1 with a direct USB data cable to your computer. Close any other software using MIDI.",
     step2Guide: "Click 'Install FM-106 Firmware'. Allow Web MIDI permissions in your browser when prompted.",
     step3Guide: "The firmware validates the image, enters update loader mode, flashes high-speed blocks, and restarts.",
@@ -1340,7 +1258,7 @@ const TEXT = {
     notfound: "FM-1 not found. Ensure USB data cable is connected and no other DAW / MIDI app is running.",
     model: "Connected device model does not match this firmware package.",
     lost: "USB MIDI connection was lost during operation. Reconnect and click install again.",
-    noloader: "The update loader was not detected within 60s. If the device screen is dark, the FM-1 is in update mode! Simply replug the USB cable and click Install again to immediately resume.",
+    noloader: "The update loader did not appear. Replug USB and run install again.",
     noreturn: "FM-1 did not reboot within timeout. Please power-cycle the device.",
     mismatch: "Write completed, but device identity reports: ",
     start: "Starting update handshake...",
@@ -1368,7 +1286,7 @@ const TEXT = {
     stageLabel: "段階",
     readyToWrite: "書き込み準備完了",
     installBtn: "FM-106 ファームウェアを書き込む",
-    warnNotice: "書き込み中は絶対に USB ケーブルや電源を抜かないでください。本ファームウェアは非公式であり、自己責任で導入してください。",
+    warnNotice: "書き込み中は絶対に USB ケーブルや電源を抜かないでください。",
     step1Guide: "FM-1 を USB データケーブルで直接つないでください。他の MIDI アプリは閉じてください。",
     step2Guide: "「FM-106 ファームウェアを書き込む」を押して、ブラウザの MIDI アクセスを許可してください。",
     step3Guide: "パッケージ検証後、更新ローダーへ移行してフラッシュメモリへ書き込み、自動再起動します。",
@@ -1383,7 +1301,7 @@ const TEXT = {
     notfound: "FM-1 が見つかりません。USB ケーブルを確認し、MIDI を使う他のアプリを閉じてください。",
     model: "接続された機器の型番が一致しません。",
     lost: "USB 接続が途切れました。接続し直して再度お試しください。",
-    noloader: "書き込みモードが検出されませんでした。画面が消えている場合、FM-1はすでに書き込みモードになっています！USBケーブルを一度抜き差しして「インストール」を押すとそのまま続きから書き込まれます。",
+    noloader: "書き込みモードに移行できませんでした。USB を抜き差ししてやり直してください。",
     noreturn: "再起動後の復帰を確認できませんでした。電源を入れ直してください。",
     mismatch: "書き込みは終了しましたが、報告されたバージョンが異なります: ",
     start: "更新のハンドシェイクを開始中...",
@@ -1512,38 +1430,6 @@ async function initFirmware() {
     } catch (e) {
       log(`Note: ${src} fetch check: ${e.message}`);
     }
-  try {
-    const midiAccess = await navigator.requestMIDIAccess({ sysex: true });
-    const checkLiveDevice = async () => {
-      if (isWriting) return;
-      try {
-        const up = new Updater(midiAccess, () => {});
-        const ota = await up.find((id) => IS_OTA(id));
-        if (ota) {
-          await ota.link.close();
-          $("status-title").textContent = "FM-1 in Update Mode";
-          $("status-desc").textContent = "Update loader active. Click Install to flash!";
-          $("main-led").className = "led-jewel flashing";
-          updateLedDisplay("LD");
-          $("action-state-text").textContent = "UPDATE LOADER READY TO FLASH";
-          if (image) $("go").disabled = false;
-          return;
-        }
-        const dev = await up.find((id) => !IS_OTA(id));
-        if (dev) {
-          await dev.link.close();
-          $("status-title").textContent = `${dev.id.text} Connected`;
-          $("status-desc").textContent = "Synthesizer connected. Ready to flash FM-106.";
-          $("main-led").className = "led-jewel connected";
-          if (image) $("go").disabled = false;
-        }
-      } catch (_) {}
-    };
-
-    midiAccess.onstatechange = () => checkLiveDevice();
-    checkLiveDevice();
-  } catch (e) {
-    log(`Web MIDI note: ${e.message}`);
   }
 
   log("Automatic download was not completed. You can choose or drop fm106.fwsc manually.");
@@ -1637,11 +1523,11 @@ $("go").addEventListener("click", async () => {
       }
     };
 
-    const ota = await up.find((id) => IS_OTA(id));
+    const ota = await up.find((id) => /^ota-/i.test(id.model));
     if (ota) {
-      await ota.link.close();
+      ota.link.close();
       wrote = true;
-      log("FM-1 detected in update mode (resuming write)...");
+      log("FM-1 detected in update mode; resuming write...");
       const resumed = await up.resume(image, step, meta.product);
       if (resumed) {
         updateLedDisplay("OK");
