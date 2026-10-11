@@ -27,7 +27,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
 #include "../../tests/host.c"                  /* on a computer: a fake FM-1 (tests/host.c) */
 #else
 #ifndef DINGHY_DUAL_CORE
-#define DINGHY_DUAL_CORE 0     /* experimental CPU1 audio worker; build.py passes -DDINGHY_DUAL_CORE=1 */
+#define DINGHY_DUAL_CORE 1     /* Dual-core CPU0/CPU1 parallel audio engine */
 #endif
 #include <stdint.h>
 #include "fm1_time.h"
@@ -253,13 +253,16 @@ void fm1_timer5_irq(void)
 #endif
     if (++sub == 10u)
         sub = 0;
-    if (in_audio) {
-        if (usb_due)
-            uac_service();
+#if FELUCCA_UAC
+    uac_service_safe();
+#endif
+    if (in_audio)
         return;
-    }
-    if (owed & 1u)
+    if (owed & 1u) {
+        usb_sie_owner = 1;
         usb_poll();
+        usb_sie_owner = 0;
+    }
 #if FELUCCA_UART
     if (owed & 2u)
         uart_midi_poll();
@@ -271,6 +274,7 @@ extern void isr_timer5(void);
 /* ---- the sound: ALNK0 I2S, two halves; the app renders, the MASTER knob scales, Q15 -> 24 bit (-6 dBFS ceiling) */
 static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(4)));
 static volatile int32_t master_q12 = 2048;
+static volatile uint32_t audio_lates = 0;
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);
 
@@ -281,27 +285,33 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     p = fm1_audio_pending();
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
-        int32_t *o = &abuf[fm1_audio_free_half() * HALF_WORDS];
-        uint32_t i, b;
+        uint32_t half = fm1_audio_free_half();
+        int32_t *o = &abuf[half * HALF_WORDS];
+        uint32_t i;
         for (i = 0; i < HALF_WORDS; i++)
             o[i] = 0;
         uac_render_start();
+        fm1_irq_on();                           /* Allow TIMER5 (priority 4) to nest during audio render */
         app_audio(o, HALF_FRAMES);
-        for (b = 0; b < HALF_FRAMES; b += 32u)
-            uac_tap(o + 2u * b, 32u);           /* USB Audio records pristine digital engine output */
+        fm1_irq_off();
+        uac_tap(o, HALF_FRAMES);                /* USB Audio records pristine digital engine output */
+        fm1_irq_on();
         for (i = 0; i < HALF_WORDS; i++) {
             int32_t v = (o[i] * master_q12) >> 12;
-            o[i] = v > 32767 ? 32767 : v < -32767 ? -32767 : v;
+            if (v > 32767) v = 32767;
+            else if (v < -32767) v = -32767;
+            o[i] = v << 7;
         }
-        for (i = 0; i < HALF_WORDS; i++)
-            o[i] <<= 7;
         fm1_audio_ack_half();
+        if (fm1_audio_free_half() != half)
+            audio_lates++;
     }
     in_audio = 0;
 }
 extern void isr_alnk0(void);
 
 static void fm106_sysex_handle(const uint8_t *p, uint32_t n);
+extern uint32_t g_dirty_screen;
 
 /* ---- the main loop's duties: watchdog, USB, the installer's update request, the MASTER knob */
 static void platform_poll(void)
@@ -333,6 +343,37 @@ static void platform_poll(void)
         fm1_delay_ms(30);
         bootguard.pending = 0;
         fm1_enter_uboot();
+    }
+    /* Runtime update mode gesture: OCT- + OCT+ + HOME held 5 seconds */
+    static uint32_t upd_t0;
+    static uint8_t upd_countdown = 0;
+    uint32_t upd_mask = (1u << BTN_OCT_DOWN) | (1u << BTN_OCT_UP) | (1u << BTN_HOME);
+    if ((fm1_in.buttons & upd_mask) == upd_mask) {
+        uint32_t held = fm1_ms - upd_t0;
+        if (held > 2000u && held <= 5000u) {
+            uint8_t left = (uint8_t)((5000u - held + 999u) / 1000u);
+            if (left != upd_countdown) {
+                upd_countdown = left;
+                char msg[16];
+                msg[0] = 'U'; msg[1] = 'P'; msg[2] = 'D'; msg[3] = 'A'; msg[4] = 'T'; msg[5] = 'E'; msg[6] = ' ';
+                msg[7] = 'I'; msg[8] = 'N'; msg[9] = ' '; msg[10] = (char)('0' + left); msg[11] = '\0';
+                draw_text_box(0, 110, 240, &FONT_S, msg, RGB(255, 60, 60), 1);
+            }
+        } else if (held > 5000u) {
+            fm1_audio_stop();
+            lcd_fill(0, 0, 240, 240, C_BLACK);
+            draw_text_box(0, 110, 240, &FONT_S, "UPDATE MODE", C_WHITE, 1);
+            usb_detach();
+            fm1_delay_ms(30);
+            bootguard.pending = 0;
+            fm1_stub_request(STUB_REQ_RESCUE);
+        }
+    } else {
+        if (upd_countdown) {
+            upd_countdown = 0;
+            g_dirty_screen = 1;
+        }
+        upd_t0 = fm1_ms;
     }
     if (fm1_ms >= 30000u && bootguard.pending)
         bootguard_clear(&bootguard);            /* 30 s up: this firmware boots */

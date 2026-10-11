@@ -1,25 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* App entry. The SPL maps app.bin at XIP 0x02000120 and jumps to its first
- * byte with r0 = boot-parameter block (0x01C7FE08, inside the vector table).
- * The SPL expects `goto +4; rts` as the first instruction. The core state
- * the SPL left is saved first; then interrupts off and our stacks. */
+/* FM-1 app entry. The boot stub (firmware/stub, app.bin's first 0xEE0 bytes at XIP 0x02000120, where the SPL
+ * jumps) checks the commit marker and enters here, the body's first byte at XIP 0x02001000, with interrupts off and
+ * the watchdog armed (docs/BOOT-SAFETY.md). The core state the SPL left (icfg, psr, r0, sp, ssp) is in STATUS
+ * (0x01C07F20..): the stub's crt0 saved it. The first instruction keeps the SPL's `goto +4; rts` form. */
 	.section .text.crt0,"ax",@progbits
 	.globl _start
 _start:
 	goto 1f
 	rts
-1:	r1 = icfg
-	r2 = psr
-	cli
-	r3 = 0x1C07F00		/* STATUS (debug area) */
-	[r3 + 0x20] = r1	/* icfg as handed over */
-	[r3 + 0x24] = r2	/* psr */
-	[r3 + 0x28] = r0	/* boot-parameter pointer */
-	r1 = sp
-	[r3 + 0x2C] = r1
-	r1 = ssp
-	[r3 + 0x30] = r1
+1:	cli
 	sp = _ustack_top
 	ssp = _sstack_top
 	call fm1_cstart

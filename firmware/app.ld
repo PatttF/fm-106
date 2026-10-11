@@ -1,20 +1,24 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* Felucca memory map.
- * Code + constants execute in place from XIP (app.bin offset 0 = 0x02000120).
+/* FELUCCA memory map.
+ * Code + constants execute in place from XIP. app.bin offset 0 = 0x02000120 is the boot stub (firmware/stub,
+ * 0xEE0 bytes: flash 0x4120..0x4FFF); the app is linked from the next sector, XIP 0x02001000 = flash 0x5000, up
+ * to the commit marker's sector at flash 0x91000.
  * 0x01C00000..0x01C06000 holds .ram_text (code that must run while the flash
  * is busy: the flash driver); 0x01C06000..0x01C08000 stays for RAM-run debug.
  * RAM  : .data/.bss (96 KiB)
  * POOL : big zero-initialised buffers (FX lines, canvases), section .pool
  * STACKS with 256-byte guard bands; NOINIT survives resets and UBOOT entry.
+ * 0x01C7C000..0x01C7C01F is the boot stub's (its rescue word and mailbox, firmware/stub/stub.c): NOINIT starts
+ * after it.
  * 0x01C7FD50.. is reserved: boot_info, boot-state mailbox, vector table. */
 MEMORY
 {
-    XIP    (rx)  : ORIGIN = 0x02000120, LENGTH = 0x8DFBC
+    XIP    (rx)  : ORIGIN = 0x02001000, LENGTH = 0x8C000
     RAMTEXT (rwx): ORIGIN = 0x01C00000, LENGTH = 0x6000
     RAM    (rwx) : ORIGIN = 0x01C08000, LENGTH = 96K
     POOL   (rw)  : ORIGIN = 0x01C20000, LENGTH = 0x54000
-    NOINIT (rw)  : ORIGIN = 0x01C7C000, LENGTH = 0x3D50
+    NOINIT (rw)  : ORIGIN = 0x01C7C020, LENGTH = 0x3D30
 }
 SECTIONS
 {

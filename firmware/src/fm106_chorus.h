@@ -89,11 +89,13 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
         return;
     }
 
+    /* Soft limit input to preserve analog headroom and dry:wet ratio */
+    int32_t in_sat = fm106_soft_limit(mono_in);
+
     /* Store incoming audio in delay rings */
     uint32_t wr = c->wr_idx;
-    int32_t in_clamped = fm106_clamp(mono_in, -32768, 32767);
-    c->buf_l[wr] = (int16_t)in_clamped;
-    c->buf_r[wr] = (int16_t)in_clamped;
+    c->buf_l[wr] = (int16_t)in_sat;
+    c->buf_r[wr] = (int16_t)in_sat;
     c->wr_idx = (wr + 1u) & FM106_CHORUS_MASK;
 
     /* LFO parameters according to mode */
@@ -151,8 +153,8 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
     wet_r = fm106_bbd_filter_process(&c->filt_r, wet_r);
 
     /* IC6 summer output: authentic Roland dry:wet ratio (0.863 : 1.257 = 21209 : 30892 in Q15) */
-    int32_t sl = (int32_t)(((int64_t)mono_in * 21209LL + (int64_t)wet_l * 30892LL) >> 15);
-    int32_t sr = (int32_t)(((int64_t)mono_in * 21209LL + (int64_t)wet_r * 30892LL) >> 15);
+    int32_t sl = (int32_t)(((int64_t)in_sat * 21209LL + (int64_t)wet_l * 30892LL) >> 15);
+    int32_t sr = (int32_t)(((int64_t)in_sat * 21209LL + (int64_t)wet_r * 30892LL) >> 15);
 
     *out_l = fm106_soft_limit(sl);
     *out_r = fm106_soft_limit(sr);

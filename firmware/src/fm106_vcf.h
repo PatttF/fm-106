@@ -299,7 +299,7 @@ static inline int32_t fm106_bass_boost(fm106_hpf_t *h, int32_t in)
     int64_t lp1_q16 = h->bb_s1 + v1_q16;
     h->bb_s1 = lp1_q16 + v1_q16;
     int32_t lp1 = (int32_t)(lp1_q16 >> 16);
-    int32_t y1 = lp1 + (((in - lp1) * 27019) >> 15);
+    int32_t y1 = lp1 + (int32_t)(((int64_t)(in - lp1) * 27019LL) >> 15);
 
     /* Stage 2: 1-pole TPT (g2_div in Q24: 86019, kz2 in Q15: 2979) */
     int64_t diff2 = ((int64_t)y1 << 16) - h->bb_s2;
@@ -307,7 +307,7 @@ static inline int32_t fm106_bass_boost(fm106_hpf_t *h, int32_t in)
     int64_t lp2_q16 = h->bb_s2 + v2_q16;
     h->bb_s2 = lp2_q16 + v2_q16;
     int32_t lp2 = (int32_t)(lp2_q16 >> 16);
-    int32_t y2 = lp2 + (((y1 - lp2) * 2979) >> 15);
+    int32_t y2 = lp2 + (int32_t)(((int64_t)(y1 - lp2) * 2979LL) >> 15);
 
     /* Boost path summing (alpha * G2_dc = 2.3496 -> Q15: 77000) */
     int32_t boosted = in + (int32_t)(((int64_t)y2 * 77000LL) >> 15);

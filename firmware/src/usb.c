@@ -71,46 +71,48 @@ static struct {
  * 48..119 with no glitch; one render was once seen 29 frames under the floor: a packet (46) must
  * still be in hand then. */
 #define UA_N 2048u               /* ring, frames (16-bit L | R << 16); expanded to absorb host polling jitter */
-#define UA_PRIME 104u            /* silence ahead of the first rendered frame */
-#define UA_LO 80u                /* a render may start late: keep a packet and more in hand */
-#define UA_HI 128u
+#define UA_TARGET 512u           /* primed once the ring holds 512 frames (~11.6 ms cushion) */
+#define UA_FILL_LO 256u          /* low hysteresis floor (~5.8 ms): render delays never drop below */
+#define UA_FILL_HI 768u          /* high hysteresis ceiling (~17.4 ms) */
+#define UA_NUDGE_EVERY 10u       /* at most one frame nudged per 10 packets on clock drift */
 #define UAC_RATE 44100u
-#if FELUCCA_UAC_48K
-/* 48 kHz: the same times in 48 kHz frames (x 160 / 147); a render of HALF_FRAMES gives 139..140 frames */
-#define UA_PRIME48 113u
-#define UA_LO48 87u
-#define UA_HI48 139u
-#define UA_REND48 ((HALF_FRAMES * 160u + 146u) / 147u)
-#define UA_MAXF 49u              /* frames in the largest packet: 48 + 1 */
-_Static_assert(UA_HI48 + UA_REND48 + UA_MAXF < UA_N, "the ring holds the band, a render and a packet (48 kHz)");
-#else
-#define UA_MAXF 46u              /* frames in the largest packet */
-#endif
-#define UAC_MAXP (UA_MAXF * 4u)
-_Static_assert(UA_HI + HALF_FRAMES + UA_MAXF < UA_N, "the ring holds the band, a render and a packet");
+#define UA_MAXF 64u              /* frames in the largest packet buffer (256 bytes) */
+#define UA_EP_MAXP 256u          /* wMaxPacketSize: ample headroom for USB bit-stuffing on USB 2 hubs (worst case 7/6) */
+_Static_assert(UA_FILL_HI + HALF_FRAMES + UA_MAXF < UA_N, "the ring holds the band, a render and a packet");
 static uint32_t ua_ring[UA_N];
 static volatile uint32_t ua_w, ua_r;
-static uint32_t ep4tx[UA_MAXF] __attribute__((aligned(4)));
+static uint32_t ep4tx[2][UA_MAXF] __attribute__((aligned(4)));
+static uint32_t ep4_len[2];
+static uint8_t ep4_slot;
+static volatile uint8_t usb_sie_owner;
 static struct {
     volatile uint8_t alt;        /* streaming interface setting: 1 = the host records */
     volatile uint8_t r48;        /* the host's rate (SET_CUR): 1 = 48 kHz, 0 = 44.1 (bus reset) */
-    uint8_t ring48;              /* the rate the ring was primed for (the render's; a change re-primes) */
-    volatile uint8_t go;         /* the ring is primed: the consumer reads it (0: silence packets) */
-    volatile uint8_t flowing;    /* the host takes our packets (it may set alt 1 well before it reads) */
+    volatile uint8_t cap_ready;  /* primed: data once the ring holds UA_TARGET frames */
+    volatile uint8_t cap_hold;   /* stream open but host has not taken a packet yet (or stalled): do not feed ring */
+    volatile uint8_t flowing;    /* the host takes our packets */
     uint8_t queued;              /* a packet was queued since the stream (re)started */
-    uint8_t feed;                /* this render feeds the ring (sampled when it starts) */
-    uint8_t wait;                /* polls the queued packet has waited */
+    uint16_t wait;               /* polls the queued packet has waited */
     uint8_t e0_rx;               /* SET_CUR sampling frequency: data stage pending */
-    volatile uint32_t fill_min;  /* ring fill when the last render started */
-    uint32_t acc;                /* 44.1 frames per ms: 0.1 frame steps */
-    uint32_t last;               /* the last frame sent, repeated on an underrun */
+    int8_t cap_pend;             /* a +-1 frame nudge waiting for its packet */
+    uint32_t cap_nudge;          /* packets since last nudge */
+    uint32_t cap_frac;           /* fixed-point rate pattern accumulator (10.14) */
+    uint32_t fill_min;           /* current ring fill */
     uint32_t starts, pkts, frames;               /* frames in packets sent from the ring */
-    uint32_t underruns, overruns, missed;        /* glitches: ring empty (repeat), ring full (drop), no packet ready */
-    uint32_t stalls;                             /* the host stopped reading for > 20 ms (alt still 1) */
-    uint32_t adj_up, adj_down;                   /* packets one frame longer / shorter than the pattern */
-    uint32_t fill_lo, fill_hi;                   /* range of fill_min since the stream started */
-    uint32_t rate_sets;                          /* SET_CUR sampling frequency requests */
+    uint32_t underruns, overruns, missed;        /* glitches */
+    uint32_t stalls;                             /* host stopped reading > 20 ms */
+    uint32_t adj_up, adj_down;                   /* nudged packets */
+    uint32_t fill_lo, fill_hi;                   /* min/max ring fill observed */
+    uint32_t rate_sets;                          /* SET_CUR requests */
 } uac;
+static void uac_cap_reset(void)
+{
+    ua_r = ua_w = 0;
+    uac.cap_ready = 0;
+    uac.cap_pend = 0;
+    uac.cap_nudge = 0;
+    uac.cap_frac = 0;
+}
 #if FELUCCA_UAC_48K
 #include "uac_fir.h"
 /* the resampler's input history: the last 16 frames, written twice so a window of UAC_FIR_N never wraps */
@@ -220,7 +222,7 @@ static const uint8_t CFG_DESC[] = {
     11, 0x24, 2, 1, 2, 2, 16, 1, UAC_RATE & 0xFF, (UAC_RATE >> 8) & 0xFF, UAC_RATE >> 16,
                                                         /* type I: 2 ch, 16 bit, one rate */
 #endif
-    9, 5, 0x84, 0x05, UAC_MAXP & 0xFF, UAC_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */
+    9, 5, 0x84, 0x05, UA_EP_MAXP & 0xFF, UA_EP_MAXP >> 8, 1, 0, 0,   /* EP4 IN isochronous async, 1 ms */
     7, 0x25, 1, 0x01, 0, 0, 0,                          /* CS endpoint: sampling frequency control */
 #endif
 #if FELUCCA_CDC
@@ -351,6 +353,8 @@ static uint32_t sie_rd(uint32_t r)
 #if FELUCCA_UAC
 static void uac_ep4_reset(void)                         /* drop a queued packet; isochronous mode */
 {
+    ep4_slot = 0;
+    ep4_len[0] = ep4_len[1] = 0;
     sie_wr(S_INDEX, 4);
     sie_wr(S_TXCSR1, 0x48);                             /* ClrDataTog + FlushFIFO (SDK usb_g_ep_config) */
     sie_wr(S_TXCSR2, 0);
@@ -360,14 +364,15 @@ static void uac_ep4_reset(void)                         /* drop a queued packet;
 
 static void uac_stream(uint32_t alt)                    /* SET_INTERFACE, configuration, bus reset */
 {
-    uac.go = 0;                                         /* the next render primes the ring again */
-    uac.flowing = 0;                                    /* ... once the host has taken a packet */
+    uac.alt = (uint8_t)alt;
+    uac.cap_hold = (uint8_t)alt;                        /* hold audio feeding until host takes its first packet */
+    uac.flowing = 0;
     uac.queued = 0;
     uac.wait = 0;
+    ep4_slot = 0;
+    ep4_len[0] = ep4_len[1] = 0;
+    uac_cap_reset();
     RING_PUBLISH();
-    uac.alt = (uint8_t)alt;
-    uac.acc = 0;
-    uac.last = 0;
     if (alt) {                                          /* (the fill range of the last stream stays readable) */
         uac.starts++;
         uac.fill_lo = 0xFFFFFFFFu;
@@ -385,11 +390,10 @@ static void uac_rate_set(uint32_t hz)
     uint8_t r48 = (uint8_t)(FELUCCA_UAC_48K && hz >= (UAC_RATE + 48000u) / 2u);
     if (r48 == uac.r48)
         return;
-    uac.go = 0;
-    RING_PUBLISH();
     uac.r48 = r48;
-    uac.acc = 0;
+    uac_cap_reset();
     uac.pkts = uac.frames = 0;
+    RING_PUBLISH();
 }
 #endif
 
@@ -426,7 +430,7 @@ static void ep1_config(void)
     cdc.rx_pend = 1;                                    /* look once: a packet may already wait */
 #endif
 #if FELUCCA_UAC
-    fm1_usb_ep4_txbuf(ep4tx);
+    fm1_usb_ep4_txbuf(ep4tx[0]);
     sie_wr(S_INDEX, 4);
     sie_wr(S_TXMAXP, 0xFF);
     uac_ep4_reset();
@@ -656,6 +660,13 @@ static void ep0_service(void)
         }
 #endif
         e0_send(RATE, 3, wlength);
+        return;
+    }
+    case 0xA284: {                                      /* GET_RES: fixed discrete frequency resolution = 0 */
+        static const uint8_t ZERO3[3] = {0, 0, 0};
+        if (s[4] != 0x84u || s[3] != 1u)
+            goto stall;
+        e0_send(ZERO3, 3, wlength);
         return;
     }
 #endif
@@ -964,42 +975,17 @@ static void ep3_tx(void)                                /* <= 63 bytes per packe
 #endif
 
 #if FELUCCA_UAC
-/* ---- the audio input: audio.c produces (render start, then each block), TIMER5 consumes ---- */
+/* ---- the audio input: audio.c produces (uac_render_start, uac_tap), TIMER5 consumes (uac_service) ---- */
 static __attribute__((noinline)) void uac_render_start(void)   /* audio ISR, before a half buffer renders */
 {
-    uint32_t fill;
-    uac.feed = uac.alt && usb.config && uac.flowing;
-    if (!uac.feed) {
-        uac.go = 0;                                     /* not read (yet / any more): prime when it is */
-        return;
+    if (uac.alt && !uac.cap_hold) {
+        uint32_t fill = ua_w - ua_r;
+        uac.fill_min = fill;
+        if (fill < uac.fill_lo)
+            uac.fill_lo = fill;
+        if (fill > uac.fill_hi)
+            uac.fill_hi = fill;
     }
-    if (!uac.go || uac.ring48 != uac.r48) {             /* (re)start: silence ahead, then this render */
-        uint32_t r = ua_r, i, prime = UA_PRIME;
-        uac.go = 0;
-#if FELUCCA_UAC_48K
-        uac.ring48 = uac.r48;
-        if (uac.ring48) {                               /* the resampler starts from silence */
-            prime = UA_PRIME48;
-            for (i = 0; i < 2u * RS_H; i++)
-                rs.l[i] = rs.r[i] = 0;
-            rs.w = rs.ph = 0;
-        }
-#endif
-        for (i = 0; i < prime; i++)
-            ua_ring[(r + i) & (UA_N - 1u)] = 0;
-        RING_PUBLISH();
-        ua_w = r + prime;
-        uac.fill_min = prime;
-        RING_PUBLISH();
-        uac.go = 1;
-        return;
-    }
-    fill = ua_w - ua_r;
-    uac.fill_min = fill;
-    if (fill < uac.fill_lo)
-        uac.fill_lo = fill;
-    if (fill > uac.fill_hi)
-        uac.fill_hi = fill;
 }
 
 static inline int32_t uac_s16(int32_t v)
@@ -1015,8 +1001,9 @@ static inline int32_t uac_s16(int32_t v)
 static __attribute__((noinline)) void uac_tap48(const int32_t *out, uint32_t n)
 {
     uint32_t w = ua_w, i, j, k = 0, h = rs.w, ph = rs.ph;
-    if (UA_N - (w - ua_r) < n + n / 8u + 2u) {         /* nobody reads: drop the block (<= n * 160 / 147 + 1) */
+    if (UA_N - (w - ua_r) < n + n / 8u + 2u) {         /* ring full: drop block and reprime */
         uac.overruns++;
+        uac_cap_reset();
         return;
     }
     for (i = 0; i < n; i++) {
@@ -1060,103 +1047,118 @@ static __attribute__((noinline)) void uac_tap48(const int32_t *out, uint32_t n)
 static __attribute__((noinline)) void uac_tap(const int32_t *out, uint32_t n)   /* audio ISR: one block (Q15) */
 {
     uint32_t w = ua_w, i;
-    if (!uac.feed)
+    if (!uac.alt || uac.cap_hold)
         return;
 #if FELUCCA_UAC_48K
-    if (uac.ring48) {
+    if (uac.r48) {
         uac_tap48(out, n);
         return;
     }
 #endif
-    if (UA_N - (w - ua_r) < n) {                        /* nobody reads: drop the block */
+    if (UA_N - (w - ua_r) < n) {                        /* ring full: drop block and reprime */
         uac.overruns++;
+        uac_cap_reset();
         return;
     }
-#if FELUCCA_UAC_TONE
-    {   /* bench: triangles of period 100 frames instead of the music (L, R in antiphase): every
-         * recorded frame must follow the one before, so a lost or repeated frame shows exactly */
-        static uint32_t ph;
-        for (i = 0; i < n; i++, ph = ph == 99u ? 0u : ph + 1u) {
-            uint32_t q = ph < 50u ? ph : 100u - ph, q2 = ph < 50u ? 50u - ph : ph - 50u;
-            ua_ring[(w + i) & (UA_N - 1u)] = (uint32_t)(uint16_t)(int16_t)((int32_t)q * 1000 - 25000) |
-                                             (uint32_t)(uint16_t)(int16_t)((int32_t)q2 * 1000 - 25000) << 16;
-        }
-        (void)out;
-    }
-#else
     for (i = 0; i < n; i++)
         ua_ring[(w + i) & (UA_N - 1u)] = (uint32_t)(uint16_t)uac_s16(out[2u * i]) |
                                          (uint32_t)(uint16_t)uac_s16(out[2u * i + 1u]) << 16;
-#endif
     RING_PUBLISH();
     ua_w = w + n;
 }
 
-/* the next packet into d: 44 / 45 frames (+-1 to hold the ring's fill), from the ring or, until it is
- * primed, silence. An empty ring repeats the last frame. Returns the frame count. */
+/* the next packet into d: fixed 44.1 pattern (44 frames, 45 every 10th packet),
+ * or 48 frames at 48 kHz. Drift against I2S clock is absorbed by rare +-1 frame nudge
+ * only when fill leaves UA_FILL_LO..UA_FILL_HI. Returns the frame count. */
 static uint32_t uac_packet(uint32_t *d)
 {
-    uint32_t n = 44u, r, fill, k, i, lo = UA_LO, hi = UA_HI;
-#if FELUCCA_UAC_48K
-    if (uac.r48) {                                      /* 48 frames a ms, no pattern */
-        n = 48u;
-        lo = UA_LO48;
-        hi = UA_HI48;
-    } else
-#endif
-    {
-        uac.acc += UAC_RATE % 1000u;
-        if (uac.acc >= 1000u) {
-            uac.acc -= 1000u;
+    uint32_t pattern = uac.r48 ? (48000u * 16384u / 1000u) : ((UAC_RATE * 16384u) / 1000u);
+    uint32_t max_f = uac.r48 ? 49u : 45u;
+    uint32_t n, i, take = 0;
+
+    uac.cap_frac += pattern;
+    n = uac.cap_frac >> 14;
+    uac.cap_frac &= 16383u;
+    if (n > max_f)
+        n = max_f;
+
+    /* Prime: once the ring has buffered UA_TARGET frames, start delivering audio */
+    if (!uac.cap_ready && (ua_w - ua_r >= UA_TARGET))
+        uac.cap_ready = 1;
+
+    if (uac.cap_ready) {
+        uint32_t f = ua_w - ua_r;
+        if (uac.cap_nudge < UA_NUDGE_EVERY)
+            uac.cap_nudge++;
+        else if (!uac.cap_pend && (f > UA_FILL_HI || f < UA_FILL_LO))
+            uac.cap_pend = (f > UA_FILL_HI) ? 1 : -1;
+
+        if (uac.cap_pend > 0 && n == max_f - 1u) {
             n++;
+            uac.cap_pend = 0;
+            uac.cap_nudge = 0;
+            uac.adj_up++;
+        } else if (uac.cap_pend < 0 && n == max_f) {
+            n--;
+            uac.cap_pend = 0;
+            uac.cap_nudge = 0;
+            uac.adj_down++;
         }
     }
-    if (!uac.go || uac.ring48 != uac.r48) {             /* not primed (at this rate) yet */
+
+    if (uac.cap_ready) {
+        uint32_t avail = ua_w - ua_r;
+        if (avail >= n) {
+            take = n;
+        } else if (avail > 0) {
+            uac.underruns++;
+            take = avail;
+        } else {
+            uac.underruns++;
+            take = 0;
+        }
+    }
+
+    if (take > 0) {
+        uint32_t r = ua_r;
+        for (i = 0; i < take; i++)
+            d[i] = ua_ring[(r + i) & (UA_N - 1u)];
+        uint32_t last_s = d[take - 1];
+        for (; i < n; i++)
+            d[i] = last_s;
+        RING_PUBLISH();
+        ua_r = r + take;
+        uac.pkts++;
+        uac.frames += n;
+    } else {
         for (i = 0; i < n; i++)
             d[i] = 0;
-        return n;
     }
-    if (uac.fill_min > hi) {
-        n++;
-        uac.adj_up++;
-    } else if (uac.fill_min < lo) {
-        n--;
-        uac.adj_down++;
-    }
-    r = ua_r;
-    fill = ua_w - r;
-    RING_PUBLISH();                                     /* the slots after the index */
-    k = fill < n ? fill : n;
-    for (i = 0; i < k; i++)
-        d[i] = ua_ring[(r + i) & (UA_N - 1u)];
-    if (k < n) {
-        uint32_t last = k ? d[k - 1u] : uac.last;
-        uac.underruns++;
-        for (; i < n; i++)
-            d[i] = last;
-    }
-    uac.last = d[n - 1u];
-    RING_PUBLISH();
-    ua_r = r + k;
-    uac.pkts++;
-    uac.frames += n;
     return n;
 }
 
-/* TIMER5, 2 kHz, also nested in the render: the host takes one packet per 1 ms frame; queue the
- * next one as soon as the last has gone (TxPktRdy clear). Not paced on SOF-pending (see usb_poll).
- * The ring is fed only while the host reads: it often selects alt 1 long before its first IN token,
- * and a recorder may stop reading without going back to alt 0 (a packet waiting > 20 ms). */
+static void uac_prepare(void)
+{
+    if (uac.alt && !ep4_len[ep4_slot]) {
+        ep4_len[ep4_slot] = uac_packet(ep4tx[ep4_slot]) * 4u;
+    }
+}
+
+/* TIMER5 at 10 kHz, also nested in the render: the host takes one packet per 1 ms frame; queue the
+ * next one as soon as the last has gone (TxPktRdy clear).
+ * Pre-buffering in ep4_len ensures arming takes < 1 µs without sample computation delay. */
 static void uac_service(void)
 {
-    uint32_t csr, n;
+    uint32_t csr;
     if (!usb.up || !usb.config || !uac.alt)
         return;
     sie_wr(S_INDEX, 4);
     csr = sie_rd(S_TXCSR1);
     if (csr & 0x01u) {                                  /* still queued */
-        if (uac.wait < 255u && ++uac.wait == 40u && uac.flowing) {
+        if (uac.wait < 60000u && ++uac.wait >= 500u && uac.flowing) {
             uac.flowing = 0;
+            uac.cap_hold = 1;                           /* host stopped reading: stop feeding ring */
+            uac_cap_reset();
             uac.stalls++;
         }
         return;
@@ -1165,12 +1167,38 @@ static void uac_service(void)
         if (csr & 0x04u)
             uac.missed++;                               /* UnderRun: an IN token found nothing queued */
         uac.flowing = 1;
+        if (uac.cap_hold) {
+            uac.cap_hold = 0;                           /* host took first packet: start feeding ring */
+            uac_cap_reset();
+        }
     }
     uac.queued = 1;
     uac.wait = 0;
-    n = uac_packet(ep4tx);
-    fm1_usb_ep4_send(ep4tx, n * 4u);
+    if (!ep4_len[ep4_slot])
+        ep4_len[ep4_slot] = uac_packet(ep4tx[ep4_slot]) * 4u;
+    fm1_usb_ep4_send(ep4tx[ep4_slot], ep4_len[ep4_slot]);
     sie_wr(S_TXCSR1, 0x01);                             /* TxPktRdy (and UnderRun cleared) */
+    ep4_len[ep4_slot] = 0;
+    ep4_slot ^= 1u;
+    uac_prepare();
+}
+
+static void uac_service_safe(void)
+{
+    if (usb_sie_owner)
+        return;
+    usb_sie_owner = 1;
+    uac_service();
+    usb_sie_owner = 0;
+}
+
+static inline void uac_isr_service(void)
+{
+    if (!uac.alt)
+        return;
+    fm1_irq_off();
+    uac_service_safe();
+    fm1_irq_on();
 }
 #endif
 
@@ -1262,9 +1290,6 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         if (cdc.dtr)
             ep3_tx();
     }
-#endif
-#if FELUCCA_UAC
-    uac_service();
 #endif
 }
 

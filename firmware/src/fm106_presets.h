@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 typedef struct {
-    const char name[16];
+    char name[16];
     uint8_t p[44];
 } fm106_preset_t;
 

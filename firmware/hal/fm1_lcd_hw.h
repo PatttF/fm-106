@@ -44,6 +44,12 @@ FM1_INLINE void fm1_lcd_hw_init(void)
     FM1_LCD_SPI_BAUD = 4u;
 }
 
+FM1_INLINE void fm1_panel_rail(void)
+{
+    FM1_LCD_PA_OUT &= ~FM1_LCD_BL;
+    FM1_LCD_PA_DIR &= ~FM1_LCD_BL;
+}
+
 FM1_INLINE void fm1_lcd_baud(uint32_t b) { FM1_LCD_SPI_BAUD = b; }
 
 static void fm1_lcd_wait(void)

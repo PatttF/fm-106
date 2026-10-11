@@ -171,12 +171,25 @@ enum {
     UI_MODE_NORMAL = 0,
     UI_MODE_MENU,
     UI_MODE_MIDI,
+    UI_MODE_SAVE,
     UI_MODE_COUNT
 };
 
 static uint8_t g_ui_mode = UI_MODE_NORMAL;
 static uint8_t g_menu_sel = 0;
 static uint8_t g_midi_sel = 0;
+
+static uint8_t g_save_slot = 0;          /* Target user slot (0..127 -> UA11..UB88) */
+static char g_save_name[16];             /* 15 chars + null */
+static uint8_t g_save_cursor = 0;        /* 0..14 */
+static uint8_t g_save_del_confirm = 0;   /* 0 = normal, 1 = "Are you sure?" */
+static uint32_t t_save_down = 0;         /* Timestamp when BTN_SAVE was pressed */
+static uint8_t save_held_active = 0;     /* 1 if long press triggered UI_MODE_SAVE */
+static char g_banner_msg[32] = {0};      /* Screen notification banner */
+static uint32_t g_banner_until = 0;      /* Expiry timestamp for banner */
+
+static const char CHAR_SET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-_./#+!";
+#define CHAR_SET_LEN ((int32_t)(sizeof(CHAR_SET) - 1))
 
 #define MENU_MAIN_COUNT 2
 #define MENU_MIDI_COUNT 2
@@ -311,11 +324,21 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     cv_rect(6, 18, 228, 2, C_STRIPE_CYAN);
 
     /* Patch Display: Roland recessed bezel with red 7-seg code + white preset name */
+    const char *disp_name = patch_name;
+    uint16_t name_color = C_TEXT_WHITE;
+    if (g_banner_until > fm1_ms && g_banner_msg[0] != '\0') {
+        disp_name = g_banner_msg;
+        name_color = C_ROLAND_AMBER;
+    } else if (patch_name[0] == '\0') {
+        disp_name = "<EMPTY>";
+        name_color = C_TEXT_DIM;
+    }
+
     cv_rect(6, 22, 228, 18, C_BLACK);
     cv_rect(6, 22, 228, 1, C_LINE_DIV);
     cv_rect(6, 39, 228, 1, C_LINE_DIV);
     cv_text(12, 23, &FONT_S, code, C_LED_ON);
-    cv_text(52, 23, &FONT_S, patch_name, C_TEXT_WHITE);
+    cv_text(52, 23, &FONT_S, disp_name, name_color);
 
     /* --- Voice LEDs (y=44..57) --- */
     cv_text(8, 44, &FONT_S, "VOICES", C_TEXT_DIM);
@@ -537,6 +560,298 @@ typedef struct {
     uint8_t sync_mode;      /* 0 = off, 1 = master, 2 = slave */
 } fm106_settings_t;
 
+static void fm106_format_slot_code(uint8_t patch_idx, char *out)
+{
+    uint32_t bank_idx = (uint32_t)patch_idx / 64u;
+    uint32_t local = (uint32_t)patch_idx % 64u;
+    uint32_t b_num = (local / 8u) + 1u;
+    uint32_t p_num = (local % 8u) + 1u;
+    uint32_t i = 0;
+    if (bank_idx == 0u) {
+        out[i++] = 'A';
+    } else if (bank_idx == 1u) {
+        out[i++] = 'B';
+    } else if (bank_idx == 2u) {
+        out[i++] = 'U';
+        out[i++] = 'A';
+    } else {
+        out[i++] = 'U';
+        out[i++] = 'B';
+    }
+    out[i++] = (char)('0' + b_num);
+    out[i++] = (char)('0' + p_num);
+    out[i] = '\0';
+}
+
+static void fm106_set_banner(const char *prefix, const char *suffix)
+{
+    uint32_t i = 0;
+    while (prefix && prefix[i] && i < sizeof(g_banner_msg) - 1u) {
+        g_banner_msg[i] = prefix[i];
+        i++;
+    }
+    uint32_t j = 0;
+    while (suffix && suffix[j] && i < sizeof(g_banner_msg) - 1u) {
+        g_banner_msg[i++] = suffix[j++];
+    }
+    g_banner_msg[i] = '\0';
+    g_banner_until = fm1_ms + 2000u;
+}
+
+static int fm106_find_next_preset(uint32_t cur_patch, int32_t dir)
+{
+    uint32_t bank = cur_patch / 64u;
+    uint32_t slot = cur_patch % 64u;
+
+    if (bank < 2u) {
+        int32_t ns = (int32_t)slot + (dir > 0 ? 1 : -1);
+        while (ns < 0) ns += 64;
+        while (ns >= 64) ns -= 64;
+        return (int)(bank * 64u + (uint32_t)ns);
+    }
+
+    int32_t step = (dir > 0) ? 1 : -1;
+    for (int i = 1; i < 64; i++) {
+        int32_t test_slot = ((int32_t)slot + i * step) % 64;
+        if (test_slot < 0) test_slot += 64;
+        uint32_t uidx = (bank - 2u) * 64u + (uint32_t)test_slot;
+        if (g_user_presets[uidx].name[0] != '\0') {
+            return (int)(bank * 64u + (uint32_t)test_slot);
+        }
+    }
+    return (int)cur_patch;
+}
+
+static uint32_t fm106_bank_first_preset(uint32_t bank, uint32_t fallback_slot)
+{
+    if (bank < 2u) {
+        return bank * 64u + (fallback_slot % 64u);
+    }
+    uint32_t u_base = (bank - 2u) * 64u;
+    if (fallback_slot < 64u && g_user_presets[u_base + fallback_slot].name[0] != '\0') {
+        return bank * 64u + fallback_slot;
+    }
+    for (uint32_t s = 0; s < 64u; s++) {
+        if (g_user_presets[u_base + s].name[0] != '\0') {
+            return bank * 64u + s;
+        }
+    }
+    return bank * 64u;
+}
+
+static void fm106_enter_save_menu(void)
+{
+    g_save_del_confirm = 0;
+    g_save_cursor = 0;
+
+    if (g_synth.patch_idx >= 128u) {
+        g_save_slot = g_synth.patch_idx - 128u;
+        uint32_t len = 0;
+        while (g_synth.patch_name[len] && len < 15u) {
+            g_save_name[len] = g_synth.patch_name[len];
+            len++;
+        }
+        while (len < 15u) g_save_name[len++] = ' ';
+        g_save_name[15] = '\0';
+    } else {
+        int first_blank = 0;
+        for (uint32_t i = 0; i < FM106_NUM_USER_PRESETS; i++) {
+            if (g_user_presets[i].name[0] == '\0') {
+                first_blank = (int)i;
+                break;
+            }
+        }
+        g_save_slot = (uint8_t)first_blank;
+        g_save_name[0] = '*';
+        uint32_t len = 1;
+        uint32_t pi = 0;
+        while (g_synth.patch_name[pi] && len < 15u) {
+            g_save_name[len++] = g_synth.patch_name[pi++];
+        }
+        while (len < 15u) g_save_name[len++] = ' ';
+        g_save_name[15] = '\0';
+    }
+    int all_spaces = 1;
+    for (int i = 0; i < 15; i++) {
+        if (g_save_name[i] != ' ') { all_spaces = 0; break; }
+    }
+    if (all_spaces) {
+        memcpy(g_save_name, "Init Patch     ", 15);
+        g_save_name[15] = '\0';
+    }
+}
+
+static void fm106_do_short_save(fm106_settings_t *set)
+{
+    char code_buf[8];
+    if (g_synth.patch_idx < 128u) {
+        int first_blank = -1;
+        for (uint32_t i = 0; i < FM106_NUM_USER_PRESETS; i++) {
+            if (g_user_presets[i].name[0] == '\0') {
+                first_blank = (int)i;
+                break;
+            }
+        }
+        if (first_blank < 0) {
+            fm106_set_banner("USER BANKS FULL!", "");
+            return;
+        }
+        char target_name[16];
+        target_name[0] = '*';
+        uint32_t ti = 1, pi = 0;
+        while (g_synth.patch_name[pi] && ti < 15u) {
+            target_name[ti++] = g_synth.patch_name[pi++];
+        }
+        target_name[ti] = '\0';
+        fm106_save_engine_to_preset(&g_user_presets[first_blank], &g_synth, target_name);
+        fm106_user_presets_save_flash();
+        g_synth.patch_idx = (uint8_t)(128u + (uint32_t)first_blank);
+        str_cpy(g_synth.patch_name, target_name, sizeof(g_synth.patch_name));
+        set->patch = g_synth.patch_idx;
+        set->octave = (int8_t)g_synth.octave_shift;
+        settings_save(set, sizeof(*set));
+        fm106_format_slot_code(g_synth.patch_idx, code_buf);
+        fm106_set_banner("SAVED TO ", code_buf);
+    } else {
+        uint32_t uidx = g_synth.patch_idx - 128u;
+        const char *name_to_use = g_synth.patch_name[0] ? g_synth.patch_name : "User Patch";
+        fm106_save_engine_to_preset(&g_user_presets[uidx], &g_synth, name_to_use);
+        fm106_user_presets_save_flash();
+        str_cpy(g_synth.patch_name, name_to_use, sizeof(g_synth.patch_name));
+        set->patch = g_synth.patch_idx;
+        set->octave = (int8_t)g_synth.octave_shift;
+        settings_save(set, sizeof(*set));
+        fm106_format_slot_code(g_synth.patch_idx, code_buf);
+        fm106_set_banner("SAVED TO ", code_buf);
+    }
+}
+
+static void draw_save_menu(void)
+{
+    /* Canvas 1 (y=0..75, height 76): Header + Target Slot */
+    cv_begin(240, 76, C_BG);
+
+    cv_rect(6, 4, 4, 12, C_ROLAND_RED);
+    cv_text(16, 2, &FONT_S, "SAVE PRESET", C_STRIPE_CYAN);
+    cv_text(130, 2, &FONT_S, "[SELECT] slot", C_ROLAND_AMBER);
+    cv_rect(6, 18, 228, 2, C_STRIPE_CYAN);
+
+    cv_text(8, 22, &FONT_S, "DESTINATION:", C_TEXT_DIM);
+
+    cv_rect(6, 38, 228, 34, C_BLACK);
+    cv_rect(6, 38, 228, 1, C_LINE_DIV);
+    cv_rect(6, 71, 228, 1, C_LINE_DIV);
+
+    char target_code[8];
+    fm106_format_slot_code(128u + g_save_slot, target_code);
+    cv_text(12, 46, &FONT_S, target_code, C_LED_ON);
+
+    const char *target_exist = g_user_presets[g_save_slot].name;
+    if (target_exist[0] == '\0') {
+        cv_text(68, 46, &FONT_S, "<BLANK SLOT>", C_ROLAND_AMBER);
+    } else {
+        char exist_buf[24];
+        exist_buf[0] = 'O'; exist_buf[1] = 'W'; exist_buf[2] = ':'; exist_buf[3] = ' ';
+        uint32_t ei = 4, ti = 0;
+        while (target_exist[ti] && ei < sizeof(exist_buf) - 1u) {
+            exist_buf[ei++] = target_exist[ti++];
+        }
+        exist_buf[ei] = '\0';
+        cv_text(68, 46, &FONT_S, exist_buf, C_TEXT_DIM);
+    }
+
+    cv_blit(0, 0);
+
+    /* Canvas 2 (y=76..159, height 84): Name Editor with Cursor */
+    cv_begin(240, 84, C_BG);
+
+    cv_text(8, 2, &FONT_S, "PATCH NAME:", C_TEXT_DIM);
+    cv_text(90, 2, &FONT_S, "ALGO:< > PRESET:A-Z", C_STRIPE_CYAN);
+
+    cv_rect(6, 20, 228, 38, C_BLACK);
+    cv_rect(6, 20, 228, 1, C_LINE_DIV);
+    cv_rect(6, 57, 228, 1, C_LINE_DIV);
+
+    for (uint32_t i = 0; i < 15u; i++) {
+        char ch = g_save_name[i];
+        if (ch == '\0') ch = ' ';
+        int32_t cx = 10 + (int32_t)i * 15;
+
+        if (i == (uint32_t)g_save_cursor) {
+            cv_rect(cx, 24, 14, 28, C_ROLAND_AMBER);
+            char s[2] = { ch, '\0' };
+            cv_text(cx + 3, 30, &FONT_S, s, C_BLACK);
+        } else {
+            char s[2] = { ch, '\0' };
+            cv_text(cx + 3, 30, &FONT_S, s, C_TEXT_WHITE);
+        }
+    }
+
+    char cur_ch = g_save_name[g_save_cursor];
+    if (cur_ch == '\0') cur_ch = ' ';
+    char hint_buf[24];
+    uint32_t hi = 0;
+    const char *hprefix = "CHAR [";
+    while (hprefix[hi]) { hint_buf[hi] = hprefix[hi]; hi++; }
+    uint32_t cpos = (uint32_t)g_save_cursor + 1u;
+    if (cpos >= 10u) {
+        hint_buf[hi++] = '1';
+        hint_buf[hi++] = (char)('0' + (cpos % 10u));
+    } else {
+        hint_buf[hi++] = (char)('0' + cpos);
+    }
+    hint_buf[hi++] = '/'; hint_buf[hi++] = '1'; hint_buf[hi++] = '5'; hint_buf[hi++] = ']';
+    hint_buf[hi++] = ':'; hint_buf[hi++] = ' '; hint_buf[hi++] = '\'';
+    hint_buf[hi++] = cur_ch;
+    hint_buf[hi++] = '\'';
+    hint_buf[hi] = '\0';
+    cv_text(8, 64, &FONT_S, hint_buf, C_TEXT_DIM);
+
+    cv_blit(0, 76);
+
+    /* Canvas 3 (y=160..239, height 80): Action Buttons + Delete */
+    cv_begin(240, 80, C_BG);
+
+    cv_rect(6, 2, 108, 24, C_BLACK);
+    cv_rect(6, 2, 108, 1, C_LINE_DIV);
+    cv_rect(6, 25, 108, 1, C_LINE_DIV);
+    cv_text(14, 6, &FONT_S, "[SAVE] Commit", C_ROLAND_AMBER);
+
+    cv_rect(126, 2, 108, 24, C_BLACK);
+    cv_rect(126, 2, 108, 1, C_LINE_DIV);
+    cv_rect(126, 25, 108, 1, C_LINE_DIV);
+    cv_text(134, 6, &FONT_S, "[HOME] Back", C_TEXT_WHITE);
+
+    int can_delete = (g_synth.patch_idx >= 128u) && (g_user_presets[g_synth.patch_idx - 128u].name[0] != '\0');
+
+    if (!can_delete) {
+        cv_text(16, 42, &FONT_S, "(Factory preset - protected)", C_TEXT_DIM);
+    } else {
+        if (g_save_del_confirm == 0) {
+            cv_rect(6, 34, 228, 36, C_BLACK);
+            cv_rect(6, 34, 228, 1, C_ROLAND_RED);
+            cv_rect(6, 69, 228, 1, C_ROLAND_RED);
+            char cur_code[8];
+            fm106_format_slot_code(g_synth.patch_idx, cur_code);
+            char del_lbl[32];
+            uint32_t di = 0;
+            const char *del_pre = "[SEL] Delete Current (";
+            while (del_pre[di]) { del_lbl[di] = del_pre[di]; di++; }
+            uint32_t ci = 0;
+            while (cur_code[ci] && di < sizeof(del_lbl) - 2u) { del_lbl[di++] = cur_code[ci++]; }
+            del_lbl[di++] = ')';
+            del_lbl[di] = '\0';
+            cv_text(14, 44, &FONT_S, del_lbl, C_ROLAND_RED);
+        } else {
+            cv_rect(6, 32, 228, 42, C_ROLAND_RED);
+            cv_text(14, 36, &FONT_S, "ARE YOU SURE?", C_TEXT_WHITE);
+            cv_text(14, 52, &FONT_S, "[SEL] Yes, Delete   [HOME] Cancel", C_TEXT_WHITE);
+        }
+    }
+
+    cv_blit(0, 160);
+}
+
 static int synth_quiet(void)
 {
     if (fm1_in.notes != 0) return 0;
@@ -646,7 +961,15 @@ static void app_main(void)
 
         /* Page jump buttons */
         if (b & (1u << BTN_HOME)) {
-            if (g_ui_mode != UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_SAVE) {
+                if (g_save_del_confirm) {
+                    g_save_del_confirm = 0;
+                    dirty_screen = 1;
+                } else {
+                    g_ui_mode = UI_MODE_NORMAL;
+                    dirty_screen = 1;
+                }
+            } else if (g_ui_mode != UI_MODE_NORMAL) {
                 if (g_ui_mode == UI_MODE_MIDI) g_ui_mode = UI_MODE_MENU;
                 else g_ui_mode = UI_MODE_NORMAL;
                 dirty_screen = 1;
@@ -674,7 +997,29 @@ static void app_main(void)
             }
         }
         if (b & (1u << BTN_SEL)) {
-            if (g_ui_mode == UI_MODE_MENU) {
+            if (g_ui_mode == UI_MODE_SAVE) {
+                int can_del = (g_synth.patch_idx >= 128u) && (g_user_presets[g_synth.patch_idx - 128u].name[0] != '\0');
+                if (can_del) {
+                    if (g_save_del_confirm == 0) {
+                        g_save_del_confirm = 1;
+                        dirty_screen = 1;
+                    } else {
+                        /* Confirmed delete of current user preset */
+                        uint32_t uidx = g_synth.patch_idx - 128u;
+                        char code_buf[8];
+                        fm106_format_slot_code(g_synth.patch_idx, code_buf);
+                        memset(&g_user_presets[uidx], 0, sizeof(fm106_preset_t));
+                        fm106_user_presets_save_flash();
+                        fm106_load_user_preset(&g_synth, g_synth.patch_idx);
+                        set.patch = g_synth.patch_idx;
+                        settings_save(&set, sizeof(set));
+                        fm106_set_banner("DELETED ", code_buf);
+                        g_save_del_confirm = 0;
+                        g_ui_mode = UI_MODE_NORMAL;
+                        dirty_screen = 1;
+                    }
+                }
+            } else if (g_ui_mode == UI_MODE_MENU) {
                 if (g_menu_sel == 0) {
                     g_ui_mode = UI_MODE_MIDI;
                     g_midi_sel = 0;
@@ -696,37 +1041,97 @@ static void app_main(void)
             }
         }
         if (b & (1u << BTN_SAVE)) {
-            if (g_ui_mode == UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_SAVE) {
+                /* Commit save to g_save_slot */
+                char clean_name[16];
+                memcpy(clean_name, g_save_name, 15);
+                clean_name[15] = '\0';
+                int32_t last = 14;
+                while (last >= 0 && clean_name[last] == ' ') {
+                    clean_name[last] = '\0';
+                    last--;
+                }
+                if (clean_name[0] == '\0') {
+                    str_cpy(clean_name, "Untitled", sizeof(clean_name));
+                }
+                fm106_save_engine_to_preset(&g_user_presets[g_save_slot], &g_synth, clean_name);
+                fm106_user_presets_save_flash();
+                g_synth.patch_idx = (uint8_t)(128u + g_save_slot);
+                str_cpy(g_synth.patch_name, clean_name, sizeof(g_synth.patch_name));
                 set.patch = g_synth.patch_idx;
                 set.octave = (int8_t)g_synth.octave_shift;
-                dirty_save = 1;
-                t_change = fm1_ms;
+                settings_save(&set, sizeof(set));
+                char code_buf[8];
+                fm106_format_slot_code(g_synth.patch_idx, code_buf);
+                fm106_set_banner("SAVED TO ", code_buf);
+                g_ui_mode = UI_MODE_NORMAL;
+                save_held_active = 1; /* suppress short save on release */
                 dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_NORMAL) {
+                t_save_down = fm1_ms;
+                save_held_active = 0;
+            }
+        }
+
+        /* Check for held SAVE button (long press >= 500 ms) in NORMAL mode */
+        if (g_ui_mode == UI_MODE_NORMAL) {
+            if (!save_held_active && (fm1_in.buttons & (1u << BTN_SAVE))) {
+                if (fm1_ms - t_save_down >= 500u) {
+                    save_held_active = 1;
+                    g_ui_mode = UI_MODE_SAVE;
+                    fm106_enter_save_menu();
+                    dirty_screen = 1;
+                }
+            }
+            if (rel & (1u << BTN_SAVE)) {
+                if (!save_held_active) {
+                    fm106_do_short_save(&set);
+                    dirty_screen = 1;
+                }
             }
         }
 
         /* 3. Panel Encoders */
-        /* Preset navigation encoder: steps within active bank (11..88) */
+        /* Preset navigation encoder: steps within active bank, skipping empty user presets */
         int32_t enc_p = fm1_enc_take(ENC_PRESETS);
         if (enc_p != 0) {
-            int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
-            int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
-            int32_t ns = cur_slot + enc_p;
-            while (ns < 0) ns += 64;
-            while (ns >= 64) ns -= 64;
-            uint32_t np = (uint32_t)(cur_bank * 64 + ns);
-            fm106_load_user_preset(&g_synth, np);
-            set.patch = (uint8_t)np;
-            dirty_save = 1;
-            t_change = fm1_ms;
-            dirty_screen = 1;
-            fm106_sysex_dump_patch((uint8_t)np);
+            if (g_ui_mode == UI_MODE_SAVE) {
+                int32_t cur_c = (int32_t)g_save_name[g_save_cursor];
+                int32_t c_idx = 0;
+                for (int32_t ci = 0; ci < CHAR_SET_LEN; ci++) {
+                    if (CHAR_SET[ci] == cur_c) {
+                        c_idx = ci;
+                        break;
+                    }
+                }
+                c_idx = (c_idx + enc_p) % CHAR_SET_LEN;
+                if (c_idx < 0) c_idx += CHAR_SET_LEN;
+                g_save_name[g_save_cursor] = CHAR_SET[c_idx];
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_NORMAL) {
+                int np = fm106_find_next_preset(g_synth.patch_idx, enc_p);
+                if (np != (int)g_synth.patch_idx) {
+                    fm106_load_user_preset(&g_synth, (uint32_t)np);
+                    set.patch = (uint8_t)np;
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                    dirty_screen = 1;
+                    fm106_sysex_dump_patch((uint8_t)np);
+                }
+            }
         }
 
         /* Select / Page encoder */
         int32_t enc_s = fm1_enc_take(ENC_SELECT);
         if (enc_s != 0) {
-            if (g_ui_mode == UI_MODE_MENU) {
+            if (g_ui_mode == UI_MODE_SAVE) {
+                int32_t ns = (int32_t)g_save_slot + enc_s;
+                while (ns < 0) ns += (int32_t)FM106_NUM_USER_PRESETS;
+                while (ns >= (int32_t)FM106_NUM_USER_PRESETS) ns -= (int32_t)FM106_NUM_USER_PRESETS;
+                g_save_slot = (uint8_t)ns;
+                g_save_del_confirm = 0;
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_MENU) {
                 int32_t nm = (int32_t)g_menu_sel + enc_s;
                 if (nm < 0) nm = MENU_MAIN_COUNT - 1;
                 if (nm >= (int32_t)MENU_MAIN_COUNT) nm = 0;
@@ -747,16 +1152,22 @@ static void app_main(void)
             }
         }
 
-        /* ALGORITHM knob: bank switching in NORMAL mode, menu editing in MENU mode */
+        /* ALGORITHM knob: bank switching in NORMAL mode, cursor in SAVE mode, menu editing in MENU mode */
         int32_t ealgo = fm1_enc_take(ENC_ALGORITHM);
         if (ealgo != 0) {
-            if (g_ui_mode == UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_SAVE) {
+                int32_t ncur = (int32_t)g_save_cursor + ealgo;
+                if (ncur < 0) ncur = 0;
+                if (ncur > 14) ncur = 14;
+                g_save_cursor = (uint8_t)ncur;
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_NORMAL) {
                 int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
                 int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
                 int32_t nb = cur_bank + ealgo;
                 while (nb < 0) nb += 4;
                 while (nb >= 4) nb -= 4;
-                uint32_t np = (uint32_t)(nb * 64 + cur_slot);
+                uint32_t np = fm106_bank_first_preset((uint32_t)nb, (uint32_t)cur_slot);
                 fm106_load_user_preset(&g_synth, np);
                 set.patch = (uint8_t)np;
                 dirty_save = 1;
@@ -999,6 +1410,11 @@ static void app_main(void)
                     g_synth.chorus.mode = d2 > 80 ? FM106_CHORUS_II : (d2 > 40 ? FM106_CHORUS_I : FM106_CHORUS_OFF);
                     dirty_screen = 1;
                 } else if (d1 == 119) {  /* Debug telemetry inquiry */
+                    midi_send(0xB0, 114, (uint8_t)(uac.alt & 0x7Fu));
+                    midi_send(0xB0, 115, (uint8_t)(uac.starts & 0x7Fu));
+                    midi_send(0xB0, 116, (uint8_t)(uac.stalls & 0x7Fu));
+                    midi_send(0xB0, 117, (uint8_t)(uac.rate_sets & 0x7Fu));
+                    midi_send(0xB0, 118, (uint8_t)(uac.flowing & 0x7Fu));
                     midi_send(0xB0, 119, (uint8_t)g_cpu0_load_pct);
                     midi_send(0xB0, 120, (uint8_t)g_cpu1_load_pct);
                     midi_send(0xB0, 121, (uint8_t)(g_cpu0_ticks / 1000u));
@@ -1010,6 +1426,8 @@ static void app_main(void)
 #else
                     midi_send(0xB0, 125, 0);
 #endif
+                    midi_send(0xB0, 126, (uint8_t)(uac.missed & 0x7Fu));
+                    midi_send(0xB0, 127, (uint8_t)(audio_lates & 0x7Fu));
                 } else if (d1 == 64) {   /* Sustain pedal */
                     fm1_irq_off();
 #if DINGHY_DUAL_CORE
@@ -1049,7 +1467,12 @@ static void app_main(void)
         fm1_led_key(BTN_OCT_UP, g_synth.octave_shift > 0);
         fm1_led_key(BTN_FX, g_synth.chorus.mode != FM106_CHORUS_OFF);
         fm1_led_key(BTN_ARP, g_synth.arp_on);
-        fm1_led_key(BTN_SAVE, dirty_save);
+        fm1_led_key(BTN_SAVE, dirty_save || (g_ui_mode == UI_MODE_SAVE));
+
+        if (g_banner_msg[0] != '\0' && fm1_ms >= g_banner_until) {
+            g_banner_msg[0] = '\0';
+            dirty_screen = 1;
+        }
 
         if (g_dirty_screen) {
             dirty_screen = 1;
@@ -1057,8 +1480,11 @@ static void app_main(void)
         }
 
         /* 6. Screen Redraws */
-        int need_top = dirty_screen || (voice_active != prev_voice_active);
+        static uint32_t t_last_top = 0;
+        int voice_changed = (voice_active != prev_voice_active);
+        int need_top = (dirty_screen || (voice_changed && (fm1_ms - t_last_top >= 50u))) && (g_ui_mode != UI_MODE_SAVE);
         if (need_top) {
+            t_last_top = fm1_ms;
             prev_voice_active = voice_active;
             draw_top_section(g_synth.patch_idx, g_synth.patch_name);
         }
@@ -1068,6 +1494,8 @@ static void app_main(void)
                 draw_menu_main();
             } else if (g_ui_mode == UI_MODE_MIDI) {
                 draw_menu_midi();
+            } else if (g_ui_mode == UI_MODE_SAVE) {
+                draw_save_menu();
             } else {
                 draw_faders_section(g_current_page);
                 draw_waveform_section();
@@ -1078,8 +1506,8 @@ static void app_main(void)
         /* Continuous oscilloscope refresh in performance mode */
         if (g_ui_mode == UI_MODE_NORMAL) {
             uint32_t scope_active = (voice_active != 0) || !synth_quiet();
-            if ((scope_active && (fm1_ms - t_last_scope >= 30u)) ||
-                (!scope_active && scope_was_active && (fm1_ms - t_last_scope >= 30u))) {
+            if ((scope_active && (fm1_ms - t_last_scope >= 50u)) ||
+                (!scope_active && scope_was_active && (fm1_ms - t_last_scope >= 50u))) {
                 t_last_scope = fm1_ms;
                 scope_was_active = (uint8_t)scope_active;
                 draw_waveform_section();

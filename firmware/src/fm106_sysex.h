@@ -5,7 +5,7 @@
 
 #define FM106_PRESETS_FLASH_ADDR 0x00098000u
 #define FM106_PRESETS_FLASH_SIZE 0x2000u    /* 8 KiB (2 x 4 KiB sectors) */
-#define FM106_PRESETS_MAGIC      0x3630314Au /* "J106" */
+#define FM106_PRESETS_MAGIC      0x36303142u /* "J10B" (blank user banks schema) */
 
 typedef struct {
     uint32_t magic;
@@ -30,37 +30,13 @@ static inline uint32_t fm106_crc32(const uint8_t *p, uint32_t n)
     return ~c;
 }
 
-/* Reset user presets in RAM back to factory ROM sounds with UA/UB prefix */
+/* Reset user presets in RAM back to completely blank */
 static void fm106_user_presets_restore_factory(void)
 {
-    for (uint32_t i = 0; i < FM106_NUM_USER_PRESETS; i++) {
-        g_user_presets[i] = FM106_PRESETS[i];
-        char *nm = (char *)g_user_presets[i].name;
-        char orig[16];
-        memcpy(orig, FM106_PRESETS[i].name, 16);
-        if (i < 64u) {
-            nm[0] = 'U';
-            nm[1] = 'A';
-            uint32_t k = 2;
-            while (orig[k - 1] && k < 15u) {
-                nm[k] = orig[k - 1];
-                k++;
-            }
-            nm[k] = '\0';
-        } else {
-            nm[0] = 'U';
-            nm[1] = 'B';
-            uint32_t k = 2;
-            while (orig[k - 1] && k < 15u) {
-                nm[k] = orig[k - 1];
-                k++;
-            }
-            nm[k] = '\0';
-        }
-    }
+    memset(g_user_presets, 0, sizeof(g_user_presets));
 }
 
-/* Initialize user presets: load from SPI flash if valid, else populate factory presets */
+/* Initialize user presets: load from SPI flash if valid, else initialize as completely blank */
 static void fm106_user_presets_init(void)
 {
     static uint8_t buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
@@ -78,8 +54,8 @@ static void fm106_user_presets_init(void)
         }
     }
 
-    /* Fallback: initialize user presets from factory ROM presets */
-    fm106_user_presets_restore_factory();
+    /* Fallback: initialize user presets as completely blank */
+    memset(g_user_presets, 0, sizeof(g_user_presets));
 }
 
 /* Burn user presets RAM bank into SPI flash */
@@ -106,6 +82,31 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
 #endif
     if (idx >= FM106_TOTAL_PRESETS) idx = 0;
     e->patch_idx = (uint8_t)idx;
+
+    if (idx >= 128u && g_user_presets[idx - 128u].name[0] == '\0') {
+        /* Blank user preset: load clean default initialized sound */
+        e->patch_name[0] = '\0';
+        e->bender_dco = 0; e->bender_vcf = 0;
+        e->arp_rate = 120; e->lfo_rate = 60; e->lfo_delay = 0;
+        e->dco_lfo_depth = 0; e->dco_pwm_depth = 0; e->dco_sub_level = 0; e->dco_noise_level = 0;
+        e->hpf.mode = 1;
+        e->vcf_cutoff = 100; e->vcf_resonance = 0; e->vcf_env_mod = 0; e->vcf_lfo_mod = 0;
+        e->vcf_kbd_track = 0; e->vca_level = 100;
+        e->env_a = 0; e->env_d = 64; e->env_s = 127; e->env_r = 20;
+        e->dco_pulse_on = 0; e->dco_saw_on = 1; e->dco_sub_on = 0;
+        e->chorus.mode = FM106_CHORUS_OFF;
+        e->dco_range = 1; e->arp_mode = 0; e->arp_range = 1;
+        e->dco_pwm_mode = 0; e->vcf_env_polarity = 0; e->vca_mode = 0;
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
+            e->voice[i].dco.saw_on = 1; e->voice[i].dco.pulse_on = 0; e->voice[i].dco.sub_on = 0;
+            e->voice[i].dco.sub_level = 0; e->voice[i].dco.noise_level = 0;
+            if (e->voice[i].note != 255u) e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+        }
+        fm1_irq_on();
+        return;
+    }
+
     const fm106_preset_t *p = (idx < 128u) ? &FM106_PRESETS[idx] : &g_user_presets[idx - 128u];
 
     uint32_t pi = 0;
@@ -164,6 +165,53 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
         }
     }
     fm1_irq_on();
+}
+
+/* Save the current synth engine state into a preset struct */
+static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t *e, const char *name)
+{
+    memset(p, 0, sizeof(*p));
+    uint32_t len = 0;
+    while (name && name[len] && len < sizeof(p->name) - 1u) {
+        p->name[len] = name[len];
+        len++;
+    }
+    p->name[len] = '\0';
+
+    p->p[0]  = e->bender_dco;
+    p->p[1]  = e->bender_vcf;
+    p->p[2]  = e->arp_rate;
+    p->p[3]  = e->lfo_rate;
+    p->p[4]  = e->lfo_delay;
+    p->p[5]  = e->dco_lfo_depth;
+    p->p[6]  = e->dco_pwm_depth;
+    p->p[7]  = e->dco_sub_level;
+    p->p[8]  = e->dco_noise_level;
+    p->p[9]  = e->hpf.mode & 3u;
+    p->p[10] = e->vcf_cutoff;
+    p->p[11] = e->vcf_resonance;
+    p->p[12] = e->vcf_env_mod;
+    p->p[13] = e->vcf_lfo_mod;
+    p->p[14] = e->vcf_kbd_track;
+    p->p[15] = e->vca_level;
+    p->p[16] = e->env_a;
+    p->p[17] = e->env_d;
+    p->p[18] = e->env_s;
+    p->p[19] = e->env_r;
+
+    p->p[23] = e->dco_pulse_on & 1u;
+    p->p[24] = e->dco_saw_on & 1u;
+    p->p[25] = e->dco_sub_on & 1u;
+
+    p->p[27] = (e->chorus.mode == FM106_CHORUS_I || e->chorus.mode == FM106_CHORUS_I_II) ? 1u : 0u;
+    p->p[28] = (e->chorus.mode == FM106_CHORUS_II || e->chorus.mode == FM106_CHORUS_I_II) ? 1u : 0u;
+
+    p->p[29] = e->dco_range & 3u;
+    p->p[30] = e->arp_mode & 3u;
+    p->p[31] = e->arp_range ? e->arp_range : 1u;
+    p->p[33] = e->dco_pwm_mode & 1u;
+    p->p[34] = e->vcf_env_polarity & 1u;
+    p->p[35] = e->vca_mode & 1u;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */

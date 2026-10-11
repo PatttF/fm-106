@@ -40,6 +40,10 @@ static void recovery_step(void)
 
 static int recovery_key(void)
 {
+    /* Pull PA2 low to power the 74HC595 shift registers and LED rail */
+    fm1_panel_rail();
+    fm1_delay_us(25000); /* 25 ms rail rise time */
+
     uint32_t start = fm1_ticks();
     fm1_input_init();
     do {

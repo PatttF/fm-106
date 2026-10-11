@@ -238,11 +238,10 @@ static int ota_stage_head(uint32_t len)
  * flash.bin (entry type 0) and ota.bin (type 100), 0 if absent, and the CRC16 the
  * package stores for flash.bin (the loader checks what it was served against it);
  * -1 read, -2 CRC */
-static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *ota_off, uint32_t *ota_len,
-                   uint32_t *fl_crc)
+static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *ota_off, uint32_t *ota_len)
 {
     uint32_t i, nent;
-    *fl_off = *fl_len = *ota_off = *ota_len = *fl_crc = 0;
+    *fl_off = *fl_len = *ota_off = *ota_len = 0;
     if (ota_read(0, hdr, 512) || ota_read(512, hdr + 512, 512))
         return -1;
     ota_jl_enc(hdr, 0x40);
@@ -254,7 +253,6 @@ static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *o
         uint8_t *e = hdr + 0x40 + i * 0x50u;
         ota_jl_enc(e, 0x50);
         if (ota_rd16(e) == 0) {                             /* flash.bin */
-            *fl_crc = ota_rd16(e + 4);
             *fl_off = ota_rd32(e + 8);
             *fl_len = ota_rd32(e + 12);
         }
@@ -269,11 +267,11 @@ static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *o
 static int ota_stage(void)                       /* steps 1..6; 0 = host said success */
 {
     static uint8_t hdr[0x400], b[512], mine[512];
-    uint32_t i, n, ota_off, ota_len, fl_off, fl_len, fl_crc, c, len, own, official;
+    uint32_t i, n, ota_off, ota_len, fl_off, fl_len, c, len, own, official;
     int rc;
     /* 1. UFW header + entry list */
     ota_show(1, 0);
-    if ((rc = ota_ufw(hdr, &fl_off, &fl_len, &ota_off, &ota_len, &fl_crc)) != 0)
+    if ((rc = ota_ufw(hdr, &fl_off, &fl_len, &ota_off, &ota_len)) != 0)
         return rc;
     if (!fl_off || !ota_off)
         return -3;

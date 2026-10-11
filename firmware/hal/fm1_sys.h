@@ -26,6 +26,10 @@
 #define FM1_PWR_CON (*(volatile uint32_t *)0x10000u)
 #define FM1_UPDATA_PARM ((volatile uint8_t *)0x01C7FD88u)
 #define FM1_UPDATA_PARM_LEN 112u
+#define FM1_STUB_RAM ((volatile uint32_t *)0x01C7C000u)   /* 8 words below NOINIT (app.ld) */
+#define FM1_HAVE_STUB 1
+#define STUB_REQ_RESCUE 0x52514552u
+#define STUB_REQ_TEST   0x54514552u
 
 static uint32_t fm1_p33_timeouts;
 
@@ -178,6 +182,21 @@ FM1_INLINE void fm1_mailbox_clear(void)   /* before fm1_guard_enable (it write-p
     uint32_t *s;
     for (s = (uint32_t *)0x01C7FD80u; s < (uint32_t *)0x01C7FE00u; s++)
         *s = 0;
+}
+
+FM1_INLINE uint32_t fm1_stub_word(uint32_t i) { return FM1_STUB_RAM[i & 7u]; }
+
+/* as fm1_enter_update, with the record cleared instead of written (the loader's own restart after its write: the
+ * SPL then boots the app's slot) and the request in the stub's word; the caller detaches USB first, as there */
+FM1_INLINE void fm1_stub_request(uint32_t word)
+{
+    __asm__ volatile("cli");
+    if (!(*(volatile uint32_t *)0x1EEE240u & 1u))       /* drop CPU0 write limits, as fm1_enter_uboot */
+        *(volatile uint32_t *)0x1EEE240u = 0xE7u;
+    *(volatile uint32_t *)0x1EEE348u = 0;
+    fm1_updata_parm_clear();
+    FM1_STUB_RAM[0] = word;
+    fm1_core_reset();
 }
 
 /* RAM and the XIP window only: SFR reads can have side effects */

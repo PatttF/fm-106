@@ -25,6 +25,7 @@ typedef struct {
     int64_t dc_post_osc;
     int64_t dc_post_vcf;
     int32_t vca_slew;           /* Q15 VCA RC slew filter state (tau = 687 us) */
+    int32_t vcf_slew;           /* 14-bit VCF cutoff CV RC slew state (tau = 522 us) */
 } fm106_voice_t;
 
 typedef struct {
@@ -243,6 +244,7 @@ static void fm106_engine_init(fm106_engine_t *e)
         e->voice[i].dc_post_osc = 0;
         e->voice[i].dc_post_vcf = 0;
         e->voice[i].vca_slew = 0;
+        e->voice[i].vcf_slew = 0;
     }
 
     fm106_load_preset(e, 0);
@@ -257,7 +259,8 @@ static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
 
     /* 1. If note already sounding on a voice, retrigger it */
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-        if (e->voice[i].note == note && e->voice[i].gate) {
+        if (e->voice[i].note == note && (e->voice[i].gate || e->voice[i].adsr.stage != FM106_ENV_IDLE)) {
+            e->voice[i].gate = 1;
             e->voice[i].vel = (uint8_t)vel;
             e->voice[i].age = ++e->age_counter;
             e->voice[i].base_inc = fm106_calc_inc(note, 0, e->dco_range);
@@ -688,14 +691,22 @@ static void fm106_render_voice(fm106_engine_t *e, uint32_t vi, int32_t *sum, uin
             vcfCutoff, vcfLfoSignal, vcfBendAmt, vcfEnvMod, vcfKeyTrack,
             lfoPol, bendPol, envPol, env14_interp, pitch88);
 
+        /* VCF Cutoff CV analog RC slew filter: tau = 522 us (1393 in Q15) */
+        if (v->vcf_slew == 0) {
+            v->vcf_slew = (int32_t)dac;
+        } else {
+            v->vcf_slew += (int32_t)(((int32_t)dac - v->vcf_slew) * 1393) >> 15;
+        }
+        uint16_t dac_slewed = (uint16_t)v->vcf_slew;
+
         /* 4-pole TPT ladder filter process */
-        int32_t vcf_s = fm106_vcf_process(&v->vcf, dco_s, dac, e->vcf_resonance);
+        int32_t vcf_s = fm106_vcf_process(&v->vcf, dco_s, dac_slewed, e->vcf_resonance);
 
         /* Post-VCF DC blocker (1.59 Hz, models 1µF/100K coupling cap between VCF and VCA) */
         vcf_s = fm106_dc_block(vcf_s, &v->dc_post_vcf);
 
-        /* VCA scaling into sum buffer */
-        int32_t out_s = (vcf_s * vca_gain) >> 15;
+        /* VCA scaling into sum buffer (64-bit product to prevent overflow with resonant VCF gain) */
+        int32_t out_s = (int32_t)(((int64_t)vcf_s * vca_gain) >> 15);
         sum[i] += out_s;
     }
 }
@@ -772,11 +783,17 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
     /* CPU0 renders Voices 0, 1, 2 */
     for (uint32_t v = 0; v < 3; v++) {
         fm106_render_voice(e, v, g_mix0, n);
+#if FELUCCA_UAC
+        uac_isr_service();
+#endif
     }
 
     if (worker_submitted) {
         /* Wait for CPU1 to complete Voices 3, 4, 5 */
         audio_worker_join();
+#if FELUCCA_UAC
+        uac_isr_service();
+#endif
         for (uint32_t i = 0; i < n; i++) {
             g_mix0[i] += g_mix1[i];
         }
@@ -784,22 +801,32 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
         /* Fallback: render voices 3, 4, 5 on CPU0 */
         for (uint32_t v = 3; v < FM106_NUM_VOICES; v++) {
             fm106_render_voice(e, v, g_mix0, n);
+#if FELUCCA_UAC
+            uac_isr_service();
+#endif
         }
     }
 #else
     /* Single-core: render all 6 voices on CPU0 */
     for (uint32_t v = 0; v < FM106_NUM_VOICES; v++) {
         fm106_render_voice(e, v, g_mix0, n);
+#if FELUCCA_UAC
+        uac_isr_service();
+#endif
     }
 #endif
 
     /* Master VCA gain from calibrated law table (Q12) */
     int32_t vca_law = FM106_VCA_LAW[e->vca_level > 127u ? 127u : e->vca_level];
 
+#if FELUCCA_UAC
+    uac_isr_service();
+#endif
+
     /* Post-processing: HPF -> VCA -> Stereo Chorus -> Output */
     for (uint32_t i = 0; i < n; i++) {
-        /* Headroom scaling: calibrated for -3 dBFS peak under polyphonic chords */
-        int32_t voice_sum = (int32_t)(((int64_t)g_mix0[i] * 3LL) >> 5);
+        /* Headroom scaling: calibrated for clean polyphony across 6 voices even with HPF Bass Boost and max VCA */
+        int32_t voice_sum = (int32_t)(((int64_t)g_mix0[i] * 1LL) >> 4);
 
         /* Apply 4-position HPF */
         int32_t hpf_out = fm106_hpf_process(&e->hpf, voice_sum);
@@ -814,6 +841,10 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
         out[2u * i]     = sl;
         out[2u * i + 1u] = sr;
     }
+
+#if FELUCCA_UAC
+    uac_isr_service();
+#endif
 
     uint32_t elapsed0 = fm1_ticks() - t0;
     g_cpu0_ticks = elapsed0;

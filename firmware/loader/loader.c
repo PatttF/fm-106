@@ -71,7 +71,6 @@ static void ldr_record_clear(void)
 {
     fm1_updata_parm_clear();                        /* CRC 0: the SPL ignores it on a warm reset */
 }
-static int ldr_flash_known(void) { return fl_jedec_ram() == 0x856014u; }   /* as the app (project.c) */
 static void ldr_progress(uint32_t done, uint32_t total) { (void)done; (void)total; ldr_poll(); }
 #include "ldr_core.c"
 
@@ -92,10 +91,8 @@ void ldr_main(void)
         }
         ota_service();                              /* handshake */
         if (usb.ota_req) {
-            int rc;
             usb.ota_req = 0;
-            rc = ldr_session();
-            if (rc == 0 || rc == LDR_EFLASH) {      /* done, or another flash chip: the old firmware again */
+            if (ldr_session() == 0) {
                 fm1_delay_ms(200);                  /* the "success" reply leaves */
                 usb_detach();
                 fm1_delay_ms(30);
@@ -109,7 +106,10 @@ void ldr_cstart(void)
 {
     uint32_t *p;
     ldr_record_clear();                             /* first thing: a crash below cannot loop through a
-                                                     * warm reset; resume after power loss uses the flash record */
+                                                     * warm reset. After a power loss the boot stub (firmware/stub)
+                                                     * starts us again: the SPL does not, from the flash record
+                                                     * (docs/BOOT-SAFETY.md). The stub's rescue word (0x01C7C000)
+                                                     * is not ours: left as it is */
     for (p = _bss_start; p < _bss_end; p++)
         *p = 0;
     ldr_main();
