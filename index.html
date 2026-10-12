@@ -326,7 +326,8 @@ const HS_QUERY = [0xF0, 0x00, 0x32, 0x45, 0x00, 0x00, 0x00, 0x40, 0x7F, 0xF7];
 const UPGRADE = [0xF0, 0x22, 0x24, 0x35, 0x7F, 0xF7];
 const MAXDATA = 512;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const IS_OTA = (id) => /^ota-/i.test(id.model);
+const IS_OTA = (id) => !id ? false : (/^ota-/i.test(id.model) || /^ota-/i.test(id.text));
+const modelOf = (text) => (text || "").split("_")[0].replace(/^ota-/i, "");
 
 // errors carry a code the pages translate: notfound, model, stopped, noloader, lost, noreturn,
 // mismatch (detail: the identity the device reports), badreq
@@ -373,11 +374,12 @@ function parseRequest(pkt) {
 }
 
 function parseIdentity(pkt) {
+  if (!pkt || pkt.length < 2 || pkt[0] !== 0xF0 || pkt[pkt.length - 1] !== 0xF7) return null;
   const d = unpack7(pkt.slice(1, -1));
   if (d.length !== 34 || d[0] !== 0 || d[1] !== 0x59 || d[2] !== 0x11) return null;
   const txt = String.fromCharCode(...d.slice(6, 33)).replace(/\0+$/, "");
   const m = /^([^_]+)_(\d+)$/.exec(txt);
-  return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : null;
+  return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : { text: txt, model: txt, version: 0 };
 }
 
 // one MIDI in/out pair with a SysEx queue
@@ -405,7 +407,11 @@ class Link {
     }
     return this.q.shift() || null;
   }
-  close() { this.input.onmidimessage = null; }
+  async close() {
+    this.input.onmidimessage = null;
+    try { await this.input.close(); } catch (_) {}
+    try { await this.output.close(); } catch (_) {}
+  }
 }
 
 async function handshake(link, tries = 3) {
@@ -419,7 +425,52 @@ async function handshake(link, tries = 3) {
       const id = parseIdentity(p);
       if (id) return id;
     }
+    await sleep(150);
   }
+  return null;
+}
+
+const PORT_RE = /fm-1|felucca|ota|composite|sinco|usb[\s_-]?midi|m-vave|m-upgrade|upgrade|update|jieli|audio/i;
+
+function findMatchingOutput(input, outputs, inputsToProbe) {
+  const outs = [...outputs.values()].filter((o) => o.state !== "disconnected");
+  if (!outs.length) return null;
+
+  // 1. Exact match
+  let out = outs.find((o) => o.name === input.name);
+  if (out) return out;
+
+  // 2. Normalized match (strip IN/OUT, numbers, etc.)
+  const clean = (s) => (s || "")
+    .replace(/^(?:midi\s*in\d*|midi\s*out\d*|\d+[\s_-]+)/i, "")
+    .replace(/[\s\-_]*(?:in(?:put)?|out(?:put)?|\d+|rx|tx|\(\d+\)|\[\d+\])[\s\-_]*$/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .toLowerCase();
+  const inClean = clean(input.name);
+  if (inClean) {
+    out = outs.find((o) => clean(o.name) === inClean);
+    if (out) return out;
+
+    // 3. Substring match
+    out = outs.find((o) => {
+      const oc = clean(o.name);
+      return oc && (oc.includes(inClean) || inClean.includes(oc));
+    });
+    if (out) return out;
+  }
+
+  // 4. Candidate match based on regex
+  const candidates = outs.filter((o) => PORT_RE.test(o.name || ""));
+  if (candidates.length === 1) return candidates[0];
+  if (candidates.length > 1) {
+    const idx = inputsToProbe ? inputsToProbe.indexOf(input) : -1;
+    if (idx >= 0 && idx < candidates.length) return candidates[idx];
+    return candidates[0];
+  }
+
+  // 5. Fallback: single output available
+  if (outs.length === 1) return outs[0];
+
   return null;
 }
 
@@ -429,19 +480,23 @@ class Updater {
     this.log = log || (() => {});
   }
 
-  // every in/out pair with the same port name that answers the handshake
+  // every in/out pair matching PORT_RE (or all non-disconnected) that answers the handshake
   async find(filter) {
-    const outs = [...this.access.outputs.values()];
-    for (const input of this.access.inputs.values()) {
-      if (input.state === "disconnected") continue;
-      if (!/fm-1|felucca|ota|composite|sinco|usb-midi/i.test(input.name || "")) continue;   // never probe other gear
-      const output = outs.find((o) => o.name === input.name && o.state !== "disconnected");
+    const allInputs = [...this.access.inputs.values()].filter((i) => i.state !== "disconnected");
+    let inputsToProbe = allInputs.filter((i) => PORT_RE.test(i.name || ""));
+    if (!inputsToProbe.length) {
+      inputsToProbe = allInputs;
+    }
+
+    for (const input of inputsToProbe) {
+      const output = findMatchingOutput(input, this.access.outputs, inputsToProbe);
       if (!output) continue;
       try { await input.open(); await output.open(); } catch (_) { continue; }
       const link = new Link(input, output);
-      const id = await handshake(link, 2);
+      await sleep(200);
+      const id = await handshake(link, 3);
       if (id && (!filter || filter(id))) return { link, id, name: input.name };
-      link.close();
+      await link.close();
     }
     return null;
   }
@@ -449,6 +504,11 @@ class Updater {
   async waitFor(filter, ms) {
     const end = Date.now() + ms;
     while (Date.now() < end) {
+      try {
+        if (navigator.requestMIDIAccess) {
+          this.access = await navigator.requestMIDIAccess({ sysex: true });
+        }
+      } catch (_) {}
       const dev = await this.find(filter);
       if (dev) return dev;
       await sleep(1000);
@@ -485,48 +545,68 @@ class Updater {
     }
   }
 
-  // full install: running firmware -> loader -> new firmware
+  // full install: running firmware -> loader -> new firmware, or direct write if already in update mode
   async install(image, product, onStep) {
     const step = onStep || (() => {});
-    const dev = await this.find((id) => !IS_OTA(id));
+    const dev = await this.waitFor((id) => true, 3000);
     if (!dev) throw fail("notfound", "FM-1 not found (USB cable, and no other app using it?)");
-    const [model] = product.split("_");
-    if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`); }
+
+    // Case A: device is already in update mode (e.g. replugged or resumed)
+    if (IS_OTA(dev.id)) {
+      step("loader", dev.id.text);
+      const s2 = await this.write(dev, image, step);
+      if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Replug and press Install again to resume.`);
+      step("reboot");
+      await sleep(3000);
+      const back = await this.waitFor((id) => !IS_OTA(id), 45000);
+      if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
+      await back.link.close();
+      if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
+      step("done", back.id.text);
+      return back.id.text;
+    }
+
+    // Case B: normal running firmware
+    const devModel = modelOf(dev.id.text);
+    const pkgModel = modelOf(product);
+    if (devModel !== pkgModel && !devModel.toLowerCase().includes("fm-1") && !dev.id.text.toLowerCase().includes("fm-1")) {
+      await dev.link.close();
+      throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`);
+    }
     step("start", dev.id.text);
     dev.link.send(UPGRADE);
     await sleep(2000);
     const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n) => step("verify", n));
-    dev.link.close();
+    await dev.link.close();
     if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `the device ${s1.lost ? "was disconnected" : "stopped"} after ${s1.served} requests: nothing was written`);
     step("loader");
     await sleep(3000);
-    const ota = await this.waitFor((id) => id.model === "ota-" + model, 30000);
+    const ota = await this.waitFor((id) => IS_OTA(id), 60000);
     if (!ota) throw fail("noloader", "the update loader did not appear. Replug the USB cable and press Install again: the device stays in update mode until it is finished.");
     const s2 = await this.write(ota, image, step);
     if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Replug and press Install again to resume.`);
     step("reboot");
     await sleep(3000);
-    const back = await this.waitFor((id) => !IS_OTA(id), 40000);
+    const back = await this.waitFor((id) => !IS_OTA(id), 45000);
     if (!back) throw fail("noreturn", "the device did not come back: power-cycle it");
-    back.link.close();
+    await back.link.close();
     if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
     step("done", back.id.text);
     return back.id.text;
   }
 
-  // step 2 with the loader found by find()/waitFor()
+  // step 2 with the loader
   async write(ota, image, step) {
     ota.link.send(UPGRADE);
     await sleep(2000);
     const s2 = await this.serve(ota.link, image, 0xF0000000, 180000, (n) => step("write", n));
-    ota.link.close();
+    await ota.link.close();
     return s2;
   }
 
   // resume: the device is already in update mode (loader) -> true when the write finished
   async resume(image, onStep, product = null) {
-    const model = product && product.split("_")[0];
-    const ota = await this.find((id) => model ? id.model === "ota-" + model : IS_OTA(id));
+    const ota = await this.find((id) => IS_OTA(id));
     if (!ota) return false;
     const step = onStep || (() => {});
     const result = await this.write(ota, image, step);
@@ -534,9 +614,9 @@ class Updater {
     if (product) {
       step("reboot");
       await sleep(3000);
-      const back = await this.waitFor((id) => id.model === model, 40000);
+      const back = await this.waitFor((id) => !IS_OTA(id), 45000);
       if (!back) throw fail("noreturn", "The FM-1 did not return after resuming the write.");
-      back.link.close();
+      await back.link.close();
       if (back.id.text !== product) throw fail("mismatch", "The FM-1 reports a different firmware after resuming.", back.id.text);
       step("done", back.id.text);
     }
@@ -809,10 +889,17 @@ window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault
 (async () => {
   if (!navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   try {
-    const r = await fetch(meta.pkg);
-    if (!r.ok) throw new Error(`${meta.pkg}: HTTP ${r.status}`);
-    const pkg = new Uint8Array(await r.arrayBuffer());
-    if (productOf(pkg) !== meta.product) { sayK("badpkg"); return; }
+    let pkg = null;
+    for (const url of ["./fm106.fwsc", meta.pkg]) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) {
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (productOf(buf) === meta.product) { pkg = buf; break; }
+        }
+      } catch (_) {}
+    }
+    if (!pkg) throw new Error("Could not load FM-106 package");
     image = logicalImage(pkg);
     say(`FM-106 ${meta.version}`);
     $("go").disabled = false;
@@ -837,13 +924,7 @@ $("go").addEventListener("click", async () => {
       if (k === "reboot") sayK("reboot");
       if (k === "done") { $("bar").value = 100; sayK("done"); }
     };
-    const ota = await up.find((id) => /^ota-/i.test(id.model));
-    if (ota) {
-      ota.link.close();
-      sayK((await up.resume(image, step, meta.product)) ? "done" : "stopped");
-    } else {
-      await up.install(image, meta.product, step);
-    }
+    await up.install(image, meta.product, step);
   } catch (e) {
     if (e && e.code && TEXT[lang][e.code]) sayK(e.code, e.detail || "");
     else sayK("error", e && e.message);
@@ -886,16 +967,23 @@ $("stock-go").addEventListener("click", async () => {
     try { midi = await navigator.requestMIDIAccess({sysex:true}); } catch (e) { sayK("denied"); return; }
     const up = new Updater(midi, log);
     const step = (k, n) => { log(`${k} ${n ?? ""}`); if (["start","verify","loader","write","reboot","done"].includes(k)) sayK(k); if (k === "done") $("bar").value = 100; };
-    const loader = await up.find(id => id.model === "ota-FM-1");
+    const loader = await up.find(id => IS_OTA(id));
     if (loader) {
-      loader.link.close();
-      if (!$("stock-recovery").checked) { sayK("stockNeedBackup"); return; }
-      if (!confirm(t("stockConfirm"))) return;
-      sayK(await up.resume(selected.image, step, selected.product) ? "done" : "stopped");
+      if (!$("stock-recovery").checked) { await loader.link.close(); sayK("stockNeedBackup"); return; }
+      if (!confirm(t("stockConfirm"))) { await loader.link.close(); return; }
+      const s2 = await up.write(loader, selected.image, step);
+      if (!s2.finished) { sayK("stopped"); return; }
+      step("reboot");
+      await sleep(3000);
+      const back = await up.waitFor(id => !IS_OTA(id), 45000);
+      if (!back) throw fail("noreturn", "The FM-1 did not return after resuming the write.");
+      await back.link.close();
+      step("done", back.id.text);
+      sayK("done");
     } else {
-      const device = await up.find(id => id.model === "FM-1");
+      const device = await up.find(id => !IS_OTA(id));
       if (!device) { sayK("notfound"); return; }
-      const input = device.link.input, output = device.link.output; device.link.close();
+      const input = device.link.input, output = device.link.output; await device.link.close();
       link = new BackupConnection(input, output);
       const info = archiveInfo(await link.request([1,[]]));
       if (!info.supported) { sayK("stockUnsupported"); return; }
