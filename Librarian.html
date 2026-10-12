@@ -923,7 +923,27 @@ footer.keyboard-footer {
             <button class="synth-btn" id="btn-import-file" title="Import .syx or .json file">Import File</button>
             <button class="synth-btn" id="btn-export-bank" title="Export current bank as .syx">Export .SYX</button>
             <button class="synth-btn" id="btn-export-json" title="Backup full library as JSON">Backup JSON</button>
-            <button class="synth-btn amber" id="btn-restore-factory" title="Restore factory presets">Factory Reset</button>
+            <button class="synth-btn amber" id="btn-clear-user" title="Clear current user bank to blank">Clear Bank</button>
+        </div>
+
+        <div class="bank-template-panel" style="padding: 8px 12px; background: #16181f; border-bottom: 1px solid var(--panel-mid); display: flex; flex-direction: column; gap: 6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size: 10px; font-weight: 700; color: var(--accent-amber); letter-spacing: 0.5px;">// LOAD SOUNDSET TEMPLATE</span>
+                <span style="font-size: 10px; color: var(--text-muted);">Target: <b id="template-target-label" style="color: var(--accent-blue);">User Bank A</b></span>
+            </div>
+            <div style="display: flex; gap: 6px;">
+                <select id="select-bank-template" style="flex: 1; font-size: 11px; padding: 6px 8px; background: #0d0e12; color: var(--text-white); border: 1px solid var(--panel-light); border-radius: 3px;">
+                    <option value="tame_impala">Tame Impala Collection (64 Patches)</option>
+                    <option value="synthwave">Synthwave / Outrun Bank (64 Patches)</option>
+                    <option value="factory">Factory Presets Copy (64 Patches)</option>
+                    <option value="blank">All Blank / Empty Bank (64 Patches)</option>
+                </select>
+                <button class="synth-btn primary" id="btn-load-template" style="padding: 6px 12px; font-size: 11px;" title="Load into selected User Bank">Load</button>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; font-size: 10px;">
+                <a href="presets/Tame_Impala_Bank.syx" download="Tame_Impala_Bank.syx" style="color: var(--accent-blue); text-decoration: none;" title="Download Tame Impala .syx bank">&#8595; Tame Impala .SYX</a>
+                <a href="presets/Synthwave_Bank.syx" download="Synthwave_Bank.syx" style="color: var(--accent-blue); text-decoration: none;" title="Download Synthwave .syx bank">&#8595; Synthwave .SYX</a>
+            </div>
         </div>
 
         <div class="preset-list-container" id="preset-list">
@@ -933,10 +953,14 @@ footer.keyboard-footer {
         <div class="hardware-sync-bar">
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
                 <button class="synth-btn primary" id="btn-save-slot" title="Write current sound to hardware slot">Write Slot</button>
-                <button class="synth-btn amber" id="btn-burn-flash" title="Commit user presets to FM-1 SPI Flash!">Burn Flash</button>
+                <button class="synth-btn amber" id="btn-burn-flash" title="Burn presets to FM-1 SPI Flash">Burn Flash</button>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                <button class="synth-btn" id="btn-sync-all-to-hw" title="Send all 128 user presets to FM-1">Send User 128</button>
+                <button class="synth-btn" id="btn-sync-bank-to-hw" title="Send current bank (64 presets) to FM-1 RAM">Send Bank 64</button>
+                <button class="synth-btn" id="btn-sync-all-to-hw" title="Send all 128 user presets to FM-1 RAM">Send User 128</button>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
+                <button class="synth-btn" id="btn-read-bank-from-hw" title="Pull current bank (64 presets) from FM-1">Read Bank 64</button>
                 <button class="synth-btn" id="btn-read-all-from-hw" title="Pull all 128 user presets from FM-1">Read User 128</button>
             </div>
             <div class="sync-status-text" id="sync-status">Ready. Hardware: Disconnected</div>
@@ -959,6 +983,7 @@ footer.keyboard-footer {
                 <button class="synth-btn amber" id="btn-copy-to-user" title="Copy patch to User Bank">Copy to User</button>
                 <button class="synth-btn" id="btn-export-single" title="Export this single patch as .syx">Export .SYX</button>
                 <button class="synth-btn" id="btn-init-patch" title="Initialize patch to basic saw">Init</button>
+                <button class="synth-btn danger" id="btn-delete-patch" title="Clear and delete user patch from bank and synth">Delete</button>
             </div>
         </div>
 
@@ -1298,6 +1323,47 @@ footer.keyboard-footer {
     <p style="color:var(--text-muted);">Supports System Exclusive (.syx), Jarvik7 .106 libraries, and web editor files</p>
 </div>
 
+<!-- Burn Flash Modal -->
+<div class="burn-modal-overlay" id="burn-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(10,12,16,0.85); backdrop-filter:blur(3px); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#161820; border:2px solid var(--accent-amber); border-radius:8px; box-shadow:0 12px 36px rgba(0,0,0,0.8); width:90%; max-width:480px; padding:24px; display:flex; flex-direction:column; gap:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #282b36; padding-bottom:12px;">
+            <h3 style="font-size:16px; font-weight:800; color:var(--accent-amber); letter-spacing:1px; display:flex; align-items:center; gap:8px;">
+                🔥 BURN PRESETS TO SPI FLASH
+            </h3>
+            <button id="btn-close-burn-modal" style="background:none; border:none; color:var(--text-muted); font-size:18px; cursor:pointer;">✕</button>
+        </div>
+        <p style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+            Burning writes presets into FM-106 hardware SPI flash so they survive power-off. Select how you want to burn:
+        </p>
+        <div style="display:flex; flex-direction:column; gap:10px;">
+            <button class="synth-btn primary" id="btn-burn-bank" style="padding:12px; text-align:left; display:flex; flex-direction:column; gap:4px; font-weight:700;">
+                <span id="burn-bank-title" style="font-size:13px; color:white;">🔥 Send & Burn Current Bank (User A - 64 Patches)</span>
+                <span style="font-size:10px; color:#cfd5e2; font-weight:400;">Transfers the 64 patches of the active bank to the synth and commits to flash without overwriting the other user bank.</span>
+            </button>
+            <button class="synth-btn amber" id="btn-burn-all" style="padding:12px; text-align:left; display:flex; flex-direction:column; gap:4px; font-weight:700;">
+                <span style="font-size:13px; color:white;">🔥 Send & Burn All 128 User Patches (User A & B)</span>
+                <span style="font-size:10px; color:#cfd5e2; font-weight:400;">Transfers all 128 library patches to both User Bank A & B and commits to flash.</span>
+            </button>
+            <button class="synth-btn" id="btn-burn-ram-only" style="padding:10px; text-align:left; display:flex; flex-direction:column; gap:4px;">
+                <span style="font-size:12px; color:var(--text-white);">💾 Commit Synth RAM Only (SysEx 0x35)</span>
+                <span style="font-size:10px; color:var(--text-muted);">Burns whatever sounds are currently stored in synth RAM to flash without sending from library.</span>
+            </button>
+        </div>
+        <div id="burn-progress-container" style="display:none; flex-direction:column; gap:6px; background:#0e0f13; padding:12px; border-radius:4px; border:1px solid #252833;">
+            <div style="display:flex; justify-content:space-between; font-size:11px;">
+                <span id="burn-progress-label" style="color:var(--accent-amber); font-weight:700;">Transferring presets...</span>
+                <span id="burn-progress-count" style="color:var(--text-white); font-family:var(--font-mono);">0%</span>
+            </div>
+            <div style="width:100%; height:6px; background:#1c1d24; border-radius:3px; overflow:hidden;">
+                <div id="burn-progress-bar" style="width:0%; height:100%; background:var(--accent-amber); transition:width 0.1s ease;"></div>
+            </div>
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+            <button class="synth-btn" id="btn-cancel-burn" style="padding:6px 14px; font-size:11px;">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- Hidden File Input -->
 <input type="file" id="file-picker" accept=".syx,.106,.json,.mid" style="display:none;">
 
@@ -1308,20 +1374,39 @@ footer.keyboard-footer {
 // 128 Compact Factory Presets Embedded
 const FACTORY_PRESETS = [{"name": "A11 Brass", "sliders": [20, 49, 0, 102, 0, 35, 13, 58, 0, 86, 108, 3, 49, 45, 32, 0], "sw1": 81, "sw2": 17}, {"name": "A12 Brass Swell", "sliders": [6, 48, 0, 56, 0, 43, 17, 26, 0, 84, 75, 64, 118, 38, 37, 70], "sw1": 82, "sw2": 25}, {"name": "A13 Trumpet", "sliders": [52, 45, 8, 102, 0, 55, 34, 24, 1, 59, 127, 5, 66, 48, 16, 0], "sw1": 50, "sw2": 9}, {"name": "A14 Flutes", "sliders": [60, 43, 1, 0, 0, 55, 32, 10, 11, 41, 127, 23, 81, 0, 18, 0], "sw1": 50, "sw2": 1}, {"name": "A15 Moving Stri", "sliders": [63, 0, 0, 39, 0, 77, 20, 4, 0, 111, 34, 13, 87, 88, 35, 14], "sw1": 26, "sw2": 16}, {"name": "A16 Brass & Str", "sliders": [35, 0, 0, 56, 0, 76, 17, 4, 0, 41, 78, 44, 66, 53, 44, 23], "sw1": 73, "sw2": 24}, {"name": "A17 Choir", "sliders": [59, 14, 13, 25, 0, 59, 94, 2, 0, 62, 127, 68, 11, 127, 48, 0], "sw1": 74, "sw2": 9}, {"name": "A18 Piano I", "sliders": [20, 49, 0, 80, 0, 65, 12, 10, 0, 27, 103, 0, 66, 0, 30, 86], "sw1": 42, "sw2": 17}, {"name": "A21 Organ I", "sliders": [54, 15, 0, 53, 0, 43, 76, 14, 1, 127, 100, 0, 10, 82, 0, 23], "sw1": 41, "sw2": 28}, {"name": "A22 Organ II", "sliders": [44, 15, 0, 53, 0, 53, 76, 14, 1, 85, 74, 0, 10, 82, 0, 58], "sw1": 74, "sw2": 28}, {"name": "A23 Combo Organ", "sliders": [75, 21, 9, 57, 0, 63, 70, 4, 0, 109, 96, 0, 48, 43, 46, 61], "sw1": 44, "sw2": 13}, {"name": "A24 Calliope", "sliders": [82, 40, 11, 0, 0, 87, 27, 17, 0, 56, 89, 7, 127, 127, 6, 48], "sw1": 74, "sw2": 11}, {"name": "A25 Donald Pluc", "sliders": [76, 21, 9, 57, 0, 73, 105, 15, 0, 78, 82, 2, 5, 43, 10, 127], "sw1": 44, "sw2": 7}, {"name": "A26 Celeste", "sliders": [28, 0, 0, 0, 0, 33, 24, 54, 0, 38, 96, 0, 44, 0, 81, 15], "sw1": 44, "sw2": 25}, {"name": "A27 E Piano I", "sliders": [59, 0, 0, 0, 0, 16, 31, 61, 6, 35, 127, 1, 85, 43, 40, 0], "sw1": 41, "sw2": 1}, {"name": "A28 E Piano II", "sliders": [0, 0, 0, 71, 0, 50, 69, 7, 0, 80, 102, 0, 68, 0, 22, 0], "sw1": 73, "sw2": 17}, {"name": "A31 Clock Chime", "sliders": [59, 0, 0, 0, 22, 44, 127, 0, 0, 127, 104, 0, 48, 0, 51, 127], "sw1": 68, "sw2": 27}, {"name": "A32 Steel Drums", "sliders": [33, 53, 0, 32, 9, 71, 46, 26, 0, 127, 127, 0, 26, 0, 37, 33], "sw1": 74, "sw2": 27}, {"name": "A33 Xylophone", "sliders": [0, 0, 0, 0, 0, 29, 24, 54, 0, 51, 127, 0, 29, 29, 38, 15], "sw1": 44, "sw2": 25}, {"name": "A34 Brass III", "sliders": [52, 20, 0, 35, 0, 66, 24, 11, 0, 12, 127, 58, 100, 94, 37, 22], "sw1": 82, "sw2": 25}, {"name": "A35 Fanfare", "sliders": [47, 0, 0, 70, 0, 44, 0, 32, 0, 67, 33, 72, 104, 75, 49, 50], "sw1": 89, "sw2": 24}, {"name": "A36 Strings III", "sliders": [48, 27, 0, 102, 0, 71, 14, 0, 0, 84, 73, 63, 31, 127, 45, 0], "sw1": 26, "sw2": 16}, {"name": "A37 Pizzicato", "sliders": [60, 18, 0, 102, 0, 66, 2, 5, 0, 42, 127, 0, 11, 0, 12, 0], "sw1": 90, "sw2": 0}, {"name": "A38 High String", "sliders": [58, 14, 0, 102, 0, 84, 8, 2, 0, 71, 77, 18, 44, 127, 40, 0], "sw1": 12, "sw2": 8}, {"name": "A41 Bass Clarin", "sliders": [52, 45, 8, 0, 0, 48, 36, 25, 8, 58, 104, 11, 75, 0, 25, 0], "sw1": 41, "sw2": 17}, {"name": "A42 English Hor", "sliders": [47, 45, 9, 102, 0, 70, 48, 7, 0, 27, 127, 8, 81, 26, 16, 0], "sw1": 42, "sw2": 1}, {"name": "A43 Brass Ensem", "sliders": [52, 45, 0, 102, 0, 46, 44, 29, 1, 59, 103, 16, 103, 97, 34, 31], "sw1": 82, "sw2": 17}, {"name": "A44 Guitar", "sliders": [86, 58, 0, 65, 0, 12, 15, 71, 0, 30, 96, 0, 52, 54, 31, 0], "sw1": 57, "sw2": 17}, {"name": "A45 Koto", "sliders": [90, 28, 0, 94, 0, 40, 58, 29, 0, 75, 127, 0, 56, 0, 39, 2], "sw1": 74, "sw2": 1}, {"name": "A46 Dark Pluck", "sliders": [31, 0, 0, 87, 0, 38, 61, 27, 0, 71, 90, 0, 52, 15, 63, 97], "sw1": 10, "sw2": 25}, {"name": "A47 Funky I", "sliders": [4, 0, 0, 73, 0, 31, 23, 51, 0, 41, 71, 0, 30, 36, 2, 64], "sw1": 89, "sw2": 29}, {"name": "A48 Synth Bass ", "sliders": [58, 16, 1, 57, 50, 32, 0, 66, 0, 35, 75, 0, 34, 0, 36, 102], "sw1": 41, "sw2": 25}, {"name": "A51 Lead I", "sliders": [72, 88, 18, 0, 0, 40, 97, 36, 0, 52, 99, 0, 45, 73, 0, 0], "sw1": 42, "sw2": 29}, {"name": "A52 Lead II", "sliders": [24, 88, 0, 53, 0, 45, 0, 43, 0, 52, 56, 1, 23, 91, 75, 79], "sw1": 57, "sw2": 20}, {"name": "A53 Lead III", "sliders": [86, 71, 21, 102, 0, 60, 31, 18, 1, 76, 127, 0, 66, 48, 11, 0], "sw1": 50, "sw2": 21}, {"name": "A54 Funky II", "sliders": [4, 0, 0, 48, 0, 5, 23, 81, 0, 41, 100, 0, 30, 39, 2, 57], "sw1": 74, "sw2": 21}, {"name": "A55 Synth Bass ", "sliders": [90, 21, 0, 0, 0, 43, 0, 47, 0, 0, 78, 0, 37, 9, 22, 45], "sw1": 49, "sw2": 28}, {"name": "A56 Funky III", "sliders": [4, 0, 0, 9, 101, 38, 54, 45, 0, 10, 79, 0, 24, 0, 2, 127], "sw1": 57, "sw2": 29}, {"name": "A57 Thud Wah", "sliders": [62, 0, 0, 102, 8, 78, 89, 34, 0, 0, 106, 0, 0, 102, 45, 32], "sw1": 26, "sw2": 26}, {"name": "A58 Going Up", "sliders": [0, 0, 0, 100, 28, 79, 127, 37, 0, 65, 75, 0, 108, 18, 127, 0], "sw1": 34, "sw2": 19}, {"name": "A61 Piano II", "sliders": [1, 0, 0, 72, 0, 47, 0, 39, 0, 5, 78, 0, 98, 0, 32, 115], "sw1": 42, "sw2": 16}, {"name": "A62 Clav.", "sliders": [66, 15, 1, 102, 0, 7, 11, 86, 2, 0, 120, 0, 39, 48, 14, 0], "sw1": 73, "sw2": 21}, {"name": "A63 Frontier Or", "sliders": [79, 15, 3, 85, 0, 69, 54, 0, 0, 52, 127, 0, 0, 127, 0, 29], "sw1": 42, "sw2": 28}, {"name": "A64 Snare Drum", "sliders": [52, 27, 0, 0, 91, 94, 11, 17, 0, 0, 101, 0, 25, 0, 30, 64], "sw1": 34, "sw2": 17}, {"name": "A65 Tom Toms", "sliders": [62, 16, 8, 0, 127, 53, 4, 40, 0, 21, 101, 0, 30, 15, 40, 58], "sw1": 33, "sw2": 24}, {"name": "A66 Timpani", "sliders": [0, 0, 0, 35, 127, 25, 0, 54, 0, 24, 127, 1, 56, 26, 71, 47], "sw1": 33, "sw2": 17}, {"name": "A67 Shaker", "sliders": [21, 71, 0, 58, 127, 89, 45, 1, 17, 80, 127, 10, 9, 0, 0, 0], "sw1": 34, "sw2": 1}, {"name": "A68 Synth Pad", "sliders": [56, 0, 5, 43, 0, 37, 0, 84, 0, 127, 51, 0, 85, 75, 62, 37], "sw1": 10, "sw2": 24}, {"name": "A71 Sweep I", "sliders": [78, 0, 0, 102, 28, 115, 40, 67, 0, 0, 97, 0, 63, 127, 82, 42], "sw1": 12, "sw2": 18}, {"name": "A72 Pluck Sweep", "sliders": [68, 48, 0, 68, 0, 60, 111, 9, 6, 98, 45, 0, 91, 0, 77, 125], "sw1": 26, "sw2": 8}, {"name": "A73 Repeater", "sliders": [77, 20, 9, 101, 0, 97, 30, 56, 0, 57, 87, 14, 0, 41, 0, 44], "sw1": 74, "sw2": 23}, {"name": "A74 Sweep II", "sliders": [88, 72, 15, 97, 0, 66, 102, 68, 0, 70, 101, 0, 89, 53, 78, 48], "sw1": 74, "sw2": 25}, {"name": "A75 Pluck Bell", "sliders": [51, 0, 5, 17, 0, 39, 0, 49, 0, 127, 49, 0, 85, 75, 53, 49], "sw1": 12, "sw2": 24}, {"name": "A76 Dark Synth ", "sliders": [127, 0, 0, 0, 0, 56, 86, 6, 0, 71, 79, 0, 47, 0, 50, 127], "sw1": 26, "sw2": 26}, {"name": "A77 Sustainer", "sliders": [71, 0, 5, 46, 0, 39, 0, 84, 0, 127, 57, 0, 85, 75, 70, 49], "sw1": 42, "sw2": 24}, {"name": "A78 Wah Release", "sliders": [89, 14, 1, 25, 0, 72, 88, 19, 0, 66, 104, 0, 84, 0, 29, 87], "sw1": 10, "sw2": 19}, {"name": "A81 Gong", "sliders": [127, 0, 0, 102, 56, 70, 107, 5, 0, 72, 91, 3, 48, 127, 98, 0], "sw1": 73, "sw2": 19}, {"name": "A82 Resonance F", "sliders": [59, 0, 0, 0, 0, 26, 127, 45, 0, 89, 127, 0, 19, 0, 22, 0], "sw1": 33, "sw2": 17}, {"name": "A83 Drum Booms", "sliders": [0, 0, 0, 102, 127, 42, 0, 34, 0, 58, 127, 0, 36, 15, 49, 46], "sw1": 33, "sw2": 25}, {"name": "A84 Dust Storm", "sliders": [0, 0, 0, 0, 127, 52, 85, 0, 44, 94, 127, 88, 91, 28, 85, 0], "sw1": 33, "sw2": 17}, {"name": "A85 Rocket Men", "sliders": [8, 32, 0, 102, 97, 73, 114, 8, 0, 56, 127, 0, 89, 127, 104, 0], "sw1": 36, "sw2": 3}, {"name": "A86 Hand Claps", "sliders": [59, 0, 0, 0, 127, 17, 88, 54, 0, 55, 127, 1, 11, 0, 8, 0], "sw1": 33, "sw2": 5}, {"name": "A87 FX Sweep", "sliders": [127, 65, 116, 102, 127, 71, 44, 83, 0, 94, 127, 0, 94, 0, 112, 127], "sw1": 41, "sw2": 18}, {"name": "A88 Caverns", "sliders": [0, 0, 0, 102, 127, 68, 118, 0, 0, 69, 107, 0, 13, 38, 47, 0], "sw1": 33, "sw2": 8}, {"name": "B11 Strings", "sliders": [57, 45, 0, 55, 0, 85, 0, 0, 0, 108, 52, 59, 32, 86, 40, 0], "sw1": 26, "sw2": 24}, {"name": "B12 Violin", "sliders": [66, 45, 20, 0, 0, 77, 0, 0, 0, 120, 110, 43, 45, 57, 26, 0], "sw1": 50, "sw2": 24}, {"name": "B13 Chorus Vibe", "sliders": [72, 45, 0, 0, 0, 10, 0, 59, 0, 23, 88, 0, 89, 47, 74, 0], "sw1": 74, "sw2": 25}, {"name": "B14 Organ I", "sliders": [45, 42, 0, 73, 0, 60, 72, 14, 0, 127, 58, 0, 0, 0, 0, 97], "sw1": 10, "sw2": 29}, {"name": "B15 Harpsichord", "sliders": [23, 0, 0, 54, 0, 127, 127, 90, 0, 86, 125, 0, 60, 0, 31, 35], "sw1": 44, "sw2": 0}, {"name": "B16 Recorder", "sliders": [78, 0, 0, 8, 0, 6, 0, 46, 0, 127, 127, 5, 21, 127, 30, 0], "sw1": 42, "sw2": 17}, {"name": "B17 Perc Pluck", "sliders": [62, 38, 8, 0, 0, 0, 0, 90, 0, 73, 65, 0, 16, 78, 116, 0], "sw1": 74, "sw2": 25}, {"name": "B18 Noise Sweep", "sliders": [127, 0, 0, 0, 127, 2, 0, 77, 0, 104, 92, 14, 78, 108, 120, 0], "sw1": 33, "sw2": 24}, {"name": "B21 Space Chime", "sliders": [99, 0, 0, 0, 0, 70, 127, 0, 0, 74, 85, 0, 25, 0, 60, 0], "sw1": 76, "sw2": 24}, {"name": "B22 Nylon Guita", "sliders": [72, 45, 0, 29, 0, 57, 0, 26, 0, 25, 115, 0, 89, 0, 32, 0], "sw1": 42, "sw2": 1}, {"name": "B23 Orchestral ", "sliders": [22, 45, 0, 105, 0, 33, 0, 55, 0, 36, 0, 29, 88, 50, 52, 127], "sw1": 26, "sw2": 24}, {"name": "B24 Bright Pluc", "sliders": [0, 0, 0, 58, 0, 57, 0, 40, 0, 86, 104, 0, 25, 42, 44, 0], "sw1": 42, "sw2": 17}, {"name": "B25 Organ Bell", "sliders": [78, 0, 6, 68, 0, 61, 0, 0, 0, 127, 62, 0, 0, 127, 26, 85], "sw1": 90, "sw2": 25}, {"name": "B26 Accordion", "sliders": [0, 0, 0, 64, 0, 77, 0, 14, 0, 74, 66, 8, 11, 110, 9, 80], "sw1": 90, "sw2": 1}, {"name": "B27 FX Rise 1", "sliders": [116, 0, 0, 0, 0, 108, 127, 16, 127, 64, 0, 0, 0, 127, 84, 0], "sw1": 68, "sw2": 26}, {"name": "B28 FX Rise 2", "sliders": [108, 0, 0, 0, 0, 94, 127, 80, 23, 127, 0, 0, 127, 51, 71, 0], "sw1": 2, "sw2": 26}, {"name": "B31 Brass", "sliders": [51, 127, 0, 73, 0, 0, 0, 94, 0, 127, 72, 3, 44, 51, 11, 0], "sw1": 82, "sw2": 28}, {"name": "B32 Helicopter", "sliders": [106, 0, 0, 48, 0, 82, 5, 93, 127, 0, 72, 0, 0, 35, 76, 127], "sw1": 10, "sw2": 27}, {"name": "B33 Lute", "sliders": [52, 0, 2, 105, 0, 29, 0, 35, 0, 86, 127, 0, 48, 34, 87, 0], "sw1": 42, "sw2": 25}, {"name": "B34 Chorus Funk", "sliders": [77, 94, 0, 73, 0, 47, 34, 53, 0, 65, 42, 0, 11, 34, 0, 79], "sw1": 90, "sw2": 29}, {"name": "B35 Tomita", "sliders": [78, 0, 0, 105, 0, 49, 125, 15, 2, 127, 57, 0, 14, 79, 0, 0], "sw1": 36, "sw2": 31}, {"name": "B36 FX Sweep 1", "sliders": [127, 0, 0, 0, 0, 58, 127, 16, 76, 64, 0, 0, 0, 127, 85, 0], "sw1": 68, "sw2": 24}, {"name": "B37 Sharp Reed", "sliders": [21, 0, 0, 73, 0, 33, 0, 53, 0, 65, 55, 2, 18, 112, 0, 0], "sw1": 60, "sw2": 28}, {"name": "B38 Bass Pluck", "sliders": [0, 0, 0, 60, 0, 37, 29, 28, 0, 43, 92, 0, 42, 35, 0, 0], "sw1": 57, "sw2": 24}, {"name": "B41 Resonant Ri", "sliders": [52, 0, 15, 0, 0, 66, 107, 31, 0, 73, 62, 0, 52, 39, 0, 0], "sw1": 17, "sw2": 30}, {"name": "B42 Harpsichord", "sliders": [0, 0, 0, 105, 0, 127, 95, 0, 0, 127, 107, 0, 45, 0, 0, 35], "sw1": 60, "sw2": 17}, {"name": "B43 Dark Ensemb", "sliders": [0, 0, 0, 57, 0, 55, 0, 0, 0, 107, 67, 21, 0, 127, 35, 75], "sw1": 90, "sw2": 27}, {"name": "B44 Contact Wah", "sliders": [78, 0, 0, 81, 0, 61, 101, 46, 0, 127, 127, 0, 0, 0, 0, 0], "sw1": 42, "sw2": 23}, {"name": "B45 Noise Sweep", "sliders": [127, 0, 0, 0, 127, 127, 0, 83, 0, 104, 116, 127, 79, 26, 83, 0], "sw1": 68, "sw2": 26}, {"name": "B46 Glassy Wah", "sliders": [0, 94, 0, 28, 0, 24, 34, 61, 0, 65, 112, 6, 18, 50, 38, 0], "sw1": 42, "sw2": 25}, {"name": "B47 Phase Ensem", "sliders": [11, 45, 5, 105, 0, 79, 0, 0, 0, 127, 99, 84, 45, 57, 49, 0], "sw1": 10, "sw2": 24}, {"name": "B48 Chorused Be", "sliders": [0, 11, 0, 105, 0, 59, 127, 0, 0, 127, 62, 0, 62, 0, 57, 101], "sw1": 76, "sw2": 24}, {"name": "B51 Clav", "sliders": [50, 11, 0, 91, 0, 32, 0, 63, 0, 0, 108, 0, 43, 55, 0, 7], "sw1": 41, "sw2": 9}, {"name": "B52 Organ 2", "sliders": [81, 0, 0, 104, 0, 54, 106, 7, 0, 127, 79, 0, 0, 0, 0, 0], "sw1": 81, "sw2": 29}, {"name": "B53 Bassoon", "sliders": [84, 38, 9, 90, 0, 35, 0, 43, 9, 98, 127, 5, 127, 106, 2, 0], "sw1": 41, "sw2": 1}, {"name": "B54 Auto Noise ", "sliders": [127, 0, 0, 0, 127, 127, 0, 127, 0, 104, 107, 0, 79, 57, 83, 0], "sw1": 68, "sw2": 26}, {"name": "B55 Brass Ensem", "sliders": [25, 94, 0, 73, 0, 47, 34, 35, 0, 65, 39, 6, 68, 67, 38, 0], "sw1": 90, "sw2": 24}, {"name": "B56 Ethereal", "sliders": [69, 0, 0, 105, 0, 47, 120, 0, 0, 127, 60, 92, 50, 127, 55, 59], "sw1": 26, "sw2": 24}, {"name": "B57 Chorus Bell", "sliders": [72, 45, 0, 29, 0, 0, 102, 62, 0, 90, 30, 0, 117, 0, 120, 0], "sw1": 90, "sw2": 25}, {"name": "B58 Blizzard", "sliders": [1, 0, 0, 105, 127, 56, 89, 7, 38, 121, 127, 78, 98, 87, 78, 0], "sw1": 36, "sw2": 0}, {"name": "B61 E Piano Tre", "sliders": [44, 0, 0, 21, 0, 22, 0, 35, 7, 107, 103, 0, 65, 60, 98, 127], "sw1": 44, "sw2": 16}, {"name": "B62 Clarinet", "sliders": [69, 22, 9, 0, 0, 35, 0, 43, 7, 98, 104, 5, 127, 106, 7, 0], "sw1": 42, "sw2": 1}, {"name": "B63 Thunder", "sliders": [127, 0, 0, 0, 127, 2, 0, 77, 0, 104, 107, 0, 22, 108, 120, 0], "sw1": 33, "sw2": 24}, {"name": "B64 Reedy Organ", "sliders": [35, 18, 0, 73, 0, 33, 0, 53, 0, 65, 69, 3, 44, 109, 0, 0], "sw1": 42, "sw2": 28}, {"name": "B65 Flute / Hor", "sliders": [34, 0, 0, 59, 0, 25, 0, 42, 0, 65, 22, 21, 73, 71, 48, 0], "sw1": 25, "sw2": 24}, {"name": "B66 Toy Rhodes", "sliders": [30, 45, 127, 0, 0, 58, 127, 0, 0, 127, 107, 0, 89, 0, 39, 0], "sw1": 36, "sw2": 0}, {"name": "B67 Surf's Up", "sliders": [1, 0, 0, 105, 127, 84, 11, 0, 49, 54, 75, 33, 97, 127, 121, 0], "sw1": 36, "sw2": 10}, {"name": "B68 OW Bass", "sliders": [50, 0, 0, 50, 0, 63, 84, 65, 0, 127, 70, 127, 0, 107, 0, 47], "sw1": 57, "sw2": 31}, {"name": "B71 Piccolo", "sliders": [70, 28, 0, 14, 0, 4, 0, 63, 16, 98, 87, 16, 103, 106, 21, 0], "sw1": 60, "sw2": 9}, {"name": "B72 Melodic Tap", "sliders": [99, 0, 0, 0, 127, 72, 112, 0, 0, 127, 127, 0, 24, 0, 24, 0], "sw1": 65, "sw2": 0}, {"name": "B73 Meow Bass", "sliders": [51, 127, 0, 73, 0, 45, 100, 35, 0, 65, 84, 4, 90, 0, 27, 0], "sw1": 50, "sw2": 28}, {"name": "B74 Violin (hig", "sliders": [71, 45, 22, 0, 0, 89, 0, 0, 3, 120, 85, 43, 45, 57, 26, 0], "sw1": 52, "sw2": 24}, {"name": "B75 High Bells", "sliders": [30, 45, 127, 0, 0, 76, 127, 0, 0, 127, 111, 0, 22, 52, 59, 0], "sw1": 36, "sw2": 0}, {"name": "B76 Rolling Wah", "sliders": [36, 0, 0, 105, 0, 60, 9, 0, 127, 0, 77, 34, 55, 127, 105, 0], "sw1": 42, "sw2": 24}, {"name": "B77 Ping Bell", "sliders": [0, 11, 0, 104, 0, 76, 127, 0, 0, 127, 83, 0, 23, 23, 57, 0], "sw1": 76, "sw2": 24}, {"name": "B78 Brassy Orga", "sliders": [16, 0, 0, 68, 0, 8, 0, 87, 0, 52, 14, 0, 36, 109, 0, 56], "sw1": 89, "sw2": 24}, {"name": "B81 Low Dark St", "sliders": [21, 45, 5, 81, 0, 71, 0, 0, 0, 103, 40, 83, 23, 109, 42, 0], "sw1": 25, "sw2": 24}, {"name": "B82 Piccolo Tru", "sliders": [51, 127, 0, 73, 0, 0, 0, 94, 0, 127, 97, 3, 44, 51, 11, 0], "sw1": 50, "sw2": 28}, {"name": "B83 Cello", "sliders": [57, 45, 21, 0, 0, 75, 0, 3, 1, 45, 109, 48, 65, 90, 34, 0], "sw1": 49, "sw2": 24}, {"name": "B84 High String", "sliders": [80, 0, 10, 70, 0, 92, 0, 0, 0, 71, 48, 27, 57, 57, 41, 0], "sw1": 28, "sw2": 24}, {"name": "B85 Rocket Men", "sliders": [108, 0, 0, 0, 0, 110, 127, 80, 63, 127, 0, 0, 127, 51, 89, 0], "sw1": 2, "sw2": 26}, {"name": "B86 Forbidden P", "sliders": [50, 11, 0, 44, 0, 29, 4, 88, 5, 95, 79, 0, 48, 23, 42, 9], "sw1": 76, "sw2": 1}, {"name": "B87 Froggy", "sliders": [78, 0, 0, 0, 0, 55, 127, 43, 0, 127, 77, 0, 0, 0, 0, 127], "sw1": 41, "sw2": 23}, {"name": "B88 Owgan", "sliders": [50, 0, 0, 45, 0, 38, 84, 32, 0, 127, 101, 0, 49, 55, 0, 56], "sw1": 57, "sw2": 25}];
 
+const SOUNDSET_BANKS = {
+    tame_impala: {
+        name: "Tame Impala Collection",
+        patches: [{"name": "Less I Know Keys", "sliders": [55, 0, 4, 35, 0, 72, 12, 52, 0, 60, 105, 0, 48, 55, 28, 0], "sw1": 90, "sw2": 17}, {"name": "Let It Pad", "sliders": [25, 10, 3, 40, 0, 58, 15, 42, 15, 50, 100, 45, 70, 90, 65, 0], "sw1": 18, "sw2": 17}, {"name": "Nangs Wobble", "sliders": [62, 0, 16, 20, 0, 65, 20, 35, 0, 70, 105, 15, 60, 85, 40, 0], "sw1": 90, "sw2": 16}, {"name": "Eventually Hit", "sliders": [0, 0, 0, 45, 0, 45, 10, 85, 0, 50, 115, 0, 65, 40, 50, 80], "sw1": 82, "sw2": 24}, {"name": "Borderline Keys", "sliders": [45, 0, 2, 50, 0, 52, 14, 30, 0, 80, 105, 2, 55, 35, 32, 0], "sw1": 74, "sw2": 17}, {"name": "Breathe Piano", "sliders": [60, 0, 0, 30, 0, 68, 8, 45, 0, 90, 110, 0, 42, 15, 25, 40], "sw1": 10, "sw2": 16}, {"name": "Past Life Drone", "sliders": [18, 0, 4, 0, 0, 32, 40, 20, 35, 40, 110, 55, 70, 110, 60, 100], "sw1": 81, "sw2": 24}, {"name": "Disciples Brass", "sliders": [40, 0, 0, 35, 0, 50, 12, 70, 0, 75, 108, 12, 55, 70, 30, 0], "sw1": 90, "sw2": 16}, {"name": "Slow Rush Pad", "sliders": [32, 15, 6, 25, 0, 50, 15, 35, 12, 65, 100, 50, 75, 95, 70, 0], "sw1": 18, "sw2": 17}, {"name": "Lonerism String", "sliders": [50, 20, 4, 0, 0, 78, 10, 20, 0, 95, 105, 35, 60, 100, 55, 0], "sw1": 84, "sw2": 16}, {"name": "Alter Ego Swirl", "sliders": [30, 0, 2, 0, 0, 40, 55, 25, 48, 60, 100, 40, 65, 90, 60, 45], "sw1": 82, "sw2": 16}, {"name": "Yes Im Changing", "sliders": [38, 10, 4, 45, 0, 48, 12, 28, 8, 70, 100, 42, 65, 85, 58, 0], "sw1": 74, "sw2": 17}, {"name": "Posthumous Air", "sliders": [20, 0, 2, 0, 15, 62, 25, 20, 0, 80, 98, 60, 70, 95, 80, 0], "sw1": 10, "sw2": 16}, {"name": "Mind Mischief", "sliders": [42, 12, 4, 40, 0, 44, 18, 55, 10, 65, 105, 28, 60, 75, 45, 0], "sw1": 90, "sw2": 17}, {"name": "Apocalypse Swl", "sliders": [35, 0, 0, 30, 0, 38, 20, 75, 0, 55, 110, 32, 65, 80, 50, 60], "sw1": 82, "sw2": 16}, {"name": "One More Hour", "sliders": [22, 15, 0, 0, 0, 42, 15, 60, 15, 60, 110, 48, 70, 90, 65, 70], "sw1": 17, "sw2": 16}, {"name": "Less I Know Bas", "sliders": [0, 0, 0, 0, 0, 38, 10, 65, 0, 40, 120, 0, 38, 0, 18, 90], "sw1": 49, "sw2": 16}, {"name": "Lost Yesterday", "sliders": [0, 0, 0, 30, 0, 42, 15, 70, 0, 45, 118, 0, 32, 10, 15, 75], "sw1": 41, "sw2": 16}, {"name": "Is It True Bas", "sliders": [0, 0, 0, 25, 0, 45, 22, 58, 0, 50, 118, 0, 35, 5, 16, 50], "sw1": 57, "sw2": 16}, {"name": "Elephant Grit", "sliders": [0, 0, 0, 0, 0, 50, 45, 60, 0, 45, 122, 2, 45, 20, 22, 100], "sw1": 49, "sw2": 16}, {"name": "Breathe 303 Bas", "sliders": [0, 0, 0, 0, 0, 28, 75, 88, 0, 60, 120, 0, 36, 0, 15, 0], "sw1": 49, "sw2": 16}, {"name": "Borderline Sub", "sliders": [0, 0, 0, 0, 0, 32, 5, 20, 0, 30, 124, 0, 50, 40, 25, 115], "sw1": 41, "sw2": 24}, {"name": "Nangs Fat Bass", "sliders": [55, 0, 12, 0, 0, 40, 15, 45, 0, 40, 120, 2, 42, 30, 24, 80], "sw1": 49, "sw2": 16}, {"name": "Currents LowEnd", "sliders": [0, 0, 0, 35, 0, 36, 12, 40, 0, 35, 122, 0, 48, 25, 20, 100], "sw1": 41, "sw2": 24}, {"name": "Let It Arp", "sliders": [0, 0, 0, 30, 0, 35, 15, 75, 0, 65, 110, 0, 30, 0, 22, 0], "sw1": 90, "sw2": 16}, {"name": "Glimmer Pluck", "sliders": [0, 0, 0, 45, 0, 40, 20, 65, 0, 70, 108, 0, 25, 0, 18, 0], "sw1": 10, "sw2": 16}, {"name": "Why Wont Pluck", "sliders": [0, 0, 0, 0, 0, 48, 12, 55, 0, 60, 105, 0, 35, 12, 24, 0], "sw1": 82, "sw2": 16}, {"name": "Music To Walk", "sliders": [0, 0, 0, 30, 0, 52, 10, 60, 0, 65, 110, 0, 28, 0, 16, 40], "sw1": 74, "sw2": 16}, {"name": "Beverly Laurel", "sliders": [40, 0, 0, 35, 0, 60, 12, 45, 0, 75, 108, 0, 38, 20, 25, 0], "sw1": 90, "sw2": 16}, {"name": "Might Be Time", "sliders": [0, 0, 0, 25, 0, 70, 35, 50, 0, 65, 112, 0, 32, 15, 20, 0], "sw1": 58, "sw2": 16}, {"name": "Runway Pluck", "sliders": [0, 0, 0, 0, 0, 38, 20, 70, 0, 55, 115, 0, 26, 0, 18, 50], "sw1": 82, "sw2": 16}, {"name": "Expectation Stb", "sliders": [0, 0, 0, 40, 0, 65, 10, 40, 0, 70, 108, 0, 42, 25, 28, 0], "sw1": 74, "sw2": 16}, {"name": "Feels Like Keys", "sliders": [58, 0, 14, 45, 0, 55, 15, 30, 0, 80, 105, 2, 50, 60, 35, 0], "sw1": 74, "sw2": 17}, {"name": "On Track Rhodes", "sliders": [35, 0, 2, 50, 0, 46, 10, 35, 0, 85, 105, 1, 55, 30, 30, 0], "sw1": 74, "sw2": 16}, {"name": "Reality Motion", "sliders": [0, 0, 0, 20, 0, 72, 15, 50, 0, 85, 108, 0, 36, 10, 20, 0], "sw1": 10, "sw2": 16}, {"name": "Sundown Organ", "sliders": [0, 0, 0, 0, 0, 58, 10, 15, 0, 75, 110, 0, 20, 110, 25, 50], "sw1": 74, "sw2": 20}, {"name": "Tape Wurlitzer", "sliders": [64, 0, 18, 40, 0, 48, 12, 40, 0, 75, 105, 2, 52, 25, 28, 0], "sw1": 74, "sw2": 17}, {"name": "Detuned Psych", "sliders": [50, 0, 10, 35, 0, 54, 15, 30, 0, 70, 105, 5, 58, 45, 35, 0], "sw1": 26, "sw2": 17}, {"name": "Kevins EPiano", "sliders": [42, 0, 4, 45, 0, 50, 12, 32, 0, 80, 105, 1, 48, 38, 26, 0], "sw1": 74, "sw2": 17}, {"name": "Innerspk Organ", "sliders": [0, 0, 0, 0, 0, 80, 15, 20, 0, 85, 108, 0, 0, 127, 10, 0], "sw1": 90, "sw2": 20}, {"name": "Mind Lead", "sliders": [68, 15, 8, 0, 0, 75, 25, 25, 0, 85, 110, 5, 40, 85, 35, 0], "sw1": 82, "sw2": 16}, {"name": "Lucidity Solo", "sliders": [60, 10, 6, 25, 0, 68, 35, 30, 0, 80, 112, 3, 35, 90, 25, 0], "sw1": 90, "sw2": 16}, {"name": "Endors Toi Lead", "sliders": [55, 0, 12, 0, 0, 62, 20, 25, 0, 75, 108, 8, 50, 80, 40, 0], "sw1": 18, "sw2": 16}, {"name": "Solitude Lead", "sliders": [58, 20, 6, 35, 0, 55, 50, 20, 0, 85, 106, 10, 45, 75, 32, 0], "sw1": 74, "sw2": 16}, {"name": "Alter Ego Saw", "sliders": [50, 0, 4, 0, 0, 82, 15, 15, 0, 80, 115, 2, 30, 95, 30, 40], "sw1": 82, "sw2": 16}, {"name": "Cause Im A Man", "sliders": [45, 0, 4, 30, 0, 58, 18, 45, 0, 75, 108, 8, 42, 70, 35, 0], "sw1": 90, "sw2": 16}, {"name": "Powerlines Lead", "sliders": [65, 0, 4, 50, 0, 48, 60, 10, 0, 90, 105, 4, 40, 80, 30, 0], "sw1": 76, "sw2": 16}, {"name": "Tomorrows Dust", "sliders": [48, 10, 6, 0, 0, 64, 18, 35, 0, 75, 105, 6, 45, 75, 38, 0], "sw1": 18, "sw2": 16}, {"name": "Phased Sweep", "sliders": [22, 0, 0, 0, 0, 30, 50, 20, 65, 60, 105, 35, 65, 90, 55, 0], "sw1": 82, "sw2": 16}, {"name": "Osc Laser Zap", "sliders": [0, 0, 0, 0, 0, 25, 85, 110, 0, 50, 120, 0, 22, 0, 15, 0], "sw1": 50, "sw2": 16}, {"name": "Tape Flutter FX", "sliders": [75, 0, 45, 0, 0, 60, 20, 20, 0, 65, 105, 0, 40, 80, 35, 0], "sw1": 82, "sw2": 16}, {"name": "Reso Noise Rise", "sliders": [20, 0, 0, 0, 95, 40, 70, 75, 0, 50, 110, 65, 50, 40, 55, 0], "sw1": 2, "sw2": 16}, {"name": "Psych UFO Swp", "sliders": [38, 0, 0, 40, 0, 35, 90, 10, 75, 65, 105, 25, 50, 80, 45, 0], "sw1": 74, "sw2": 16}, {"name": "Submarine Drone", "sliders": [15, 0, 0, 0, 0, 22, 65, 50, 20, 40, 125, 40, 60, 50, 50, 120], "sw1": 65, "sw2": 24}, {"name": "Echo Chamber FX", "sliders": [40, 0, 10, 30, 25, 55, 40, 30, 0, 70, 100, 15, 45, 40, 65, 0], "sw1": 10, "sw2": 17}, {"name": "Siren Filter", "sliders": [28, 0, 0, 0, 0, 45, 75, 15, 80, 60, 105, 10, 45, 90, 40, 0], "sw1": 82, "sw2": 16}, {"name": "New Person Dark", "sliders": [24, 0, 2, 0, 0, 42, 20, 30, 10, 55, 112, 45, 70, 85, 60, 80], "sw1": 81, "sw2": 16}, {"name": "Suns Coming Up", "sliders": [30, 0, 2, 45, 0, 48, 10, 25, 0, 80, 102, 10, 55, 45, 45, 0], "sw1": 74, "sw2": 17}, {"name": "Keep On Lying", "sliders": [35, 0, 4, 0, 0, 52, 30, 25, 40, 65, 105, 38, 65, 90, 55, 0], "sw1": 18, "sw2": 16}, {"name": "Patience Dream", "sliders": [55, 0, 0, 35, 0, 62, 12, 40, 0, 85, 110, 5, 48, 50, 35, 45], "sw1": 74, "sw2": 17}, {"name": "Instant Destiny", "sliders": [40, 10, 4, 30, 0, 68, 15, 35, 0, 80, 108, 25, 60, 95, 50, 0], "sw1": 90, "sw2": 16}, {"name": "Borderline Intro", "sliders": [40, 0, 0, 45, 0, 34, 15, 20, 0, 60, 105, 2, 45, 30, 25, 0], "sw1": 74, "sw2": 16}, {"name": "Silver Lake Pad", "sliders": [28, 10, 4, 0, 0, 46, 12, 30, 15, 65, 100, 50, 65, 90, 65, 0], "sw1": 18, "sw2": 16}, {"name": "Currents Outro", "sliders": [32, 15, 4, 0, 0, 55, 18, 40, 10, 70, 110, 40, 70, 100, 75, 50], "sw1": 82, "sw2": 16}]
+    },
+    synthwave: {
+        name: "Synthwave / Outrun Bank",
+        patches: [{"name": "Miami Nights", "sliders": [45, 0, 0, 30, 0, 75, 12, 50, 0, 70, 108, 0, 45, 50, 30, 0], "sw1": 90, "sw2": 16}, {"name": "Outrun Poly", "sliders": [0, 0, 0, 0, 0, 68, 15, 60, 0, 65, 110, 0, 38, 35, 25, 0], "sw1": 82, "sw2": 16}, {"name": "Cyberpunk Stab", "sliders": [0, 0, 0, 0, 0, 52, 20, 75, 0, 55, 118, 0, 32, 15, 20, 80], "sw1": 50, "sw2": 16}, {"name": "Sunset Highway", "sliders": [30, 0, 2, 25, 0, 60, 15, 40, 10, 75, 105, 5, 50, 60, 35, 0], "sw1": 26, "sw2": 16}, {"name": "Lazerhawk Hit", "sliders": [0, 0, 0, 35, 0, 80, 10, 45, 0, 60, 112, 0, 40, 20, 18, 0], "sw1": 90, "sw2": 16}, {"name": "Turbo Drive", "sliders": [0, 0, 0, 40, 0, 62, 18, 65, 0, 65, 110, 0, 30, 10, 20, 0], "sw1": 74, "sw2": 16}, {"name": "Nightcall Keys", "sliders": [40, 0, 2, 45, 0, 54, 12, 30, 0, 80, 105, 1, 48, 40, 28, 0], "sw1": 74, "sw2": 17}, {"name": "Neon City 1984", "sliders": [50, 0, 0, 0, 0, 72, 10, 35, 0, 85, 105, 2, 45, 55, 32, 0], "sw1": 20, "sw2": 16}, {"name": "VHS Tape Pad", "sliders": [55, 0, 10, 20, 0, 52, 15, 30, 8, 65, 100, 40, 65, 90, 60, 0], "sw1": 82, "sw2": 17}, {"name": "Blade Runner", "sliders": [30, 15, 0, 0, 0, 45, 18, 65, 12, 60, 110, 35, 65, 85, 65, 40], "sw1": 18, "sw2": 16}, {"name": "Dreamwave Air", "sliders": [25, 0, 2, 35, 12, 58, 15, 25, 0, 75, 98, 50, 70, 95, 70, 0], "sw1": 10, "sw2": 17}, {"name": "Palm Tree Glow", "sliders": [35, 10, 4, 45, 0, 50, 12, 35, 0, 70, 102, 35, 60, 80, 55, 0], "sw1": 74, "sw2": 17}, {"name": "Midnight Cruise", "sliders": [40, 15, 2, 0, 0, 62, 10, 30, 0, 80, 105, 30, 60, 90, 50, 0], "sw1": 82, "sw2": 16}, {"name": "Distant Arcade", "sliders": [45, 0, 0, 50, 0, 68, 15, 35, 0, 85, 100, 25, 55, 75, 45, 0], "sw1": 12, "sw2": 16}, {"name": "Cassette Warmth", "sliders": [32, 0, 5, 0, 0, 46, 12, 40, 0, 60, 108, 42, 65, 88, 58, 60], "sw1": 82, "sw2": 16}, {"name": "Infinite Sunset", "sliders": [28, 15, 0, 30, 0, 55, 15, 50, 15, 70, 112, 55, 75, 100, 75, 50], "sw1": 90, "sw2": 16}, {"name": "Running 16ths", "sliders": [0, 0, 0, 0, 0, 38, 15, 65, 0, 45, 120, 0, 32, 0, 14, 85], "sw1": 49, "sw2": 16}, {"name": "Miami Bassline", "sliders": [0, 0, 0, 30, 0, 44, 18, 70, 0, 50, 118, 0, 28, 0, 15, 70], "sw1": 41, "sw2": 16}, {"name": "Darksynth Growl", "sliders": [0, 0, 0, 0, 0, 48, 40, 55, 0, 45, 122, 0, 45, 35, 22, 0], "sw1": 49, "sw2": 16}, {"name": "Slap Synth Bass", "sliders": [0, 0, 0, 25, 0, 42, 25, 80, 0, 55, 118, 0, 24, 0, 12, 0], "sw1": 41, "sw2": 16}, {"name": "Sub Pumper", "sliders": [0, 0, 0, 0, 0, 30, 5, 25, 0, 30, 125, 0, 45, 40, 20, 125], "sw1": 33, "sw2": 24}, {"name": "FM Digital Bass", "sliders": [0, 0, 0, 35, 0, 55, 15, 60, 0, 60, 115, 0, 30, 10, 16, 40], "sw1": 41, "sw2": 16}, {"name": "Italo Disco Bas", "sliders": [0, 0, 0, 20, 0, 46, 12, 50, 0, 45, 120, 0, 34, 0, 15, 0], "sw1": 57, "sw2": 16}, {"name": "Overdrive 80s", "sliders": [0, 0, 0, 0, 0, 52, 30, 45, 0, 50, 122, 0, 40, 20, 18, 90], "sw1": 49, "sw2": 16}, {"name": "Neon Arp", "sliders": [0, 0, 0, 0, 0, 45, 18, 70, 0, 65, 110, 0, 26, 0, 16, 0], "sw1": 82, "sw2": 16}, {"name": "Laser Runner", "sliders": [0, 0, 0, 30, 0, 40, 30, 80, 0, 60, 115, 0, 22, 0, 14, 0], "sw1": 42, "sw2": 16}, {"name": "Kavinsky Pluck", "sliders": [0, 0, 0, 0, 0, 36, 15, 65, 0, 55, 115, 0, 28, 0, 18, 40], "sw1": 82, "sw2": 16}, {"name": "Grid Climber", "sliders": [0, 0, 0, 45, 0, 58, 15, 50, 0, 75, 108, 0, 30, 10, 20, 0], "sw1": 10, "sw2": 16}, {"name": "Midnight Pulse", "sliders": [0, 0, 0, 0, 0, 38, 45, 60, 0, 60, 112, 0, 32, 5, 18, 0], "sw1": 82, "sw2": 16}, {"name": "Cyber Runner", "sliders": [0, 0, 0, 0, 0, 42, 20, 75, 0, 50, 118, 0, 24, 0, 15, 60], "sw1": 50, "sw2": 16}, {"name": "Starlight Arp", "sliders": [0, 0, 0, 50, 0, 62, 18, 45, 0, 85, 105, 0, 35, 15, 22, 0], "sw1": 12, "sw2": 16}, {"name": "Clockwork 84", "sliders": [0, 0, 0, 35, 0, 50, 15, 60, 0, 70, 112, 0, 25, 0, 15, 0], "sw1": 42, "sw2": 16}, {"name": "Miami Vice Horn", "sliders": [40, 0, 0, 0, 0, 48, 12, 72, 0, 65, 110, 14, 50, 65, 28, 0], "sw1": 82, "sw2": 16}, {"name": "Power Synthbras", "sliders": [35, 0, 0, 30, 0, 42, 15, 80, 0, 70, 112, 10, 55, 75, 32, 0], "sw1": 90, "sw2": 16}, {"name": "Terminator Bras", "sliders": [0, 0, 0, 0, 0, 38, 25, 85, 0, 50, 118, 12, 60, 70, 35, 70], "sw1": 49, "sw2": 16}, {"name": "Synthwave Fanfr", "sliders": [30, 0, 0, 0, 0, 52, 15, 65, 0, 75, 110, 8, 48, 70, 25, 0], "sw1": 82, "sw2": 16}, {"name": "Dark Knight Hrn", "sliders": [0, 0, 0, 0, 0, 34, 18, 75, 0, 45, 118, 16, 65, 80, 40, 80], "sw1": 81, "sw2": 16}, {"name": "Top Gun Brass", "sliders": [40, 0, 0, 25, 0, 56, 15, 70, 0, 70, 110, 8, 50, 75, 28, 0], "sw1": 90, "sw2": 16}, {"name": "Mellow FrenchHn", "sliders": [25, 0, 0, 0, 0, 40, 10, 50, 0, 60, 105, 22, 55, 60, 35, 0], "sw1": 82, "sw2": 16}, {"name": "Stadium Brass", "sliders": [30, 0, 0, 35, 0, 46, 18, 75, 0, 75, 112, 15, 55, 85, 42, 0], "sw1": 26, "sw2": 16}, {"name": "Laser Solo Lead", "sliders": [65, 12, 6, 0, 0, 78, 22, 20, 0, 85, 115, 2, 40, 90, 30, 0], "sw1": 82, "sw2": 16}, {"name": "Turbo Lead", "sliders": [50, 0, 4, 30, 0, 70, 30, 35, 0, 80, 115, 1, 35, 95, 25, 40], "sw1": 90, "sw2": 16}, {"name": "Chorused Glide", "sliders": [55, 15, 8, 40, 0, 65, 15, 25, 0, 80, 108, 4, 45, 85, 35, 0], "sw1": 10, "sw2": 16}, {"name": "Cyber Whistle", "sliders": [60, 18, 6, 50, 0, 50, 55, 15, 0, 85, 105, 8, 40, 80, 30, 0], "sw1": 74, "sw2": 16}, {"name": "Miami Sunset Ld", "sliders": [55, 0, 5, 0, 0, 62, 20, 25, 0, 80, 110, 5, 48, 85, 32, 0], "sw1": 82, "sw2": 16}, {"name": "Hardwired Solo", "sliders": [0, 0, 0, 0, 0, 85, 15, 10, 0, 85, 118, 0, 30, 100, 22, 0], "sw1": 50, "sw2": 16}, {"name": "Vapor Solo", "sliders": [60, 0, 12, 40, 0, 58, 15, 20, 0, 75, 105, 6, 50, 80, 38, 0], "sw1": 10, "sw2": 17}, {"name": "Outrun Hero", "sliders": [45, 0, 4, 30, 0, 72, 25, 30, 0, 80, 112, 3, 42, 90, 28, 0], "sw1": 90, "sw2": 16}, {"name": "Laser Zap Down", "sliders": [0, 0, 0, 0, 0, 20, 88, 115, 0, 50, 120, 0, 20, 0, 12, 0], "sw1": 50, "sw2": 16}, {"name": "Laser Zap Up", "sliders": [0, 0, 0, 0, 0, 85, 85, 95, 0, 50, 120, 0, 24, 0, 12, 0], "sw1": 50, "sw2": 18}, {"name": "Whiteout Riser", "sliders": [15, 0, 0, 0, 110, 35, 60, 85, 0, 50, 115, 70, 50, 40, 60, 0], "sw1": 2, "sw2": 16}, {"name": "Sub Drop Bomb", "sliders": [0, 0, 0, 0, 0, 25, 80, 90, 0, 30, 125, 0, 55, 0, 35, 120], "sw1": 33, "sw2": 24}, {"name": "Alien Radar", "sliders": [95, 0, 0, 40, 0, 60, 70, 20, 85, 60, 108, 0, 30, 80, 25, 0], "sw1": 74, "sw2": 16}, {"name": "Arcade Explosion", "sliders": [0, 0, 0, 0, 127, 80, 20, 60, 0, 50, 120, 0, 48, 0, 35, 0], "sw1": 34, "sw2": 16}, {"name": "Tape Stop Dive", "sliders": [15, 0, 90, 0, 0, 65, 20, 10, 0, 70, 110, 0, 40, 80, 30, 0], "sw1": 82, "sw2": 16}, {"name": "Cyberspace Wind", "sliders": [25, 0, 0, 0, 80, 45, 75, 20, 70, 50, 105, 40, 60, 70, 50, 0], "sw1": 2, "sw2": 16}, {"name": "Miami Ballad Key", "sliders": [40, 0, 2, 45, 0, 55, 12, 40, 0, 80, 105, 0, 52, 35, 30, 0], "sw1": 74, "sw2": 17}, {"name": "DX Warm EPiano", "sliders": [35, 0, 2, 50, 0, 48, 10, 32, 0, 85, 105, 1, 55, 30, 28, 0], "sw1": 74, "sw2": 16}, {"name": "Crystal Tines", "sliders": [45, 0, 0, 40, 0, 65, 15, 45, 0, 85, 105, 0, 48, 25, 32, 0], "sw1": 12, "sw2": 16}, {"name": "Neon Harpsichd", "sliders": [0, 0, 0, 30, 0, 78, 15, 55, 0, 80, 108, 0, 36, 10, 18, 0], "sw1": 74, "sw2": 16}, {"name": "Drive Movie Org", "sliders": [0, 0, 0, 0, 0, 52, 10, 15, 0, 75, 108, 10, 40, 70, 30, 40], "sw1": 74, "sw2": 20}, {"name": "Careless Keys", "sliders": [45, 0, 2, 45, 0, 50, 12, 35, 0, 80, 105, 2, 50, 40, 28, 0], "sw1": 74, "sw2": 17}, {"name": "Analog Chime", "sliders": [0, 0, 0, 50, 0, 70, 40, 35, 0, 85, 105, 0, 45, 0, 35, 0], "sw1": 12, "sw2": 16}, {"name": "Sunset Outro", "sliders": [30, 15, 2, 30, 0, 58, 15, 45, 10, 75, 110, 35, 65, 90, 70, 50], "sw1": 90, "sw2": 16}]
+    }
+};
+
+function makeBlankPreset(idx) {
+    const slotCode = indexToSlot(idx);
+    return {
+        name: `${slotCode} (Blank)`,
+        isBlank: true,
+        sliders: [0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 64, 127, 20, 0],
+        sw1: 0x12, // 8', Saw on, Chorus OFF
+        sw2: 0x10  // HPF Flat (mode 1)
+    };
+}
+
 // State: 256 Presets total (0..63 Factory A, 64..127 Factory B, 128..191 User A, 192..255 User B)
+// Factory banks are ROM defaults; User banks default to blank and sync from synth hardware
 let allPresets = [];
 for (let i = 0; i < 128; i++) {
     allPresets.push(JSON.parse(JSON.stringify(FACTORY_PRESETS[i])));
 }
 for (let i = 0; i < 128; i++) {
-    const copy = JSON.parse(JSON.stringify(FACTORY_PRESETS[i]));
-    const prefix = i < 64 ? 'UA' : 'UB';
-    const subIdx = i % 64;
-    const grp = Math.floor(subIdx / 8) + 1;
-    const ptc = (subIdx % 8) + 1;
-    copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
-    allPresets.push(copy);
+    allPresets.push(makeBlankPreset(128 + i));
 }
+let pendingDumpSlot = null;
+let isReadingFromHw = false;
 
 let currentBank = 'FA'; // 'FA', 'FB', 'UA', 'UB'
 let selectedSlot = 0;   // 0 .. 255
@@ -1587,9 +1672,14 @@ function renderPresetList(filter = '') {
         item.className = `preset-item ${i === selectedSlot ? 'selected' : ''} ${isFact ? 'factory-item' : 'user-item'}`;
         item.dataset.idx = i;
 
+        const isBlank = Boolean(preset.isBlank || (preset.name && preset.name.includes('(Blank)')));
+        const nameDisplay = isBlank 
+            ? `<span style="opacity: 0.45; font-style: italic;">${preset.name}</span>`
+            : preset.name;
+
         item.innerHTML = `
             <span class="preset-slot-badge" style="background:${isFact ? '#0e2439' : '#362208'}; color:${isFact ? 'var(--accent-blue)' : 'var(--accent-amber)'};">${slotCode}</span>
-            <span class="preset-item-name">${preset.name}</span>
+            <span class="preset-item-name">${nameDisplay}</span>
             <div class="preset-quick-actions">
                 <button class="mini-btn play-btn" title="Audition this patch">&#9658;</button>
                 <button class="mini-btn copy-btn" title="Copy patch">&#128203;</button>
@@ -1630,8 +1720,47 @@ function copyCurrentToUser() {
     const ptc = (subIdx % 8) + 1;
     const prefix = targetSlot < 192 ? 'UA' : 'UB';
     allPresets[targetSlot].name = `${prefix}${grp}${ptc} ${current.name.replace(/^[A-Za-z0-9]+\s*/, '')}`.trim();
+    allPresets[targetSlot].isBlank = false;
     showToast(`Copied "${current.name}" into User slot ${indexToSlot(targetSlot)}!`, 'success');
     selectSlot(targetSlot);
+    if (midiOutput) {
+        saveCurrentSlotToHardware();
+    }
+}
+
+function deleteCurrentPatch() {
+    if (isFactorySlot(selectedSlot)) {
+        showToast('Factory Presets (ROM) are read-only and cannot be deleted.', 'warning');
+        return;
+    }
+    const slotCode = indexToSlot(selectedSlot);
+    if (!confirm(`Delete and clear user preset at ${slotCode}?`)) return;
+
+    allPresets[selectedSlot] = makeBlankPreset(selectedSlot);
+    loadPresetToUI(allPresets[selectedSlot]);
+    renderPresetList(document.getElementById('search-input').value);
+
+    if (midiOutput) {
+        const ch = getMidiChannel();
+        const bankOpt = selectedSlot < 192 ? 3 : 4; // 3 = User A, 4 = User B
+        const localSlot = selectedSlot % 64;
+        const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
+        const nameBytes = encodePatchName('');
+        const p = allPresets[selectedSlot];
+        // F0 41 30 chByte localSlot [16 sliders] sw1 sw2 [16 name bytes] F7
+        const msg = [
+            0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
+            ...p.sliders,
+            p.sw1,
+            p.sw2,
+            ...nameBytes,
+            0xF7
+        ];
+        midiOutput.send(msg);
+        flashTx();
+        updateSyncStatus(`Cleared ${slotCode} on hardware`);
+    }
+    showToast(`Cleared user preset ${slotCode}.`, 'info');
 }
 
 function selectSlot(idx) {
@@ -1686,24 +1815,35 @@ function updateMIDIPorts() {
     let autoInId = null;
     let autoOutId = null;
 
-    for (const input of midiAccess.inputs.values()) {
+    const portRegex = /fm-?106|fm-?1|felucca|m-vave|juno/i;
+
+    const inList = [...midiAccess.inputs.values()].filter(i => i.state !== 'disconnected');
+    const outList = [...midiAccess.outputs.values()].filter(o => o.state !== 'disconnected');
+
+    for (const input of inList) {
         const opt = document.createElement('option');
         opt.value = input.id;
         opt.textContent = `In: ${input.name}`;
         inSelect.appendChild(opt);
-        if (input.name.toLowerCase().includes('felucca') || input.name.toLowerCase().includes('fm-1')) {
+        if (portRegex.test(input.name || '')) {
             autoInId = input.id;
         }
     }
+    if (!autoInId && inList.length === 1) {
+        autoInId = inList[0].id;
+    }
 
-    for (const output of midiAccess.outputs.values()) {
+    for (const output of outList) {
         const opt = document.createElement('option');
         opt.value = output.id;
         opt.textContent = `Out: ${output.name}`;
         outSelect.appendChild(opt);
-        if (output.name.toLowerCase().includes('felucca') || output.name.toLowerCase().includes('fm-1')) {
+        if (portRegex.test(output.name || '')) {
             autoOutId = output.id;
         }
+    }
+    if (!autoOutId && outList.length === 1) {
+        autoOutId = outList[0].id;
     }
 
     if (autoInId) inSelect.value = autoInId;
@@ -1717,9 +1857,24 @@ function updateMIDIPorts() {
     }
 }
 
-function connectMIDI() {
-    const inId = document.getElementById('midi-in-select').value;
-    const outId = document.getElementById('midi-out-select').value;
+async function connectMIDI() {
+    if (!midiAccess) {
+        await initMIDI();
+        if (!midiAccess) return;
+    }
+
+    let inId = document.getElementById('midi-in-select').value;
+    let outId = document.getElementById('midi-out-select').value;
+
+    if (!inId && midiAccess.inputs.size === 1) {
+        inId = midiAccess.inputs.values().next().value.id;
+        document.getElementById('midi-in-select').value = inId;
+    }
+    if (!outId && midiAccess.outputs.size === 1) {
+        outId = midiAccess.outputs.values().next().value.id;
+        document.getElementById('midi-out-select').value = outId;
+    }
+
     const connLed = document.getElementById('midi-conn-led');
 
     if (!inId || !outId) {
@@ -1739,8 +1894,11 @@ function connectMIDI() {
         document.getElementById('btn-midi-connect').textContent = 'Connected';
         document.getElementById('btn-midi-connect').classList.remove('accent');
         document.getElementById('btn-midi-connect').classList.add('primary');
-        updateSyncStatus(`Connected to ${midiOutput.name}`);
-        showToast(`Connected to ${midiOutput.name}`, 'success');
+        updateSyncStatus(`Connected to ${midiOutput.name}. Reading user presets from synth...`);
+        showToast(`Connected to ${midiOutput.name}. Syncing user presets from synth...`, 'info');
+        setTimeout(() => {
+            readAllFromHardware(false);
+        }, 150);
     }
 }
 
@@ -1773,6 +1931,8 @@ function handleMIDIMessage(event) {
             let slotIdx;
             if (bankOpt >= 1 && bankOpt <= 4) {
                 slotIdx = (bankOpt - 1) * 64 + (data[4] % 64);
+            } else if (pendingDumpSlot !== null) {
+                slotIdx = pendingDumpSlot;
             } else {
                 const bIdx = getBankStartIdx(currentBank);
                 slotIdx = bIdx + (data[4] % 64);
@@ -1782,16 +1942,25 @@ function handleMIDIMessage(event) {
             const sw1 = data[21];
             const sw2 = data[22];
             let name = '';
+            let isBlank = false;
             if (data.length >= 40) {
                 for (let i = 23; i < 39; i++) {
                     if (data[i] >= 32 && data[i] < 127) name += String.fromCharCode(data[i]);
                 }
                 name = name.trim();
             }
-            if (!name) name = `${indexToSlot(slotIdx)} Patch`;
+            if (!name) {
+                if (slotIdx >= 128) {
+                    name = `${indexToSlot(slotIdx)} (Blank)`;
+                    isBlank = true;
+                } else {
+                    name = `${indexToSlot(slotIdx)} Patch`;
+                }
+            }
 
             allPresets[slotIdx] = {
                 name: name,
+                isBlank: isBlank,
                 sliders: sliders,
                 sw1: sw1,
                 sw2: sw2
@@ -1814,6 +1983,7 @@ function handleMIDIMessage(event) {
             name = name.trim();
             if (name && allPresets[slotIdx]) {
                 allPresets[slotIdx].name = name;
+                allPresets[slotIdx].isBlank = false;
                 if (selectedSlot === slotIdx) {
                     document.getElementById('current-patch-name').value = name;
                 }
@@ -1900,21 +2070,6 @@ function saveCurrentSlotToHardware() {
     renderPresetList();
 }
 
-// Commit All User Presets to SPI Flash (SysEx 0x35)
-function burnToHardwareFlash() {
-    if (!midiOutput) {
-        showToast('MIDI not connected. Connect FM-106 first.', 'error');
-        return;
-    }
-    if (!confirm('Commit all 128 User presets (User A & B) to FM-106 hardware SPI Flash? These will survive power off.')) return;
-    const ch = getMidiChannel();
-    // F0 41 35 0n 01 F7
-    const msg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
-    midiOutput.send(msg);
-    flashTx();
-    updateSyncStatus('Burning user presets to SPI Flash...');
-}
-
 // Dump single slot request (SysEx 0x34)
 function requestSlotFromHardware(slotIdx) {
     if (!midiOutput) return;
@@ -1929,7 +2084,197 @@ function requestSlotFromHardware(slotIdx) {
     flashTx();
 }
 
-// Bulk Sync 128 User Presets to Hardware
+// Modal control for Burning to Hardware Flash
+function openBurnModal() {
+    if (!midiOutput) {
+        showToast('MIDI not connected. Connect FM-106 first.', 'error');
+        return;
+    }
+    const bankToUse = (currentBank === 'UB') ? 'UB' : 'UA';
+    const bankLabel = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
+    document.getElementById('burn-bank-title').textContent = `🔥 Send & Burn Current Bank (${bankLabel} - 64 Patches)`;
+    document.getElementById('burn-progress-container').style.display = 'none';
+    document.getElementById('btn-burn-bank').disabled = false;
+    document.getElementById('btn-burn-all').disabled = false;
+    document.getElementById('btn-burn-ram-only').disabled = false;
+    document.getElementById('burn-modal').style.display = 'flex';
+}
+
+function closeBurnModal() {
+    document.getElementById('burn-modal').style.display = 'none';
+}
+
+// Execute Burn workflow (Transfers presets to RAM, then triggers 0x35 flash commit)
+async function executeBurn(type) {
+    if (!midiOutput) {
+        showToast('MIDI not connected.', 'error');
+        return;
+    }
+    const ch = getMidiChannel();
+    const progressContainer = document.getElementById('burn-progress-container');
+    const progressLabel = document.getElementById('burn-progress-label');
+    const progressCount = document.getElementById('burn-progress-count');
+    const progressBar = document.getElementById('burn-progress-bar');
+    const btnBank = document.getElementById('btn-burn-bank');
+    const btnAll = document.getElementById('btn-burn-all');
+    const btnRam = document.getElementById('btn-burn-ram-only');
+
+    btnBank.disabled = true;
+    btnAll.disabled = true;
+    btnRam.disabled = true;
+    progressContainer.style.display = 'flex';
+
+    if (type === 'bank') {
+        const bankToUse = (currentBank === 'UB') ? 'UB' : 'UA';
+        const startIdx = getBankStartIdx(bankToUse);
+        const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
+        const bankOpt = (bankToUse === 'UB') ? 4 : 3;
+
+        if (selectedSlot >= 128) allPresets[selectedSlot] = readUIToPreset();
+
+        for (let i = 0; i < 64; i++) {
+            const slotIdx = startIdx + i;
+            const p = allPresets[slotIdx];
+            const localSlot = i;
+            const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
+            const nameBytes = encodePatchName(p.name);
+            const msg = [
+                0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
+                ...p.sliders,
+                p.sw1,
+                p.sw2,
+                ...nameBytes,
+                0xF7
+            ];
+            midiOutput.send(msg);
+            flashTx();
+
+            const pct = Math.round(((i + 1) / 64) * 85);
+            progressBar.style.width = `${pct}%`;
+            progressCount.textContent = `${pct}%`;
+            progressLabel.textContent = `Sending ${indexToSlot(slotIdx)} (${p.name})...`;
+            updateSyncStatus(`Burning: sending ${indexToSlot(slotIdx)} (${i + 1}/64)...`);
+            await new Promise(r => setTimeout(r, 45));
+        }
+
+        progressLabel.textContent = 'Committing User Bank to SPI Flash...';
+        await new Promise(r => setTimeout(r, 150));
+        const commitMsg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
+        midiOutput.send(commitMsg);
+        flashTx();
+
+        progressBar.style.width = '100%';
+        progressCount.textContent = '100%';
+        progressLabel.textContent = 'Flash Commit command sent!';
+        updateSyncStatus(`${bankName} committed to hardware SPI Flash.`);
+        showToast(`${bankName} (64 presets) successfully burned to SPI Flash!`, 'success');
+
+        setTimeout(() => {
+            closeBurnModal();
+        }, 1200);
+
+    } else if (type === 'all') {
+        if (selectedSlot >= 128) allPresets[selectedSlot] = readUIToPreset();
+
+        for (let i = 128; i < 256; i++) {
+            const p = allPresets[i];
+            const bankOpt = i < 192 ? 3 : 4;
+            const localSlot = i % 64;
+            const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
+            const nameBytes = encodePatchName(p.name);
+            const msg = [
+                0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
+                ...p.sliders,
+                p.sw1,
+                p.sw2,
+                ...nameBytes,
+                0xF7
+            ];
+            midiOutput.send(msg);
+            flashTx();
+
+            const pct = Math.round(((i - 127) / 128) * 85);
+            progressBar.style.width = `${pct}%`;
+            progressCount.textContent = `${pct}%`;
+            progressLabel.textContent = `Sending ${indexToSlot(i)} (${p.name})...`;
+            updateSyncStatus(`Burning: sending ${indexToSlot(i)} (${i - 127}/128)...`);
+            await new Promise(r => setTimeout(r, 45));
+        }
+
+        progressLabel.textContent = 'Committing all 128 User presets to SPI Flash...';
+        await new Promise(r => setTimeout(r, 150));
+        const commitMsg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
+        midiOutput.send(commitMsg);
+        flashTx();
+
+        progressBar.style.width = '100%';
+        progressCount.textContent = '100%';
+        progressLabel.textContent = 'Flash Commit command sent!';
+        updateSyncStatus('All 128 presets committed to hardware SPI Flash.');
+        showToast('All 128 presets successfully burned to SPI Flash!', 'success');
+
+        setTimeout(() => {
+            closeBurnModal();
+        }, 1200);
+
+    } else if (type === 'ram') {
+        const commitMsg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
+        midiOutput.send(commitMsg);
+        flashTx();
+        progressBar.style.width = '100%';
+        progressCount.textContent = '100%';
+        progressLabel.textContent = 'Commit command sent to synth.';
+        updateSyncStatus('Committing synth RAM to SPI Flash...');
+        showToast('Commit command sent to FM-106 SPI Flash.', 'info');
+        setTimeout(() => {
+            closeBurnModal();
+        }, 1000);
+    }
+}
+
+// Send Current Bank (64 Presets) to Hardware RAM
+async function sendBankToHardware(targetBank = null) {
+    if (!midiOutput) {
+        showToast('MIDI not connected. Connect FM-106 first.', 'error');
+        return;
+    }
+    const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
+    const startIdx = getBankStartIdx(bankToUse);
+    const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
+    const bankOpt = (bankToUse === 'UB') ? 4 : 3;
+
+    if (!confirm(`Send all 64 presets of ${bankName} to FM-106 hardware RAM?`)) return;
+
+    if (selectedSlot >= 128) {
+        allPresets[selectedSlot] = readUIToPreset();
+    }
+    const ch = getMidiChannel();
+
+    updateSyncStatus(`Sending ${bankName} to FM-106 hardware...`);
+    for (let i = 0; i < 64; i++) {
+        const slotIdx = startIdx + i;
+        const p = allPresets[slotIdx];
+        const localSlot = i;
+        const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
+        const nameBytes = encodePatchName(p.name);
+        const msg = [
+            0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
+            ...p.sliders,
+            p.sw1,
+            p.sw2,
+            ...nameBytes,
+            0xF7
+        ];
+        midiOutput.send(msg);
+        flashTx();
+        updateSyncStatus(`Sending ${bankName} preset ${i + 1}/64 (${indexToSlot(slotIdx)})...`);
+        await new Promise(r => setTimeout(r, 45));
+    }
+    showToast(`${bankName} (64 presets) sent to hardware RAM!`, 'success');
+    updateSyncStatus(`${bankName} transferred to hardware RAM.`);
+}
+
+// Bulk Sync 128 User Presets to Hardware RAM
 async function sendAllToHardware() {
     if (!midiOutput) {
         showToast('MIDI not connected.', 'error');
@@ -1958,26 +2303,107 @@ async function sendAllToHardware() {
         midiOutput.send(msg);
         flashTx();
         updateSyncStatus(`Sending preset ${i - 127}/128 (${indexToSlot(i)})...`);
-        await new Promise(r => setTimeout(r, 25));
+        await new Promise(r => setTimeout(r, 45));
     }
     showToast('All 128 User presets sent to hardware RAM!', 'success');
     updateSyncStatus('User presets transferred to hardware.');
 }
 
-// Bulk Read All 128 User Presets from Hardware
-async function readAllFromHardware() {
+// Read Current Bank (64 Presets) from Hardware
+async function readBankFromHardware(targetBank = null, interactive = true) {
     if (!midiOutput) {
-        showToast('MIDI not connected.', 'error');
+        if (interactive) showToast('MIDI not connected. Connect FM-106 first.', 'error');
         return;
     }
-    if (!confirm('Dump all 128 User presets (User A & B) from FM-106 hardware into library?')) return;
+    if (isReadingFromHw) return;
+    const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
+    const startIdx = getBankStartIdx(bankToUse);
+    const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
 
-    for (let i = 128; i < 256; i++) {
-        requestSlotFromHardware(i);
-        updateSyncStatus(`Requesting user preset ${i - 127}/128 (${indexToSlot(i)})...`);
+    if (interactive && !confirm(`Dump all 64 presets of ${bankName} from FM-106 into library?`)) return;
+
+    isReadingFromHw = true;
+    updateSyncStatus(`Reading ${bankName} from FM-106 hardware...`);
+
+    for (let i = 0; i < 64; i++) {
+        const slotIdx = startIdx + i;
+        pendingDumpSlot = slotIdx;
+        requestSlotFromHardware(slotIdx);
+        updateSyncStatus(`Requesting ${indexToSlot(slotIdx)} from synth (${i + 1}/64)...`);
         await new Promise(r => setTimeout(r, 40));
     }
-    showToast('User presets dump complete.', 'success');
+    pendingDumpSlot = null;
+    isReadingFromHw = false;
+    updateSyncStatus(`${bankName} synced from FM-106 hardware.`);
+    if (interactive) showToast(`${bankName} dump complete from hardware!`, 'success');
+    renderPresetList(document.getElementById('search-input').value);
+}
+
+// Bulk Read All 128 User Presets from Hardware
+async function readAllFromHardware(interactive = true) {
+    if (!midiOutput) {
+        if (interactive) showToast('MIDI not connected. Connect FM-106 first.', 'error');
+        return;
+    }
+    if (isReadingFromHw) return;
+    if (interactive && !confirm('Dump all 128 User presets (User A & B) from FM-106 hardware into library?')) return;
+
+    isReadingFromHw = true;
+    updateSyncStatus('Reading User Bank A & B from FM-106 hardware...');
+
+    for (let i = 128; i < 256; i++) {
+        pendingDumpSlot = i;
+        requestSlotFromHardware(i);
+        updateSyncStatus(`Requesting ${indexToSlot(i)} from synth (${i - 127}/128)...`);
+        await new Promise(r => setTimeout(r, 40));
+    }
+    pendingDumpSlot = null;
+    isReadingFromHw = false;
+    updateSyncStatus('128 User presets synced from FM-106 hardware.');
+    if (interactive) showToast('User presets dump complete from hardware!', 'success');
+    renderPresetList(document.getElementById('search-input').value);
+}
+
+// Load Soundset Bank Template into User Bank
+function loadBankTemplate(templateKey, targetBank = null) {
+    const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
+    const startIdx = getBankStartIdx(bankToUse);
+    const prefix = bankToUse === 'UB' ? 'UB' : 'UA';
+
+    if (templateKey === 'blank') {
+        for (let i = 0; i < 64; i++) {
+            allPresets[startIdx + i] = makeBlankPreset(startIdx + i);
+        }
+        showToast(`Cleared ${bankToUse} to blank presets.`, 'info');
+    } else if (templateKey === 'factory') {
+        for (let i = 0; i < 64; i++) {
+            const copy = JSON.parse(JSON.stringify(FACTORY_PRESETS[i]));
+            const subIdx = i % 64;
+            const grp = Math.floor(subIdx / 8) + 1;
+            const ptc = (subIdx % 8) + 1;
+            copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
+            copy.isBlank = false;
+            allPresets[startIdx + i] = copy;
+        }
+        showToast(`Loaded Factory defaults into ${bankToUse}.`, 'success');
+    } else if (SOUNDSET_BANKS[templateKey]) {
+        const soundset = SOUNDSET_BANKS[templateKey];
+        for (let i = 0; i < 64; i++) {
+            const p = JSON.parse(JSON.stringify(soundset.patches[i]));
+            const subIdx = i % 64;
+            const grp = Math.floor(subIdx / 8) + 1;
+            const ptc = (subIdx % 8) + 1;
+            p.name = `${prefix}${grp}${ptc} ${p.name.replace(/^[UAB0-9]+\s*/, '')}`.trim();
+            p.isBlank = false;
+            allPresets[startIdx + i] = p;
+        }
+        showToast(`Loaded "${soundset.name}" into ${bankToUse}!`, 'success');
+    }
+
+    if (currentBank === bankToUse) {
+        selectSlot(startIdx);
+        renderPresetList();
+    }
 }
 
 // Playable Virtual Keyboard
@@ -2438,9 +2864,43 @@ function setupEventListeners() {
         currentBank = 'UB';
         updateBankTabs();
         selectSlot(192);
+        updateTemplateTargetLabel();
+    });
+    document.getElementById('tab-bank-ua').addEventListener('click', () => {
+        updateTemplateTargetLabel();
+    });
+    document.getElementById('tab-bank-fa').addEventListener('click', () => {
+        updateTemplateTargetLabel();
+    });
+    document.getElementById('tab-bank-fb').addEventListener('click', () => {
+        updateTemplateTargetLabel();
+    });
+
+    function updateTemplateTargetLabel() {
+        const el = document.getElementById('template-target-label');
+        if (el) {
+            el.textContent = currentBank === 'UB' ? 'User Bank B' : 'User Bank A';
+        }
+    }
+
+    document.getElementById('btn-load-template').addEventListener('click', () => {
+        const sel = document.getElementById('select-bank-template').value;
+        if (!sel) return;
+        const targetBank = currentBank === 'UB' ? 'UB' : 'UA';
+        loadBankTemplate(sel, targetBank);
+    });
+
+    document.getElementById('btn-clear-user').addEventListener('click', () => {
+        const targetBank = currentBank === 'UB' ? 'UB' : 'UA';
+        if (confirm(`Clear all 64 presets in ${targetBank} to blank empty sounds?`)) {
+            loadBankTemplate('blank', targetBank);
+        }
     });
     document.getElementById('btn-copy-to-user').addEventListener('click', () => {
         copyCurrentToUser();
+    });
+    document.getElementById('btn-delete-patch').addEventListener('click', () => {
+        deleteCurrentPatch();
     });
 
     // Search filter
@@ -2546,8 +3006,16 @@ function setupEventListeners() {
     // Action Buttons
     document.getElementById('btn-audition').addEventListener('click', () => auditionCurrentPreset());
     document.getElementById('btn-save-slot').addEventListener('click', () => saveCurrentSlotToHardware());
-    document.getElementById('btn-burn-flash').addEventListener('click', () => burnToHardwareFlash());
+    document.getElementById('btn-burn-flash').addEventListener('click', () => openBurnModal());
+    document.getElementById('btn-close-burn-modal').addEventListener('click', () => closeBurnModal());
+    document.getElementById('btn-cancel-burn').addEventListener('click', () => closeBurnModal());
+    document.getElementById('btn-burn-bank').addEventListener('click', () => executeBurn('bank'));
+    document.getElementById('btn-burn-all').addEventListener('click', () => executeBurn('all'));
+    document.getElementById('btn-burn-ram-only').addEventListener('click', () => executeBurn('ram'));
+
+    document.getElementById('btn-sync-bank-to-hw').addEventListener('click', () => sendBankToHardware());
     document.getElementById('btn-sync-all-to-hw').addEventListener('click', () => sendAllToHardware());
+    document.getElementById('btn-read-bank-from-hw').addEventListener('click', () => readBankFromHardware());
     document.getElementById('btn-read-all-from-hw').addEventListener('click', () => readAllFromHardware());
 
     document.getElementById('btn-export-single').addEventListener('click', () => exportSinglePatchSyx());

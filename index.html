@@ -1119,7 +1119,7 @@ async function handshake(link, tries = 4) {
   return null;
 }
 
-const PORT_RE = /fm-1|felucca|ota|composite|sinco|usb[\s_-]?midi|m-vave|m-upgrade|upgrade|update|jieli|audio/i;
+const PORT_RE = /fm-?106|fm-?1|felucca|ota|composite|sinco|usb[\s_-]?midi|m-vave|m-upgrade|upgrade|update|jieli|audio/i;
 
 function findMatchingOutput(input, outputs, inputsToProbe) {
   const outs = [...outputs.values()].filter(o => o.state !== "disconnected");
@@ -1515,7 +1515,7 @@ async function initFirmware() {
           }
           updateLedDisplay("RD");
           log(`Loaded verified package from ${src}`);
-          return;
+          break;
         }
       }
     } catch (e) {
@@ -1556,7 +1556,9 @@ async function initFirmware() {
     log(`Web MIDI note: ${e.message}`);
   }
 
-  log("Automatic download was not completed. You can choose or drop fm106.fwsc manually.");
+  if (!image) {
+    log("Automatic download was not completed. You can choose or drop fm106.fwsc manually.");
+  }
 }
 
 // User-provided custom package drop / selection
