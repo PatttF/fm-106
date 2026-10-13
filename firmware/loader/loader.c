@@ -16,8 +16,9 @@
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 #include "fm1_time.h"
 #include "fm1_sys.h"
-/* the loader may write the app area and erase update records; never the head */
-#define FL_RANGE_OK(off, n) (FL_IN(off, n, 0x4000u, 0x93000u) || FL_IN(off, n, 0x93000u, 0xFC000u))
+/* the loader may write the app area and erase update records; never the head, nor Felucca's store
+ * [0x97000, 0xE0000) (user data, never a record: ldr_core.c) */
+#define FL_RANGE_OK(off, n) (FL_IN(off, n, 0x4000u, 0x97000u) || FL_IN(off, n, 0xE0000u, 0xFC000u))
 #include "fm1_flash.h"
 #include "../src/libc.c"
 #include "../src/usb.c"
@@ -106,10 +107,7 @@ void ldr_cstart(void)
 {
     uint32_t *p;
     ldr_record_clear();                             /* first thing: a crash below cannot loop through a
-                                                     * warm reset. After a power loss the boot stub (firmware/stub)
-                                                     * starts us again: the SPL does not, from the flash record
-                                                     * (docs/BOOT-SAFETY.md). The stub's rescue word (0x01C7C000)
-                                                     * is not ours: left as it is */
+                                                     * warm reset; resume after power loss uses the flash record */
     for (p = _bss_start; p < _bss_end; p++)
         *p = 0;
     ldr_main();

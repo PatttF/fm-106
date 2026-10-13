@@ -9,6 +9,8 @@
 #include "fm106_vcf.h"
 #include "fm106_adsr.h"
 #include "fm106_chorus.h"
+#include "fm106_fx.h"
+#include "fm106_seq.h"
 #include "fm106_presets.h"
 
 #define FM106_NUM_VOICES 6u
@@ -81,6 +83,10 @@ typedef struct {
     /* Stereo Chorus */
     fm106_chorus_t chorus;
 
+    /* Global insert FX chain (Melodee-derived: phaser/width/formant/tape/spit/echo/room/reverb;
+     * page order = chain order, chorus precedes) */
+    fm106_fx_t fx[FM106_FX_SLOTS];
+
     /* Performance / Controls */
     int8_t octave_shift;        /* -2 .. +2 */
     int8_t pitch_bend;          /* semitones (-12..+12) */
@@ -100,6 +106,9 @@ typedef struct {
     int16_t arp_last_note;      /* sounding arp note, -1 = none */
     uint32_t arp_pool[4];       /* 128-bit sorted note pool (what gets arpped) */
     uint32_t keys_down[4];      /* 128-bit physical key state (arp seed source) */
+
+    /* Step sequencer (single-track, B1; see fm106_seq.h) */
+    fm106_seq_t seq;
 } fm106_engine_t;
 
 static fm106_engine_t g_synth;
@@ -225,12 +234,14 @@ static void fm106_engine_init(fm106_engine_t *e)
         e->arp_pool[i] = 0;
         e->keys_down[i] = 0;
     }
+    fm106_seq_init(&e->seq);
     e->lfo_ph = 0;
     e->lfo_val = 0;
     e->lfo_delay_timer = 0;
 
     fm106_hpf_init(&e->hpf);
     fm106_chorus_init(&e->chorus);
+    for (uint32_t i = 0; i < FM106_FX_SLOTS; i++) fm106_fx_init(&e->fx[i], i);
 
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         e->voice[i].note = 255u;
@@ -515,6 +526,69 @@ static void fm106_arp_step(fm106_engine_t *e, uint32_t n)
     }
 }
 
+/* Advance the step sequencer across one audio block of n frames. Lock-free,
+ * CPU0-only (mutates voice state via fm106_note_on/off) — mirrors arp_step.
+ * Handles gate countdown, step stepping (internal-sample or MIDI-slave units),
+ * and fires note events through the engine note seam. */
+static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
+{
+    fm106_seq_t *s = &e->seq;
+
+    /* gate countdown */
+    if (s->seq_n && !s->seq_hold) {
+        if (s->seq_off <= n) {
+            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+            s->seq_n = 0;
+        } else {
+            s->seq_off -= n;
+        }
+    }
+    if (!s->playing) return;
+
+    /* how many units to advance this block. B1: internal clock advances in
+     * samples. MIDI-slave sample-accurate interp (fm106_midi_clock_advance)
+     * needs a running timebase; wire in a later milestone. */
+    uint32_t nadv = n;
+
+    uint32_t period = fm106_seq_div_samples(s, s->sdiv);
+    uint32_t len = s->slen ? (uint32_t)s->slen : 1u;
+    s->seq_pos += nadv;
+    for (;;) {
+        uint32_t cur = fm106_seq_step_samples(s, period, s->seq_idx);
+        if (s->seq_pos < cur && s->seq_pos != 0x7FFFFFFFu + nadv) break;
+        uint8_t starting = s->seq_pos >= 0x7FFFFFFFu;
+        s->seq_pos = starting ? 0u : s->seq_pos - cur;
+        s->seq_idx = (uint16_t)((s->seq_idx + 1u) % len);
+
+        fm106_step_t *st = &s->step[s->seq_idx];
+        uint8_t note[4], vel[4]; uint32_t gate = 0;
+        int m = fm106_seq_plan(s, s->seq_idx, note, vel, &gate);
+        uint8_t slide_in = s->seq_hold && s->seq_n;
+        uint8_t next_tie = s->step[(s->seq_idx + 1u) % len].time == FM106_ST_TIE;
+
+        if (m == -2) { /* TIE: extend gate, keep sounding */
+            s->seq_off = gate;
+            s->seq_hold = (st->flags & FM106_SF_SLIDE) || next_tie;
+            continue;
+        }
+        if (m <= 0) { /* rest / empty / failed roll: release */
+            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+            s->seq_n = 0; s->seq_hold = 0;
+            continue;
+        }
+        if (!slide_in) {
+            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+            s->seq_n = 0;
+        }
+        for (int i = 0; i < m; i++) {
+            fm106_note_on(e, note[i], vel[i]);
+            if (s->seq_n < 4u) s->seq_notes[s->seq_n++] = note[i];
+        }
+        s->seq_off = gate;
+        s->seq_hold = (st->flags & FM106_SF_SLIDE) || next_tie;
+    }
+}
+
 /* Panel/MIDI key press. Feeds the arp pool when the arp is enabled. */
 static void fm106_key_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
 {
@@ -733,6 +807,10 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
      * this block. Must run on CPU0 only (mutates voice state). */
     fm106_arp_step(e, n);
 
+    /* Advance the step sequencer on the same CPU0 audio path (note events via
+     * the lock-free fm106_note_on/off seam). */
+    fm106_seq_advance(e, n);
+
     /* Generate continuous per-sample LFO buffer for this block with authentic LFO Delay */
     uint32_t lfo_step = (uint32_t)e->lfo_rate * 320u;
     uint32_t lfo_ph = e->lfo_ph;
@@ -823,7 +901,7 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
     uac_isr_service();
 #endif
 
-    /* Post-processing: HPF -> VCA -> Stereo Chorus -> Output */
+    /* Post-processing: HPF -> VCA -> Stereo Chorus -> Insert FX -> Output */
     for (uint32_t i = 0; i < n; i++) {
         /* Headroom scaling: calibrated for clean polyphony across 6 voices even with HPF Bass Boost and max VCA */
         int32_t voice_sum = (int32_t)(((int64_t)g_mix0[i] * 1LL) >> 4);
@@ -841,6 +919,9 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
         out[2u * i]     = sl;
         out[2u * i + 1u] = sr;
     }
+
+    /* Insert FX chain, in-place on the interleaved stereo buffer (page order = chain order; no-op when OFF) */
+    for (uint32_t i = 0; i < FM106_FX_SLOTS; i++) fm106_fx_run(&e->fx[i], out, n);
 
 #if FELUCCA_UAC
     uac_isr_service();

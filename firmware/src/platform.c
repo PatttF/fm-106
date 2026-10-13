@@ -49,7 +49,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
 #define APP_NAME "FM-106"
 #endif
 #ifndef FELUCCA_ID
-#define FELUCCA_ID "FM-1_906"                   /* package identity: 906 = FM-106 */
+#define FELUCCA_ID "FM-1_907"                   /* package identity: 907 = FM-106 */
 #endif
 #ifndef APP_VER
 #define APP_VER "0.0"
@@ -106,6 +106,7 @@ static uint8_t recovery_active;
 #include "ota.c"
 static void recovery_poll(void);
 static uint32_t ota_now_ms(void) { return fm1_ms; }
+uint32_t fm106_now_ms(void) { return fm1_ms; }   /* public ms timebase (MIDI clock) */
 static void ota_idle(void)
 {
     fm1_wdt_feed();
@@ -205,6 +206,11 @@ static int presets_flash_save(const void *p, uint32_t n)
 static int fm106_sysex_send(const uint8_t *p, uint32_t n)
 {
 #if FELUCCA_OTA
+    if (!*(volatile uint8_t *)&usb.config)
+        return -1;
+    uint32_t needed = (n + 2u) / 3u + 1u;
+    if ((so_w - so_r) + needed >= SXQ)
+        return -1;
     return ota_wire_send(p, n);
 #else
     (void)p; (void)n;
@@ -322,12 +328,13 @@ static void platform_poll(void)
     usb_retry(fm1_ms);
     const uint8_t *sx_p;
     uint32_t sx_n;
-    if (ota_frame_get(&sx_p, &sx_n)) {
+    while (ota_frame_get(&sx_p, &sx_n)) {
         if (sx_n >= 2 && sx_p[0] == 0x41) {
             fm106_sysex_handle(sx_p, sx_n);
             ota_frame_done();
         } else {
             ota_service();
+            break;
         }
     }
     if (usb.ota_req) {

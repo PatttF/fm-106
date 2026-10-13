@@ -5,7 +5,7 @@
 
 typedef struct {
     char name[16];
-    uint8_t p[44];
+    uint8_t p[60];              /* 44 classic Juno params + 16 for FX 1..4 (type/mix/rate/char each) */
 } fm106_preset_t;
 
 #define FM106_NUM_FACTORY_PRESETS 128u

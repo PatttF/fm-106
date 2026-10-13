@@ -148,10 +148,12 @@ static struct {
 /* M-UPGRADE SysEx (ota.c): one received frame at a time (7-bit bytes between
  * F0 and F7; frames arriving while one is pending are dropped, the host
  * retries), and a TX ring of SysEx event packets sent before any MIDI. */
-static uint8_t sx_frame[640];
+#define SX_BUFFERS 2u
+static uint8_t sx_frame[SX_BUFFERS][640];
 static uint32_t sx_pos;
-static volatile uint32_t sx_frame_len;
-static volatile uint8_t sx_ready, sx_collect, sx_busy;
+static volatile uint32_t sx_frame_len[SX_BUFFERS];
+static volatile uint8_t sx_w, sx_r;
+static volatile uint8_t sx_collect, sx_busy;
 #define SXQ 64u
 static uint32_t sx_out_q[SXQ];
 static volatile uint32_t so_w, so_r;
@@ -270,7 +272,7 @@ static const uint8_t STR0[4] = {4, 3, 0x09, 0x04};
 static const uint8_t STR1[] = {42, 3, 'H', 0, 0xFC, 0, 'g', 0, 'e', 0, 'l', 0, 't', 0, 'o', 0, 'n', 0, ' ', 0, 'I', 0,
                                'n', 0, 's', 0, 't', 0, 'r', 0, 'u', 0, 'm', 0, 'e', 0, 'n', 0, 't', 0, 's', 0};
 #ifdef FELUCCA_LOADER
-static const uint8_t STR2[] = {30, 3, 'F', 0, 'M', 0, '-', 0, '1', 0, '0', 0, '6', 0, ' ', 0, 'U', 0, 'p', 0,
+static const uint8_t STR2[] = {30, 3, 'F', 0, 'e', 0, 'l', 0, 'u', 0, 'c', 0, 'c', 0, 'a', 0, ' ', 0, 'U', 0, 'p', 0,
                                'd', 0, 'a', 0, 't', 0, 'e', 0};
 #else
 static const uint8_t STR2[] = {14, 3, 'F', 0, 'M', 0, '-', 0, '1', 0, '0', 0, '6', 0};
@@ -699,7 +701,7 @@ static void sysex_byte(uint8_t b)
         usb.sx_on = 1;
         usb.sx_len = 0;
 #if FELUCCA_OTA
-        sx_collect = !sx_ready;
+        sx_collect = ((uint8_t)(sx_w - sx_r) < SX_BUFFERS);
         sx_pos = 0;
 #endif
     }
@@ -707,8 +709,8 @@ static void sysex_byte(uint8_t b)
         return;
 #if FELUCCA_OTA
     if (sx_collect && b != 0xF0 && b != 0xF7) {
-        if (sx_pos < sizeof sx_frame)
-            sx_frame[sx_pos++] = b;
+        if (sx_pos < sizeof(sx_frame[0]))
+            sx_frame[sx_w % SX_BUFFERS][sx_pos++] = b;
         else
             sx_collect = 0;                             /* too long: not ours */
     }
@@ -726,9 +728,9 @@ static void sysex_byte(uint8_t b)
                  usb.sysex[4] == 0x7F)
             usb.ota_req = 1;
         else if (sx_collect && sx_pos) {
-            sx_frame_len = sx_pos;
+            sx_frame_len[sx_w % SX_BUFFERS] = sx_pos;
             RING_PUBLISH();
-            sx_ready = 1;                               /* main loop: ota_take() / ed_service() */
+            sx_w++;
         }
         sx_collect = 0;
 #endif
@@ -787,6 +789,10 @@ static int ep1_take(const uint8_t *b, uint32_t n)
 #ifndef FELUCCA_LOADER
     if (MQ - (mi_w - mi_r) < EP1_ROOM)
         return 0;
+#endif
+#if FELUCCA_OTA && !defined(FELUCCA_LOADER)
+    if ((uint8_t)(sx_w - sx_r) >= SX_BUFFERS)
+        return 0;   /* Leave packet on endpoint (NAK host) until previous SysEx frame is processed */
 #endif
     for (i = 0; i + 3u < n; i += 4u)
         midi_in_event((uint32_t)b[i] | (uint32_t)b[i + 1] << 8 | (uint32_t)b[i + 2] << 16 | (uint32_t)b[i + 3] << 24);
@@ -866,17 +872,17 @@ static int ota_wire_send(const uint8_t *p, uint32_t n)   /* F0..F7 -> USB-MIDI S
 }
 static int ota_frame_get(const uint8_t **p, uint32_t *n)
 {
-    if (!sx_ready)
+    if (sx_r == sx_w)
         return 0;
     RING_PUBLISH();                                     /* read the frame only after the flag */
-    *p = sx_frame;
-    *n = sx_frame_len;
+    *p = sx_frame[sx_r % SX_BUFFERS];
+    *n = sx_frame_len[sx_r % SX_BUFFERS];
     return 1;
 }
 static void ota_frame_done(void)
 {
     RING_PUBLISH();                                     /* done with the frame before the ISR may refill it */
-    sx_ready = 0;
+    sx_r++;
 }
 #endif
 
@@ -1253,6 +1259,7 @@ static void usb_poll(void)                              /* TIMER5 ISR, 2 kHz */
         usb.sx_on = 0;
 #if FELUCCA_OTA
         so_r = so_w;
+        sx_w = sx_r = 0;
         sx_collect = 0;
 #endif
         usb.e0_tx = 0;

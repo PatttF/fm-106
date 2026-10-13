@@ -4,7 +4,7 @@
  * 1980s Roland styling, 128 factory presets, and MN3009 BBD Stereo Chorus. */
 
 #define APP_NAME "FM-106"
-#define FELUCCA_ID "FM-1_906"
+#define FELUCCA_ID "FM-1_907"
 
 #include "platform.c"
 #include "fm106_engine.h"
@@ -42,7 +42,9 @@ enum {
     PAGE_LFO,           /* RATE DELAY PWM MD - */
     PAGE_ARP,           /* ON MODE RATE RANGE */
     PAGE_FX,            /* CHO HPF VCA LEVEL */
-    PAGE_COUNT = 8
+    PAGE_TAPE,          /* TAPE: TYPE MIX RATE CHAR */
+    PAGE_SEQ,           /* SEQ: PLAY LEN DIV GATE */
+    PAGE_COUNT = 10
 };
 
 static uint8_t g_current_page = PAGE_VCF;
@@ -59,6 +61,9 @@ static const char *const N_ARNG[3]   = {"1OC", "2OC", "3OC"};
 static const char *const N_CHOR[4]   = {"OFF", "I", "II", "I+II"};
 static const char *const N_HPF[4]    = {"BST", "FLT", "236", "754"};
 static const char *const N_VCA[2]    = {"ENV", "GATE"};
+static const char *const N_FX[FM106_FX_COUNT] = {"OFF", "ON"};
+static const char *const N_SEQ[2]    = {"STOP", "PLAY"};
+static const char *const N_SDIV[10]  = {"1", "1/2", "1/4", "1/8", "1/3", "1/6", "2X", "4X", "8X", "16X"};
 
 typedef struct {
     const char *lbl;
@@ -92,7 +97,22 @@ static const fm1_slot_t FM1_SLOTS[PAGE_COUNT][4] = {
     /* PAGE_FX */
     {{"CHO", SLOT_MODE, 4, N_CHOR}, {"HPF", SLOT_MODE, 4, N_HPF},
      {"VCA", SLOT_MODE, 2, N_VCA},  {"LEVEL", SLOT_FADER, 0, 0}},
+    /* PAGE_TAPE: single tape insert */
+    {{"TAPE", SLOT_MODE, FM106_FX_COUNT, N_FX},  {"MIX", SLOT_FADER, 0, 0},
+     {"RATE", SLOT_FADER, 0, 0},  {"CHAR", SLOT_FADER, 0, 0}},
+    /* PAGE_SEQ */
+    {{"SEQ", SLOT_MODE, 2, N_SEQ}, {"LEN", SLOT_FADER, 0, 0},
+     {"DIV", SLOT_MODE, 10, N_SDIV}, {"GATE", SLOT_FADER, 0, 0}},
 };
+
+/* MIDI CC dispatch for one insert slot: 0=type (d2*COUNT/128), 1=mix, 2=rate, 3=character */
+static void fm106_cc_fx(fm106_fx_t *f, uint32_t param, uint8_t d2)
+{
+    if (param == 0)      f->type = (uint8_t)((d2 * (uint32_t)FM106_FX_COUNT) / 128u) >= FM106_FX_COUNT ? (uint8_t)(FM106_FX_COUNT - 1) : (uint8_t)((d2 * (uint32_t)FM106_FX_COUNT) / 128u);
+    else if (param == 1) f->mix = d2 > 127 ? 127 : d2;
+    else if (param == 2) f->rate = d2 > 127 ? 127 : d2;
+    else if (param == 3) f->character = d2 > 127 ? 127 : d2;
+}
 
 /* Current value of slot: fader → 0..127, mode → selected index */
 static int32_t fm1_slot_val(uint8_t page, int i)
@@ -154,13 +174,34 @@ static int32_t fm1_slot_val(uint8_t page, int i)
         }
         break;
     case PAGE_FX:
-    default:
         switch (i) {
         case 0: return g_synth.chorus.mode & 3u;
         case 1: return g_synth.hpf.mode & 3u;
         case 2: return g_synth.vca_mode & 1u;
         case 3: return g_synth.vca_level;
         }
+        break;
+    case PAGE_TAPE: {
+        const fm106_fx_t *fx = &g_synth.fx[0];
+        switch (i) {
+        case 0: return fx->type < FM106_FX_COUNT ? fx->type : 0;
+        case 1: return fx->mix;
+        case 2: return fx->rate;
+        case 3: return fx->character;
+        }
+        break;
+    }
+    case PAGE_SEQ: {
+        const fm106_seq_t *s = &g_synth.seq;
+        switch (i) {
+        case 0: return s->playing & 1u;
+        case 1: return (uint16_t)(s->slen ? s->slen - 1u : 0u); /* 0..63 -> LEN */
+        case 2: return s->sdiv > 9 ? 3 : s->sdiv;
+        case 3: return s->sgate;
+        }
+        break;
+    }
+    default:
         break;
     }
     return 0;
@@ -233,6 +274,61 @@ static void cv_text_plate(int32_t x, int32_t y, uint32_t w, const char *s,
     cv_text(tx, y, &FONT_S, s, c);
 }
 
+/* Battery Voltage Monitor & Header Indicator */
+static int32_t g_batt_adc = -1;
+static uint32_t g_t_last_batt = 0;
+
+static int32_t fm106_get_battery_level(void)
+{
+    if (g_batt_adc < 0 || (fm1_ms - g_t_last_batt >= 1000u)) {
+        g_t_last_batt = fm1_ms;
+        int32_t r = fm1_adc_read(FM1_ADC_BATT);
+        if (r >= 0) {
+            if (g_batt_adc < 0) {
+                g_batt_adc = r;
+            } else {
+                g_batt_adc += (r - g_batt_adc) / 4;
+            }
+        }
+    }
+    return g_batt_adc;
+}
+
+static void draw_battery_indicator(int32_t x, int32_t y)
+{
+    int32_t raw = fm106_get_battery_level();
+    if (raw < 0) return;
+
+    int bars = 0;
+    uint16_t bar_col = C_STRIPE_CYAN;
+    uint16_t shell_col = C_TEXT_DIM;
+
+    if (raw >= 600) {
+        bars = 3;
+        bar_col = C_STRIPE_CYAN;
+    } else if (raw >= 550) {
+        bars = 2;
+        bar_col = C_STRIPE_CYAN;
+    } else if (raw >= 500) {
+        bars = 1;
+        bar_col = C_ROLAND_AMBER;
+    } else {
+        bars = 1;
+        bar_col = C_ROLAND_RED;
+        shell_col = C_ROLAND_RED;
+    }
+
+    /* Battery outer body (18x9) and positive pip (2x5) */
+    cv_rect(x, y, 18, 9, shell_col);
+    cv_rect(x + 18, y + 2, 2, 5, shell_col);
+    cv_rect(x + 1, y + 1, 16, 7, C_BLACK);
+
+    /* Segments: 3 blocks of 4px each, separated by 1px */
+    if (bars >= 1) cv_rect(x + 2, y + 2, 4, 5, bar_col);
+    if (bars >= 2) cv_rect(x + 7, y + 2, 4, 5, bar_col);
+    if (bars >= 3) cv_rect(x + 12, y + 2, 4, 5, bar_col);
+}
+
 /* 1. Header + Voice LEDs + Page Title (y=0..75, single blit) */
 static void draw_top_section(uint8_t patch_idx, const char *patch_name)
 {
@@ -290,8 +386,15 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     title_buf[ti++] = ' ';
     title_buf[ti++] = ' ';
     uint32_t pi = 0;
-    while (patch_name[pi] && ti < sizeof(title_buf) - 1u) {
-        title_buf[ti++] = patch_name[pi++];
+    if (patch_name && patch_name[0]) {
+        while (patch_name[pi] && ti < sizeof(title_buf) - 1u) {
+            title_buf[ti++] = patch_name[pi++];
+        }
+    } else {
+        const char *bl = "<Blank>";
+        while (bl[pi] && ti < sizeof(title_buf) - 1u) {
+            title_buf[ti++] = bl[pi++];
+        }
     }
     title_buf[ti] = '\0';
 
@@ -311,8 +414,10 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     case PAGE_ENVELOPE: title = "ENV (ADSR)"; break;
     case PAGE_LFO:      title = "LFO";        break;
     case PAGE_ARP:      title = "ARPEGGIATOR"; break;
-    case PAGE_FX:
-    default:            title = "FX (CHORUS)"; break;
+    case PAGE_FX:      title = "FX (CHORUS)"; break;
+    case PAGE_TAPE:    title = "FX (TAPE)";        break;
+    case PAGE_SEQ:     title = "SEQUENCER"; break;
+    default:            title = "FX (TAPE)";        break;
     }
 
     cv_begin(240, 76, C_BG);
@@ -320,7 +425,8 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     /* --- Header (y=0..43, 1980s Roland badge directly on chassis grey) --- */
     cv_rect(6, 4, 4, 12, C_ROLAND_RED);
     cv_text(16, 2, &FONT_S, "FM-106", C_STRIPE_CYAN);
-    cv_text(152, 2, &FONT_S, badge_str, badge_color);
+    cv_text(138, 2, &FONT_S, badge_str, badge_color);
+    draw_battery_indicator(210, 5);
     cv_rect(6, 18, 228, 2, C_STRIPE_CYAN);
 
     /* Patch Display: Roland recessed bezel with red 7-seg code + white preset name */
@@ -603,40 +709,15 @@ static int fm106_find_next_preset(uint32_t cur_patch, int32_t dir)
     uint32_t bank = cur_patch / 64u;
     uint32_t slot = cur_patch % 64u;
 
-    if (bank < 2u) {
-        int32_t ns = (int32_t)slot + (dir > 0 ? 1 : -1);
-        while (ns < 0) ns += 64;
-        while (ns >= 64) ns -= 64;
-        return (int)(bank * 64u + (uint32_t)ns);
-    }
-
-    int32_t step = (dir > 0) ? 1 : -1;
-    for (int i = 1; i < 64; i++) {
-        int32_t test_slot = ((int32_t)slot + i * step) % 64;
-        if (test_slot < 0) test_slot += 64;
-        uint32_t uidx = (bank - 2u) * 64u + (uint32_t)test_slot;
-        if (g_user_presets[uidx].name[0] != '\0') {
-            return (int)(bank * 64u + (uint32_t)test_slot);
-        }
-    }
-    return (int)cur_patch;
+    int32_t ns = (int32_t)slot + dir;
+    while (ns < 0) ns += 64;
+    while (ns >= 64) ns -= 64;
+    return (int)(bank * 64u + (uint32_t)ns);
 }
 
 static uint32_t fm106_bank_first_preset(uint32_t bank, uint32_t fallback_slot)
 {
-    if (bank < 2u) {
-        return bank * 64u + (fallback_slot % 64u);
-    }
-    uint32_t u_base = (bank - 2u) * 64u;
-    if (fallback_slot < 64u && g_user_presets[u_base + fallback_slot].name[0] != '\0') {
-        return bank * 64u + fallback_slot;
-    }
-    for (uint32_t s = 0; s < 64u; s++) {
-        if (g_user_presets[u_base + s].name[0] != '\0') {
-            return bank * 64u + s;
-        }
-    }
-    return bank * 64u;
+    return bank * 64u + (fallback_slot % 64u);
 }
 
 static void fm106_enter_save_menu(void)
@@ -822,23 +903,23 @@ static void draw_save_menu(void)
     cv_rect(126, 25, 108, 1, C_LINE_DIV);
     cv_text(134, 6, &FONT_S, "[HOME] Back", C_TEXT_WHITE);
 
-    int can_delete = (g_synth.patch_idx >= 128u) && (g_user_presets[g_synth.patch_idx - 128u].name[0] != '\0');
+    int has_preset = (g_save_slot < FM106_NUM_USER_PRESETS) && (g_user_presets[g_save_slot].name[0] != '\0');
 
-    if (!can_delete) {
-        cv_text(16, 42, &FONT_S, "(Factory preset - protected)", C_TEXT_DIM);
+    if (!has_preset) {
+        cv_text(16, 42, &FONT_S, "(Slot is empty - blank)", C_TEXT_DIM);
     } else {
         if (g_save_del_confirm == 0) {
             cv_rect(6, 34, 228, 36, C_BLACK);
             cv_rect(6, 34, 228, 1, C_ROLAND_RED);
             cv_rect(6, 69, 228, 1, C_ROLAND_RED);
-            char cur_code[8];
-            fm106_format_slot_code(g_synth.patch_idx, cur_code);
+            char target_code[8];
+            fm106_format_slot_code(128u + (uint32_t)g_save_slot, target_code);
             char del_lbl[32];
             uint32_t di = 0;
-            const char *del_pre = "[SEL] Delete Current (";
+            const char *del_pre = "[SEL] Delete Slot (";
             while (del_pre[di]) { del_lbl[di] = del_pre[di]; di++; }
             uint32_t ci = 0;
-            while (cur_code[ci] && di < sizeof(del_lbl) - 2u) { del_lbl[di++] = cur_code[ci++]; }
+            while (target_code[ci] && di < sizeof(del_lbl) - 2u) { del_lbl[di++] = target_code[ci++]; }
             del_lbl[di++] = ')';
             del_lbl[di] = '\0';
             cv_text(14, 44, &FONT_S, del_lbl, C_ROLAND_RED);
@@ -943,18 +1024,14 @@ static void app_main(void)
                 g_menu_sel = 0;
             } else {
                 g_ui_mode = UI_MODE_NORMAL;
-                set.patch = g_synth.patch_idx;
-                set.octave = (int8_t)g_synth.octave_shift;
-                dirty_save = 1;
-                t_change = fm1_ms;
             }
             dirty_screen = 1;
         }
 
         if (g_ui_mode == UI_MODE_NORMAL) {
-            /* FX button: jump to FX page (chorus / HPF / VCA) */
+            /* FX button: toggle chorus <-> tape page (jumps to chorus from anywhere) */
             if (b & (1u << BTN_FX)) {
-                g_current_page = PAGE_FX;
+                g_current_page = (g_current_page == PAGE_FX) ? PAGE_TAPE : PAGE_FX;
                 dirty_screen = 1;
             }
         }
@@ -998,24 +1075,25 @@ static void app_main(void)
         }
         if (b & (1u << BTN_SEL)) {
             if (g_ui_mode == UI_MODE_SAVE) {
-                int can_del = (g_synth.patch_idx >= 128u) && (g_user_presets[g_synth.patch_idx - 128u].name[0] != '\0');
+                int can_del = (g_save_slot < FM106_NUM_USER_PRESETS) && (g_user_presets[g_save_slot].name[0] != '\0');
                 if (can_del) {
                     if (g_save_del_confirm == 0) {
                         g_save_del_confirm = 1;
                         dirty_screen = 1;
                     } else {
-                        /* Confirmed delete of current user preset */
-                        uint32_t uidx = g_synth.patch_idx - 128u;
+                        /* Confirmed delete of selected user slot */
+                        uint32_t uidx = g_save_slot;
                         char code_buf[8];
-                        fm106_format_slot_code(g_synth.patch_idx, code_buf);
+                        fm106_format_slot_code(128u + (uint32_t)g_save_slot, code_buf);
                         memset(&g_user_presets[uidx], 0, sizeof(fm106_preset_t));
                         fm106_user_presets_save_flash();
-                        fm106_load_user_preset(&g_synth, g_synth.patch_idx);
-                        set.patch = g_synth.patch_idx;
-                        settings_save(&set, sizeof(set));
+                        if (g_synth.patch_idx == (uint8_t)(128u + (uint32_t)g_save_slot)) {
+                            fm106_load_user_preset(&g_synth, g_synth.patch_idx);
+                            set.patch = g_synth.patch_idx;
+                            settings_save(&set, sizeof(set));
+                        }
                         fm106_set_banner("DELETED ", code_buf);
                         g_save_del_confirm = 0;
-                        g_ui_mode = UI_MODE_NORMAL;
                         dirty_screen = 1;
                     }
                 }
@@ -1036,8 +1114,23 @@ static void app_main(void)
         if (b & (1u << BTN_ARP)) {
             if (g_ui_mode == UI_MODE_NORMAL) {
                 g_current_page = PAGE_ARP;
-                fm106_arp_enable(&g_synth, !g_synth.arp_on);
                 dirty_screen = 1;
+            }
+        }
+        if (b & (1u << BTN_SEQ)) {
+            if (g_ui_mode == UI_MODE_NORMAL) {
+                g_current_page = PAGE_SEQ;
+                dirty_screen = 1;
+            }
+        }
+        if (b & (1u << BTN_PLAY)) {   /* transport: start/stop the sequencer */
+            if (g_synth.seq.playing) {
+                for (uint8_t i = 0; i < g_synth.seq.seq_n; i++)
+                    fm106_note_off(&g_synth, g_synth.seq.seq_notes[i]);
+                g_synth.seq.seq_n = 0;
+                g_synth.seq.playing = 0;
+            } else {
+                fm106_seq_start(&g_synth.seq);
             }
         }
         if (b & (1u << BTN_SAVE)) {
@@ -1113,10 +1206,8 @@ static void app_main(void)
                 if (np != (int)g_synth.patch_idx) {
                     fm106_load_user_preset(&g_synth, (uint32_t)np);
                     set.patch = (uint8_t)np;
-                    dirty_save = 1;
-                    t_change = fm1_ms;
                     dirty_screen = 1;
-                    fm106_sysex_dump_patch((uint8_t)np);
+                    midi_send(0xC0u | ((g_synth.midi_channel - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
                 }
             }
         }
@@ -1170,10 +1261,9 @@ static void app_main(void)
                 uint32_t np = fm106_bank_first_preset((uint32_t)nb, (uint32_t)cur_slot);
                 fm106_load_user_preset(&g_synth, np);
                 set.patch = (uint8_t)np;
-                dirty_save = 1;
-                t_change = fm1_ms;
                 dirty_screen = 1;
-                fm106_sysex_dump_patch((uint8_t)np);
+                midi_send(0xB0u | ((g_synth.midi_channel - 1u) & 0x0Fu), 0, (uint8_t)nb);
+                midi_send(0xC0u | ((g_synth.midi_channel - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
             } else if (g_ui_mode == UI_MODE_MIDI) {
                 if (g_midi_sel == 0) {
                     int32_t nc = (int32_t)g_synth.midi_channel + ealgo;
@@ -1302,6 +1392,35 @@ static void app_main(void)
                 if (k3) g_synth.vca_mode = k3 > 0 ? 1u : 0u;
                 if (k4) g_synth.vca_level = (uint8_t)fm106_clamp(g_synth.vca_level + k4 * 3, 0, 127);
                 break;
+            case PAGE_TAPE: {
+                fm106_fx_t *fx = &g_synth.fx[0];
+                if (k1) {
+                    int32_t m = (int32_t)fx->type + (k1 > 0 ? 1 : -1);
+                    if (m < 0) m = FM106_FX_COUNT - 1;
+                    if (m >= FM106_FX_COUNT) m = 0;
+                    fx->type = (uint8_t)m;
+                }
+                if (k2) fx->mix = (uint8_t)fm106_clamp(fx->mix + k2 * 3, 0, 127);
+                if (k3) fx->rate = (uint8_t)fm106_clamp(fx->rate + k3 * 3, 0, 127);
+                if (k4) fx->character = (uint8_t)fm106_clamp(fx->character + k4 * 3, 0, 127);
+                break;
+            }
+            case PAGE_SEQ: {
+                fm106_seq_t *s = &g_synth.seq;
+                if (k1) {   /* transport toggle */
+                    if (k1 > 0) fm106_seq_start(s);
+                    else        { for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(&g_synth, s->seq_notes[i]); s->seq_n = 0; s->playing = 0; }
+                }
+                if (k2) s->slen = (uint8_t)fm106_clamp((int32_t)s->slen + (k2 > 0 ? 1 : -1), 1, FM106_NSTEP);
+                if (k3) {
+                    int32_t m = (int32_t)s->sdiv + (k3 > 0 ? 1 : -1);
+                    if (m < 0) m = 9;
+                    if (m > 9) m = 0;
+                    s->sdiv = (uint8_t)m;
+                }
+                if (k4) s->sgate = (uint8_t)fm106_clamp(s->sgate + k4 * 4, 8, 127);
+                break;
+            }
             }
             dirty_screen = 1;
             }
@@ -1309,6 +1428,14 @@ static void app_main(void)
 
         /* 4. USB-MIDI In */
         while (midi_get(&st, &d1, &d2)) {
+            /* System Realtime (clock/transport) — arrives interleaved on the
+             * status byte, so handle before the channel-type nibble. */
+            if (st >= 0xF8u) {
+                if (st == 0xF8u)      fm106_midi_clock_pulse(&g_synth.seq, fm106_now_ms());
+                else if (st == 0xFAu || st == 0xFBu || st == 0xFCu)
+                    fm106_midi_clock_transport(&g_synth.seq, st);
+                continue;
+            }
             uint8_t type = st & 0xF0u;
             if (type == 0x90u && d2 > 0) {
                 fm106_key_on(&g_synth, d1, d2);
@@ -1322,10 +1449,7 @@ static void app_main(void)
                 uint32_t target_patch = (uint32_t)(cur_bank * 64 + (d1 % 64u));
                 fm106_load_user_preset(&g_synth, target_patch);
                 set.patch = (uint8_t)target_patch;
-                dirty_save = 1;
-                t_change = fm1_ms;
                 dirty_screen = 1;
-                fm106_sysex_dump_patch((uint8_t)target_patch);
             } else if (type == 0xB0u) {  /* Control Change */
                 if (d1 == 0 || d1 == 32) { /* Bank Select MSB/LSB */
                     uint32_t nb = d2 & 3u;
@@ -1333,10 +1457,7 @@ static void app_main(void)
                     uint32_t target_patch = nb * 64u + (uint32_t)cur_slot;
                     fm106_load_user_preset(&g_synth, target_patch);
                     set.patch = (uint8_t)target_patch;
-                    dirty_save = 1;
-                    t_change = fm1_ms;
                     dirty_screen = 1;
-                    fm106_sysex_dump_patch((uint8_t)target_patch);
                 } else if (d1 == 74) {          /* Brightness / Cutoff */
                     g_synth.vcf_cutoff = d2;
                     dirty_screen = 1;
@@ -1409,6 +1530,9 @@ static void app_main(void)
                 } else if (d1 == 93) {   /* Chorus send */
                     g_synth.chorus.mode = d2 > 80 ? FM106_CHORUS_II : (d2 > 40 ? FM106_CHORUS_I : FM106_CHORUS_OFF);
                     dirty_screen = 1;
+                } else if (d1 >= 83 && d1 <= 86) {         /* Tape: type/mix/rate/char */
+                    fm106_cc_fx(&g_synth.fx[0], d1 - 83, d2);
+                    dirty_screen = 1;
                 } else if (d1 == 119) {  /* Debug telemetry inquiry */
                     midi_send(0xB0, 114, (uint8_t)(uac.alt & 0x7Fu));
                     midi_send(0xB0, 115, (uint8_t)(uac.starts & 0x7Fu));
@@ -1465,9 +1589,12 @@ static void app_main(void)
         }
         fm1_led_key(BTN_OCT_DOWN, g_synth.octave_shift < 0);
         fm1_led_key(BTN_OCT_UP, g_synth.octave_shift > 0);
-        fm1_led_key(BTN_FX, g_synth.chorus.mode != FM106_CHORUS_OFF);
+        fm1_led_key(BTN_FX, g_synth.chorus.mode != FM106_CHORUS_OFF ||
+                            g_synth.fx[0].type != FM106_FX_OFF);
         fm1_led_key(BTN_ARP, g_synth.arp_on);
-        fm1_led_key(BTN_SAVE, dirty_save || (g_ui_mode == UI_MODE_SAVE));
+        fm1_led_key(BTN_SEQ, g_synth.seq.playing);
+        fm1_led_key(BTN_PLAY, g_synth.seq.playing);
+        fm1_led_key(BTN_SAVE, (g_ui_mode == UI_MODE_SAVE));
 
         if (g_banner_msg[0] != '\0' && fm1_ms >= g_banner_until) {
             g_banner_msg[0] = '\0';
@@ -1481,13 +1608,15 @@ static void app_main(void)
 
         /* 6. Screen Redraws */
         static uint32_t t_last_top = 0;
-        int voice_changed = (voice_active != prev_voice_active);
-        int need_top = (dirty_screen || (voice_changed && (fm1_ms - t_last_top >= 50u))) && (g_ui_mode != UI_MODE_SAVE);
-        if (need_top) {
-            t_last_top = fm1_ms;
-            prev_voice_active = voice_active;
-            draw_top_section(g_synth.patch_idx, g_synth.patch_name);
+        static uint32_t t_last_batt_chk = 0;
+        if (fm1_ms - t_last_batt_chk >= 3000u) {
+            t_last_batt_chk = fm1_ms;
+            dirty_screen = 1;
         }
+        static uint8_t prev_ui_mode = UI_MODE_NORMAL;
+        int ui_mode_changed = (g_ui_mode != prev_ui_mode);
+        prev_ui_mode = g_ui_mode;
+        int voice_changed = (voice_active != prev_voice_active);
 
         if (dirty_screen) {
             if (g_ui_mode == UI_MODE_MENU) {
@@ -1497,10 +1626,19 @@ static void app_main(void)
             } else if (g_ui_mode == UI_MODE_SAVE) {
                 draw_save_menu();
             } else {
+                draw_top_section(g_synth.patch_idx, g_synth.patch_name);
                 draw_faders_section(g_current_page);
-                draw_waveform_section();
+                if (ui_mode_changed) {
+                    draw_waveform_section();
+                }
             }
             dirty_screen = 0;
+            t_last_top = fm1_ms;
+            prev_voice_active = voice_active;
+        } else if (voice_changed && (fm1_ms - t_last_top >= 50u) && (g_ui_mode == UI_MODE_NORMAL)) {
+            t_last_top = fm1_ms;
+            prev_voice_active = voice_active;
+            draw_top_section(g_synth.patch_idx, g_synth.patch_name);
         }
 
         /* Continuous oscilloscope refresh in performance mode */

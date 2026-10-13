@@ -5,7 +5,8 @@
 
 #define FM106_PRESETS_FLASH_ADDR 0x00098000u
 #define FM106_PRESETS_FLASH_SIZE 0x2000u    /* 8 KiB (2 x 4 KiB sectors) */
-#define FM106_PRESETS_MAGIC      0x36303142u /* "J10B" (blank user banks schema) */
+#define FM106_PRESETS_MAGIC      0x36303142u /* "J10B" v1 user banks (preset p[44], FX 1 only) */
+#define FM106_PRESETS_MAGIC2     0x36303143u /* "J10C" v2 user banks (preset p[60], FX 1..4) */
 
 typedef struct {
     uint32_t magic;
@@ -36,19 +37,34 @@ static void fm106_user_presets_restore_factory(void)
     memset(g_user_presets, 0, sizeof(g_user_presets));
 }
 
-/* Initialize user presets: load from SPI flash if valid, else initialize as completely blank */
+/* Initialize user presets: load from SPI flash if valid, else initialize as completely blank.
+ * v1 banks ("J10B", p[44]) still load: each record is widened in place, FX 2..4 default OFF. */
 static void fm106_user_presets_init(void)
 {
     static uint8_t buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
     fm106_flash_header_t hdr;
 
     if (presets_flash_read(&hdr, sizeof(hdr)) == 0 &&
-        hdr.magic == FM106_PRESETS_MAGIC &&
-        hdr.count == FM106_NUM_USER_PRESETS) {
-        if (presets_flash_read(buf, sizeof(buf)) == 0) {
-            uint32_t c = fm106_crc32(buf + sizeof(hdr), sizeof(g_user_presets));
-            if (c == hdr.crc) {
+        hdr.count == FM106_NUM_USER_PRESETS &&
+        (hdr.magic == FM106_PRESETS_MAGIC2 || hdr.magic == FM106_PRESETS_MAGIC)) {
+        if (hdr.magic == FM106_PRESETS_MAGIC2) {
+            if (presets_flash_read(buf, sizeof(buf)) == 0 &&
+                fm106_crc32(buf + sizeof(hdr), sizeof(g_user_presets)) == hdr.crc) {
                 memcpy(g_user_presets, buf + sizeof(hdr), sizeof(g_user_presets));
+                return;
+            }
+        } else {
+            /* v1: 128 records of {name[16], p[44]} = 60 B each */
+            const uint32_t oldn = FM106_NUM_USER_PRESETS * 60u;
+            if (presets_flash_read(buf, sizeof(fm106_flash_header_t) + oldn) == 0 &&
+                fm106_crc32(buf + sizeof(hdr), oldn) == hdr.crc) {
+                const uint8_t *src = buf + sizeof(hdr);
+                for (uint32_t i = FM106_NUM_USER_PRESETS; i-- > 0; ) {
+                    /* descending: each widened record sits above the old record it came from */
+                    memcpy(g_user_presets[i].name, src + i * 60u, 16);
+                    memset(g_user_presets[i].p, 0, sizeof(g_user_presets[i].p));
+                    memcpy(g_user_presets[i].p, src + i * 60u + 16, 44);
+                }
                 return;
             }
         }
@@ -61,10 +77,13 @@ static void fm106_user_presets_init(void)
 /* Burn user presets RAM bank into SPI flash */
 static int fm106_user_presets_save_flash(void)
 {
+#if DINGHY_DUAL_CORE
+    if (audio_worker_online) audio_worker_join();
+#endif
     static uint8_t buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
     fm106_flash_header_t *hdr = (fm106_flash_header_t *)buf;
 
-    hdr->magic = FM106_PRESETS_MAGIC;
+    hdr->magic = FM106_PRESETS_MAGIC2;
     hdr->count = FM106_NUM_USER_PRESETS;
     hdr->crc = fm106_crc32((const uint8_t *)g_user_presets, sizeof(g_user_presets));
     hdr->reserved = 0;
@@ -153,6 +172,11 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     e->vcf_env_polarity = p->p[34];
     e->vca_mode         = p->p[35];
 
+    e->fx[0].type      = p->p[36] >= FM106_FX_COUNT ? 0 : p->p[36];
+    e->fx[0].mix       = p->p[37] > 127 ? 127 : p->p[37];
+    e->fx[0].rate      = p->p[38] > 127 ? 127 : p->p[38];
+    e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
+
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
         e->voice[i].dco.saw_on      = e->dco_saw_on;
@@ -212,6 +236,11 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[33] = e->dco_pwm_mode & 1u;
     p->p[34] = e->vcf_env_polarity & 1u;
     p->p[35] = e->vca_mode & 1u;
+
+    p->p[36] = e->fx[0].type < FM106_FX_COUNT ? e->fx[0].type : 0u;
+    p->p[37] = (uint8_t)e->fx[0].mix;
+    p->p[38] = (uint8_t)e->fx[0].rate;
+    p->p[39] = (uint8_t)e->fx[0].character;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */
@@ -311,8 +340,9 @@ static void fm106_apply_apr_to_engine(fm106_engine_t *e, const uint8_t *s, uint8
 }
 
 /* Store 18 APR parameters into a preset slot */
-static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8_t sw1, uint8_t sw2, const char *name)
+static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8_t sw1, uint8_t sw2, const char *name, int is_vintage)
 {
+    p->name[0] = '\0';
     p->p[0]  = 64;           /* bender_dco */
     p->p[1]  = 64;           /* bender_vcf */
     p->p[2]  = 64;           /* arp_rate */
@@ -352,12 +382,20 @@ static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8
     p->p[35] = vca_m;
 
     if (name && name[0]) {
+        while (*name == ' ') name++;
         uint32_t len = 0;
         while (name[len] && len < 15u) {
             ((char *)p->name)[len] = name[len];
             len++;
         }
+        while (len > 0 && ((char *)p->name)[len - 1] == ' ') len--;
         ((char *)p->name)[len] = '\0';
+    }
+    if (is_vintage && p->name[0] == '\0') {
+        const char *def_nm = "User Patch";
+        uint32_t di = 0;
+        while (def_nm[di] && di < 15u) { ((char *)p->name)[di] = def_nm[di]; di++; }
+        ((char *)p->name)[di] = '\0';
     }
 }
 
@@ -366,12 +404,16 @@ static void fm106_sysex_dump_patch(uint8_t patch_idx)
 {
     const fm106_preset_t *p = (patch_idx < 128u) ? &FM106_PRESETS[patch_idx] : &g_user_presets[patch_idx - 128u];
 
+    uint8_t bank_opt = (patch_idx / 64u) + 1u; /* 1=Fact A, 2=Fact B, 3=User A, 4=User B */
+    uint8_t ch = (g_synth.midi_channel - 1u) & 0x0Fu;
+    uint8_t ch_byte = ((bank_opt << 4) & 0x70u) | ch;
+
     uint8_t msg[42];
     msg[0]  = 0xF0;
     msg[1]  = 0x41; /* Roland */
     msg[2]  = 0x30; /* APR patch format */
-    msg[3]  = (g_synth.midi_channel - 1u) & 0x0Fu;
-    msg[4]  = patch_idx % 128u;
+    msg[3]  = ch_byte;
+    msg[4]  = patch_idx % 64u;
 
     /* 16 sliders */
     msg[5]  = p->p[3] & 0x7Fu;  /* lfo_rate */
@@ -391,41 +433,53 @@ static void fm106_sysex_dump_patch(uint8_t patch_idx)
     msg[19] = p->p[19] & 0x7Fu; /* env_r */
     msg[20] = p->p[7] & 0x7Fu;  /* dco_sub_level */
 
-    uint8_t ch = FM106_CHORUS_OFF;
-    if (p->p[27] && p->p[28]) ch = FM106_CHORUS_I_II;
-    else if (p->p[28]) ch = FM106_CHORUS_II;
-    else if (p->p[27]) ch = FM106_CHORUS_I;
+    uint8_t chorus = FM106_CHORUS_OFF;
+    if (p->p[27] && p->p[28]) chorus = FM106_CHORUS_I_II;
+    else if (p->p[28]) chorus = FM106_CHORUS_II;
+    else if (p->p[27]) chorus = FM106_CHORUS_I;
 
-    msg[21] = fm106_encode_sw1(p->p[29], p->p[23], p->p[24], ch);
+    msg[21] = fm106_encode_sw1(p->p[29], p->p[23], p->p[24], chorus);
     msg[22] = fm106_encode_sw2(p->p[33], p->p[34], p->p[35], p->p[9]);
-    msg[23] = 0xF7;
 
-    /* Standard Roland Juno-106 24-byte APR message (required by Jarvik7 & vintage librarians) */
-    fm106_sysex_send(msg, 24);
-
-    /* Also transmit patch name in 0x33 message if present */
+    /* Transmit 40-byte extended SysEx if name present, or 24-byte vintage APR if blank */
     if (p->name[0]) {
+        uint32_t len = 0;
+        while (p->name[len] && len < 15u) {
+            msg[23 + len] = (uint8_t)p->name[len] & 0x7Fu;
+            len++;
+        }
+        while (len < 16u) {
+            msg[23 + len] = ' ';
+            len++;
+        }
+        msg[39] = 0xF7;
+        fm106_sysex_send(msg, 40);
+
+        /* Also transmit patch name in 0x33 message for vintage compatibility */
         uint8_t nmsg[28];
         nmsg[0] = 0xF0;
         nmsg[1] = 0x41;
         nmsg[2] = 0x33;
-        nmsg[3] = (g_synth.midi_channel - 1u) & 0x0Fu;
-        nmsg[4] = patch_idx % 128u;
-        nmsg[5] = (uint8_t)(patch_idx / 64u); /* Bank index: 0=Fact A, 1=Fact B, 2=User A, 3=User B */
-        uint32_t len = 0;
-        while (p->name[len] && len < 15u) {
-            nmsg[6 + len] = (uint8_t)p->name[len];
-            len++;
+        nmsg[3] = ch_byte;
+        nmsg[4] = patch_idx % 64u;
+        nmsg[5] = (uint8_t)(patch_idx / 64u);
+        uint32_t nlen = 0;
+        while (p->name[nlen] && nlen < 15u) {
+            nmsg[6 + nlen] = (uint8_t)p->name[nlen] & 0x7Fu;
+            nlen++;
         }
-        nmsg[6 + len] = 0xF7;
-        fm106_sysex_send(nmsg, 7 + len);
+        nmsg[6 + nlen] = 0xF7;
+        fm106_sysex_send(nmsg, 7 + nlen);
+    } else {
+        msg[23] = 0xF7;
+        fm106_sysex_send(msg, 24);
     }
 }
 
 /* Parse and process incoming Roland SysEx message (bytes after F0 up to F7) */
 static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
 {
-    if (n < 4 || p[0] != 0x41) return;
+    if (n < 3 || p[0] != 0x41) return;
 
     uint8_t cmd = p[1];
     uint8_t ch  = p[2] & 0x0Fu;
@@ -527,7 +581,7 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
         if (n >= 38) {
             for (uint32_t i = 0; i < 15u && (22u + i) < n; i++) nm[i] = (char)p[22 + i];
         }
-        fm106_store_apr_to_preset(&g_user_presets[user_slot], p + 4, p[20], p[21], nm[0] ? nm : 0);
+        fm106_store_apr_to_preset(&g_user_presets[user_slot], p + 4, p[20], p[21], nm[0] ? nm : 0, (n < 38u));
         if ((128u + user_slot) == g_synth.patch_idx) {
             fm106_load_user_preset(&g_synth, 128u + user_slot);
         }
@@ -614,6 +668,15 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
         fm106_load_user_preset(&g_synth, target_patch);
         g_dirty_screen = 1;
         fm106_sysex_dump_patch(target_patch);
+        return;
+    }
+
+    /* 9. Diagnostic / Battery Query: 41 39 0n */
+    if (cmd == 0x39) {
+        int32_t bval = fm1_adc_read(FM1_ADC_BATT);
+        if (bval < 0) bval = 0;
+        uint8_t resp[7] = {0xF0, 0x41, 0x39, ch, (uint8_t)((bval >> 7) & 0x7Fu), (uint8_t)(bval & 0x7Fu), 0xF7};
+        fm106_sysex_send(resp, 7);
         return;
     }
 }
