@@ -6,20 +6,20 @@
 <title>FM-106 // Web Librarian & Synthesizer Editor</title>
 <style>
 :root {
-    --bg-synth: #1c1d22;
-    --panel-dark: #121316;
-    --panel-mid: #252830;
-    --panel-light: #323642;
-    --accent-red: #e62c1e;
-    --accent-red-hover: #ff4133;
-    --accent-blue: #00a4e4;
-    --accent-amber: #f89e1b;
-    --accent-green: #2ecc71;
+    --bg-synth: #240c50;
+    --panel-dark: #140538;
+    --panel-mid: #321870;
+    --panel-light: #542eb4;
+    --accent-red: #ff2d95;
+    --accent-red-hover: #ff5aa8;
+    --accent-blue: #2de2e6;
+    --accent-amber: #ffd319;
+    --accent-green: #39ff9e;
     --text-white: #f5f6f8;
-    --text-muted: #8e95a5;
+    --text-muted: #9d86c9;
     --fader-cap: #e4e7ed;
-    --fader-stripe: #e62c1e;
-    --track-bg: #0b0c0e;
+    --fader-stripe: #ff2d95;
+    --track-bg: #0d0226;
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     --font-mono: "SF Mono", Monaco, Inconsolata, "Courier New", monospace;
 }
@@ -33,7 +33,14 @@
 }
 
 body {
-    background-color: #0c0d10;
+    background-color: #0b0020;
+    background-image:
+        linear-gradient(rgba(45,226,230,.10) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(45,226,230,.10) 1px, transparent 1px),
+        radial-gradient(circle at 78% 8%, rgba(176,38,255,.22), transparent 55%),
+        radial-gradient(circle at 18% 92%, rgba(255,45,149,.16), transparent 55%);
+    background-size: 40px 40px, 40px 40px, 100% 100%, 100% 100%;
+    background-attachment: fixed;
     color: var(--text-white);
     font-family: var(--font-ui);
     display: flex;
@@ -44,9 +51,9 @@ body {
 
 /* Top Synth Header */
 header.synth-header {
-    background: linear-gradient(180deg, #2b2e37 0%, #1c1d22 100%);
-    border-bottom: 3px solid var(--accent-red);
-    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    background: linear-gradient(180deg, #2c1258 0%, #12002e 100%);
+    border-bottom: 3px solid #ff2d95;
+    box-shadow: 0 0 18px rgba(255,45,149,.45), 0 4px 16px rgba(0,0,0,.6);
     padding: 10px 20px;
     display: flex;
     align-items: center;
@@ -63,13 +70,15 @@ header.synth-header {
 }
 
 .brand-badge {
-    background: transparent;
-    color: var(--accent-blue);
+    background: linear-gradient(180deg, #fff 0%, #2de2e6 45%, #ff2d95 80%, #b026ff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
     font-weight: 900;
     font-size: 24px;
     letter-spacing: 3px;
     padding: 0;
-    text-shadow: 0 1px 3px black;
+    filter: drop-shadow(0 0 8px rgba(45,226,230,.5));
 }
 
 .model-title {
@@ -95,14 +104,14 @@ header.synth-header {
     background: var(--panel-dark);
     padding: 6px 14px;
     border-radius: 4px;
-    border: 1px solid #2d3039;
+    border: 1px solid #46249e;
 }
 
 .led-indicator {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background-color: #444;
+    background-color: #553388;
     box-shadow: inset 0 1px 2px rgba(0,0,0,0.6);
     display: inline-block;
     transition: all 0.15s ease;
@@ -124,9 +133,9 @@ header.synth-header {
 }
 
 select.synth-select {
-    background: #1a1b20;
+    background: #200a48;
     color: var(--text-white);
-    border: 1px solid #3c404d;
+    border: 1px solid #6a3cd2;
     border-radius: 3px;
     padding: 5px 8px;
     font-size: 12px;
@@ -140,9 +149,9 @@ select.synth-select:focus {
 }
 
 button.synth-btn {
-    background: linear-gradient(180deg, #3c404e 0%, #282a33 100%);
+    background: linear-gradient(180deg, #6a3cd2 0%, #3a1c80 100%);
     color: white;
-    border: 1px solid #4a5061;
+    border: 1px solid #7848dc;
     padding: 6px 12px;
     font-size: 11px;
     font-weight: 700;
@@ -158,8 +167,8 @@ button.synth-btn {
 }
 
 button.synth-btn:hover {
-    background: linear-gradient(180deg, #4c5264 0%, #323541 100%);
-    border-color: #656d84;
+    background: linear-gradient(180deg, #7e4ce2 0%, #522cb0 100%);
+    border-color: #9a6cf0;
 }
 
 button.synth-btn:active {
@@ -169,21 +178,21 @@ button.synth-btn:active {
 
 button.synth-btn.primary {
     background: linear-gradient(180deg, var(--accent-red-hover) 0%, var(--accent-red) 100%);
-    border-color: #b71c1c;
+    border-color: #c01068;
 }
 
 button.synth-btn.primary:hover {
-    background: linear-gradient(180deg, #ff574d 0%, #ea3123 100%);
+    background: linear-gradient(180deg, #ff7bc0 0%, #e6188a 100%);
 }
 
 button.synth-btn.accent {
-    background: linear-gradient(180deg, #00b4fa 0%, #0087bd 100%);
-    border-color: #006b96;
+    background: linear-gradient(180deg, #4be9ff 0%, #1bb8d8 100%);
+    border-color: #1489a8;
 }
 
 button.synth-btn.amber {
-    background: linear-gradient(180deg, #ffad33 0%, #e68500 100%);
-    border-color: #b36700;
+    background: linear-gradient(180deg, #ffe14d 0%, #e6b800 100%);
+    border-color: #a88400;
 }
 
 /* Main Workspace Layout */
@@ -202,17 +211,17 @@ button.synth-btn.amber {
 
 /* Left Sidebar: Library Manager */
 aside.library-sidebar {
-    background: #141519;
-    border-right: 2px solid #282a32;
+    background: #16063c;
+    border-right: 2px solid #3a1c80;
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }
 
 .sidebar-header {
-    background: #1a1b21;
+    background: #200a48;
     padding: 12px 14px;
-    border-bottom: 1px solid #282a32;
+    border-bottom: 1px solid #3a1c80;
     display: flex;
     flex-direction: column;
     gap: 10px;
@@ -221,10 +230,10 @@ aside.library-sidebar {
 .bank-tabs {
     display: flex;
     gap: 4px;
-    background: #0d0e11;
+    background: #0d0226;
     padding: 3px;
     border-radius: 4px;
-    border: 1px solid #22252c;
+    border: 1px solid #2e1468;
 }
 
 .bank-tab {
@@ -247,11 +256,11 @@ aside.library-sidebar {
 }
 
 .bank-tab.user-tab {
-    color: #f59e0b;
+    color: #ffc700;
 }
 
 .bank-tab.user-tab.active {
-    background: #d97706;
+    background: #c9a100;
     color: white;
 }
 
@@ -261,8 +270,8 @@ aside.library-sidebar {
 }
 
 input.synth-input {
-    background: #0d0e11;
-    border: 1px solid #2c2f38;
+    background: #0d0226;
+    border: 1px solid #442298;
     color: var(--text-white);
     padding: 6px 10px;
     border-radius: 3px;
@@ -281,8 +290,8 @@ input.synth-input:focus {
     grid-template-columns: 1fr 1fr;
     gap: 6px;
     padding: 8px 14px;
-    background: #18191f;
-    border-bottom: 1px solid #282a32;
+    background: #1c0844;
+    border-bottom: 1px solid #3a1c80;
 }
 
 .preset-list-container {
@@ -296,7 +305,7 @@ input.synth-input:focus {
 }
 
 .preset-list-container::-webkit-scrollbar-thumb {
-    background: #2f323c;
+    background: #4c28a8;
     border-radius: 3px;
 }
 
@@ -306,20 +315,20 @@ input.synth-input:focus {
     justify-content: space-between;
     padding: 7px 10px;
     margin-bottom: 4px;
-    background: #1a1c22;
-    border: 1px solid #252830;
+    background: #200a48;
+    border: 1px solid #321870;
     border-radius: 3px;
     cursor: pointer;
     transition: all 0.1s ease;
 }
 
 .preset-item:hover {
-    background: #252832;
-    border-color: #383d4a;
+    background: #321870;
+    border-color: #5e34c0;
 }
 
 .preset-item.selected {
-    background: #282d3b;
+    background: #3a1c80;
     border-color: var(--accent-blue);
     box-shadow: inset 2px 0 0 var(--accent-blue);
 }
@@ -328,11 +337,11 @@ input.synth-input:focus {
     font-family: var(--font-mono);
     font-size: 11px;
     font-weight: 700;
-    background: #101115;
+    background: #100330;
     color: var(--accent-amber);
     padding: 2px 6px;
     border-radius: 2px;
-    border: 1px solid #2a2c36;
+    border: 1px solid #3e1e88;
     min-width: 38px;
     text-align: center;
 }
@@ -358,8 +367,8 @@ input.synth-input:focus {
 }
 
 .mini-btn {
-    background: #121317;
-    border: 1px solid #2d303a;
+    background: #140538;
+    border: 1px solid #46249e;
     color: var(--text-muted);
     padding: 2px 6px;
     font-size: 10px;
@@ -376,8 +385,8 @@ input.synth-input:focus {
 
 /* Hardware Sync & Storage Bar */
 .hardware-sync-bar {
-    background: #101114;
-    border-top: 1px solid #282a32;
+    background: #100330;
+    border-top: 1px solid #3a1c80;
     padding: 10px 14px;
     display: flex;
     flex-direction: column;
@@ -395,7 +404,7 @@ input.synth-input:focus {
 
 /* Right Panel: FM-106 Front Panel Synth */
 main.synth-panel {
-    background: radial-gradient(circle at 50% 30%, #23252d 0%, #15161a 100%);
+    background: radial-gradient(circle at 50% 30%, #2e1468 0%, #1a0740 100%);
     padding: 16px 20px;
     overflow-y: auto;
     display: flex;
@@ -405,8 +414,8 @@ main.synth-panel {
 
 /* Active Patch Ribbon */
 .patch-banner {
-    background: #121317;
-    border: 1px solid #2a2d36;
+    background: #140538;
+    border: 1px solid #3e1e88;
     border-left: 5px solid var(--accent-red);
     border-radius: 4px;
     padding: 12px 18px;
@@ -423,10 +432,10 @@ main.synth-panel {
     font-size: 24px;
     font-weight: 800;
     color: var(--accent-amber);
-    background: #08090b;
+    background: #09001c;
     padding: 4px 14px;
     border-radius: 3px;
-    border: 1px solid #333644;
+    border: 1px solid #542eb4;
     text-shadow: 0 0 10px rgba(248, 158, 27, 0.4);
     display: inline-block;
 }
@@ -444,8 +453,8 @@ main.synth-panel {
     font-weight: 700;
     letter-spacing: 1px;
     padding: 6px 12px;
-    background: #0b0c0f;
-    border: 1px solid #3a3e4e;
+    background: #0d0226;
+    border: 1px solid #6438ca;
     color: #fff;
     border-radius: 3px;
     width: 100%;
@@ -470,8 +479,8 @@ main.synth-panel {
 }
 
 .synth-module {
-    background: #181a20;
-    border: 1px solid #2a2d37;
+    background: #1c0844;
+    border: 1px solid #3e1e88;
     border-top: 3px solid var(--accent-blue);
     border-radius: 4px;
     padding: 12px 10px;
@@ -492,12 +501,12 @@ main.synth-panel {
     font-size: 12px;
     font-weight: 800;
     letter-spacing: 2px;
-    color: #cad0df;
+    color: #e0d4ff;
     text-transform: uppercase;
     text-align: center;
     margin-bottom: 12px;
     padding-bottom: 4px;
-    border-bottom: 1px solid #2a2d37;
+    border-bottom: 1px solid #3e1e88;
 }
 
 .module-controls {
@@ -522,7 +531,7 @@ main.synth-panel {
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 0.5px;
-    color: #9aa2b5;
+    color: #a894d6;
     text-transform: uppercase;
     text-align: center;
     height: 18px;
@@ -535,10 +544,10 @@ main.synth-panel {
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--accent-amber);
-    background: #090a0d;
+    background: #0b001f;
     padding: 1px 4px;
     border-radius: 2px;
-    border: 1px solid #272a33;
+    border: 1px solid #361a78;
     min-width: 26px;
     text-align: center;
 }
@@ -594,8 +603,8 @@ input[type=range].fader-input {
     position: absolute;
     width: 22px;
     height: 14px;
-    background: linear-gradient(180deg, #e6e8ec 0%, #b2b6c1 50%, #898e9b 100%);
-    border: 1px solid #4a4f5c;
+    background: linear-gradient(180deg, #e6e8ec 0%, #c9baf0 50%, #9d86c9 100%);
+    border: 1px solid #7848dc;
     border-radius: 2px;
     box-shadow: 0 2px 5px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.8);
     pointer-events: none;
@@ -626,10 +635,10 @@ input[type=range].fader-input {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    background: #0d0e12;
+    background: #0d0226;
     padding: 3px;
     border-radius: 4px;
-    border: 1px solid #252833;
+    border: 1px solid #321870;
     width: 100%;
 }
 
@@ -667,9 +676,9 @@ input[type=range].fader-input {
 }
 
 .chorus-btn {
-    background: #14151b;
-    border: 1px solid #2e313d;
-    color: #a2a8b8;
+    background: #16063c;
+    border: 1px solid #4a26a4;
+    color: #b9a6e0;
     padding: 8px 10px;
     font-size: 11px;
     font-weight: 700;
@@ -682,13 +691,13 @@ input[type=range].fader-input {
 }
 
 .chorus-btn:hover {
-    background: #20232b;
+    background: #2a1260;
     color: white;
 }
 
 .chorus-btn.active {
     border-color: var(--accent-amber);
-    background: #27221a;
+    background: #2e1468;
     color: #fff;
 }
 
@@ -699,8 +708,8 @@ input[type=range].fader-input {
 
 /* Playable Virtual Keyboard */
 footer.keyboard-footer {
-    background: #111216;
-    border-top: 3px solid #282a33;
+    background: #12043a;
+    border-top: 3px solid #3a1c80;
     padding: 10px 20px;
     display: flex;
     flex-direction: column;
@@ -732,7 +741,7 @@ footer.keyboard-footer {
     max-width: 900px;
     width: 100%;
     background: #000;
-    border: 3px solid #1a1b20;
+    border: 3px solid #200a48;
     border-radius: 4px;
     overflow: hidden;
     box-shadow: 0 6px 16px rgba(0,0,0,0.8);
@@ -766,7 +775,7 @@ footer.keyboard-footer {
     position: absolute;
     width: 4.2%;
     height: 65%;
-    background: linear-gradient(180deg, #2a2a2a 0%, #151515 80%, #050505 100%);
+    background: linear-gradient(180deg, #3e1e88 0%, #151515 80%, #050505 100%);
     border-radius: 0 0 3px 3px;
     z-index: 2;
     box-shadow: 0 3px 6px rgba(0,0,0,0.8), inset 0 1px 1px rgba(255,255,255,0.2);
@@ -784,13 +793,13 @@ footer.keyboard-footer {
     transform: translateX(-50%);
     font-size: 9px;
     font-weight: 700;
-    color: #888;
+    color: #a78bc9;
     pointer-events: none;
 }
 
 .black-key .key-label {
     bottom: 4px;
-    color: #666;
+    color: #7a5aa8;
 }
 
 /* Drag & Drop Overlay */
@@ -829,7 +838,7 @@ footer.keyboard-footer {
 }
 
 .toast {
-    background: #1e212a;
+    background: #281058;
     color: white;
     padding: 10px 16px;
     border-radius: 4px;
