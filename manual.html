@@ -1,0 +1,453 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM-106 Firmware Manual — Sequencer, MIDI & DAW</title>
+<style>
+  :root {
+    --bg: #0b0020;
+    --bg2: #12002e;
+    --panel: rgba(22, 4, 48, .72);
+    --fg: #f3e9ff;
+    --dim: #9d86c9;
+    --pink: #ff2d95;
+    --cyan: #2de2e6;
+    --purple: #b026ff;
+    --gold: #ffd319;
+    --line: rgba(176, 38, 255, .35);
+    --grid: rgba(45, 226, 230, .08);
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; color: var(--fg);
+    background:
+      repeating-linear-gradient(0deg, transparent 0 39px, var(--grid) 39px 40px),
+      repeating-linear-gradient(90deg, transparent 0 39px, var(--grid) 39px 40px),
+      radial-gradient(120% 60% at 50% -10%, rgba(176,38,255,.28), transparent 60%),
+      radial-gradient(90% 50% at 50% 110%, rgba(255,45,149,.18), transparent 60%),
+      linear-gradient(180deg, var(--bg), var(--bg2));
+    background-attachment: fixed;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 20px 96px; }
+  a { color: var(--cyan); text-decoration: none; border-bottom: 1px solid rgba(45,226,230,.35); }
+  a:hover { color: var(--pink); border-color: var(--pink); }
+
+  /* ---- header ---- */
+  header.hero { text-align: center; padding: 32px 0 8px; }
+  .logo {
+    font-family: var(--mono); font-weight: 800; font-size: 56px; letter-spacing: .12em;
+    margin: 0;
+    background: linear-gradient(180deg, #fff 8%, var(--cyan) 42%, var(--pink) 58%, var(--purple) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 0 18px rgba(255,45,149,.55)) drop-shadow(0 0 40px rgba(45,226,230,.35));
+  }
+  .tagline { font-family: var(--mono); letter-spacing: .35em; text-transform: uppercase;
+             color: var(--gold); font-size: 12px; margin: 4px 0 0; text-shadow: 0 0 12px rgba(255,211,25,.6); }
+  .sun { width: 160px; height: 80px; margin: 20px auto 0; border-radius: 160px 160px 0 0;
+    background: repeating-linear-gradient(180deg, var(--pink) 0 8px, transparent 8px 12px);
+    -webkit-mask: radial-gradient(80px 80px at 50% 100%, transparent 98%, #000 100%);
+            mask: radial-gradient(80px 80px at 50% 100%, transparent 98%, #000 100%);
+    box-shadow: 0 -10px 60px rgba(255,45,149,.5); }
+  .grid-floor { height: 3px; margin: 0 0 40px;
+    background: linear-gradient(90deg, transparent, var(--cyan), var(--pink), var(--purple), transparent);
+    box-shadow: 0 0 16px rgba(45,226,230,.8); }
+
+  nav.toc { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin: 24px 0 48px; }
+  nav.toc a {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    border: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: 6px 14px; border-radius: 999px; color: var(--dim); background: var(--panel);
+  }
+  nav.toc a:hover { color: var(--cyan); border-color: var(--cyan); box-shadow: 0 0 14px rgba(45,226,230,.4); }
+
+  /* ---- sections ---- */
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+            padding: 28px 28px 20px; margin: 0 0 28px;
+            box-shadow: 0 0 0 1px rgba(0,0,0,.4), 0 12px 40px rgba(0,0,0,.45); }
+  h2 { font-family: var(--mono); font-size: 20px; letter-spacing: .18em; text-transform: uppercase;
+       margin: 0 0 18px; color: var(--pink); text-shadow: 0 0 14px rgba(255,45,149,.6); }
+  h2 .n { color: var(--cyan); margin-right: 10px; text-shadow: 0 0 12px rgba(45,226,230,.7); }
+  h3 { font-family: var(--mono); font-size: 14px; letter-spacing: .14em; text-transform: uppercase;
+       margin: 26px 0 10px; color: var(--cyan); text-shadow: 0 0 10px rgba(45,226,230,.5); }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--pink); }
+  strong { color: var(--gold); }
+  .kbd { font-family: var(--mono); font-size: .85em; padding: 1px 7px; border-radius: 5px;
+         border: 1px solid var(--line); background: rgba(176,38,255,.14); color: var(--fg); white-space: nowrap; }
+
+  /* ---- tables ---- */
+  .tbl-wrap { overflow-x: auto; margin: 0 0 18px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+       text-align: left; color: var(--cyan); padding: 9px 12px;
+       background: linear-gradient(180deg, rgba(45,226,230,.14), rgba(45,226,230,.03));
+       border-bottom: 1px solid rgba(45,226,230,.45); white-space: nowrap; }
+  td { padding: 7px 12px; border-bottom: 1px solid rgba(176,38,255,.18); vertical-align: top; }
+  tr:hover td { background: rgba(255,45,149,.05); }
+  td.cc { font-family: var(--mono); color: var(--gold); white-space: nowrap;
+          text-shadow: 0 0 8px rgba(255,211,25,.35); }
+  td.val { font-family: var(--mono); font-size: 13px; color: var(--dim); }
+
+  .callout { border-left: 3px solid var(--pink); padding: 10px 16px; margin: 0 0 16px;
+             background: rgba(255,45,149,.07); border-radius: 0 8px 8px 0; }
+  .callout.cyan { border-color: var(--cyan); background: rgba(45,226,230,.07); }
+
+  footer { text-align: center; color: var(--dim); font-size: 13px; margin-top: 56px; }
+  footer .neon-line { height: 1px; margin-bottom: 24px;
+    background: linear-gradient(90deg, transparent, var(--pink), var(--cyan), transparent);
+    box-shadow: 0 0 12px rgba(255,45,149,.7); }
+
+  @media (max-width: 640px) {
+    .logo { font-size: 38px; }
+    section { padding: 20px 16px; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+<header class="hero">
+  <h1 class="logo">FM-106</h1>
+  <p class="tagline">Firmware Manual &mdash; Sequencer &middot; MIDI &middot; DAW</p>
+  <div class="sun"></div>
+  <div class="grid-floor"></div>
+  <p>Everything the FM-106 firmware adds over the stock KR-106: the step sequencer
+     with its piano-roll display, parameter locks, the TAPE effect, and the complete
+     MIDI implementation &mdash; every parameter has its own CC, full transport, and
+     DAW integration over USB.</p>
+</header>
+
+<nav class="toc">
+  <a href="#new">What's new</a>
+  <a href="#panel">Panel</a>
+  <a href="#seq">Sequencer</a>
+  <a href="#tape">TAPE</a>
+  <a href="#midi">MIDI</a>
+  <a href="#daw">DAW</a>
+  <a href="#recipes">Recipes</a>
+  <a href="index.html">Installer ↗</a>
+</nav>
+
+<section id="new">
+  <h2><span class="n">01</span>What's new at a glance</h2>
+  <div class="tbl-wrap"><table>
+    <tr><th>Area</th><th>Stock KR-106</th><th>This firmware</th></tr>
+    <tr><td>Sequencer</td><td class="val">—</td><td>Single-track step sequencer, up to 1024 steps, piano-roll display, chords, ties, slides, accents, ratchets, swing</td></tr>
+    <tr><td>Parameter locks</td><td class="val">—</td><td>Elektron-style: lock any sound parameter to any step while playing</td></tr>
+    <tr><td>Effects</td><td class="val">Chorus</td><td>Chorus (unchanged) <strong>+ TAPE</strong> (saturation / wow–flutter, after chorus)</td></tr>
+    <tr><td>MIDI</td><td class="val">Notes</td><td>Notes <strong>+ full CC control of every parameter, MIDI clock master/slave, MIDI transport, sequencer note-recording over MIDI</strong></td></tr>
+    <tr><td>Audio out</td><td class="val">Analog</td><td>Analog <strong>+ USB stereo audio straight into your DAW</strong></td></tr>
+  </table></div>
+  <p>Panel pages (10):
+    <span class="kbd">VCF</span> <span class="kbd">VCF2</span> <span class="kbd">DCO</span>
+    <span class="kbd">DCO2</span> <span class="kbd">ENVELOPE</span> <span class="kbd">LFO</span>
+    <span class="kbd">ARP</span> <span class="kbd">FX</span> <span class="kbd">TAPE</span>
+    <span class="kbd">SEQ</span></p>
+</section>
+
+<section id="panel">
+  <h2><span class="n">02</span>Panel reference (new controls)</h2>
+
+  <h3>Buttons</h3>
+  <div class="tbl-wrap"><table>
+    <tr><th>Button</th><th>Function</th></tr>
+    <tr><td><span class="kbd">OCT−</span> / <span class="kbd">OCT+</span></td><td>Keyboard octave shift (±2)</td></tr>
+    <tr><td><span class="kbd">FX</span></td><td>Jump to chorus page; press again to flip to TAPE page</td></tr>
+    <tr><td><span class="kbd">SEL</span></td><td><strong>SEQ:</strong> short = delete note at cursor · hold 0.5 s = wipe the whole pattern (incl. p-locks)</td></tr>
+    <tr><td><span class="kbd">ENV</span> / <span class="kbd">LFO</span> / <span class="kbd">ARP</span></td><td>Page jumps</td></tr>
+    <tr><td><span class="kbd">EDIT</span></td><td><strong>SEQ:</strong> tap = note menu (RATCHET/TIE/ACCENT/SLIDE) · hold 0.5 s = SEQ menu (STEPS/BPM/DIV/GATE/SWING/REC)</td></tr>
+    <tr><td><span class="kbd">GLO</span></td><td>Global menu (MIDI setup)</td></tr>
+    <tr><td><span class="kbd">HOME</span></td><td>Back / VCF page (closes SEQ menus first)</td></tr>
+    <tr><td><span class="kbd">SAVE</span></td><td>Save menu</td></tr>
+    <tr><td><span class="kbd">SEQ</span></td><td>Jump to the sequencer page</td></tr>
+    <tr><td><span class="kbd">PLAY</span></td><td>Sequencer transport: start / stop</td></tr>
+    <tr><td><span class="kbd">REC</span></td><td>Arm live recording <strong>and parameter locks</strong> (LED lit = armed)</td></tr>
+  </table></div>
+
+  <h3>Knobs</h3>
+  <p>Knobs 1–4 edit the four faders of the current page. On <strong>SEQ</strong> they are:</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Knob</th><th>SEQ function</th></tr>
+    <tr><td class="cc">K1</td><td>Step cursor ◀ ▶ (wraps; view follows)</td></tr>
+    <tr><td class="cc">K2</td><td>Pitch row ▲▼ (moves on the scale; view follows)</td></tr>
+    <tr><td class="cc">K3</td><td>Gate length of the selected step</td></tr>
+    <tr><td class="cc">K4</td><td>Velocity — <strong>and "fill": on an empty cell this creates a note</strong></td></tr>
+  </table></div>
+</section>
+
+<section id="seq">
+  <h2><span class="n">03</span>The sequencer (SEQ page)</h2>
+
+  <h3>3.1 The piano roll</h3>
+  <p>The SEQ page is a full piano roll: <strong>X = time</strong> (16 visible steps, 13 px each),
+     <strong>Y = pitch</strong> (14 visible rows).</p>
+  <ul>
+    <li><strong>Red column frame</strong> — the K1 step cursor.</li>
+    <li><strong>White outlined square</strong> — the K1 × K2 edit cell: <em>this</em> is where edits land.</li>
+    <li><strong>Cyan lines</strong> — the playhead (runs while playing).</li>
+    <li>Filled bars — notes; taller/connected bars = ties; the view auto-scrolls to follow the cursor and the playhead.</li>
+  </ul>
+
+  <h3>3.2 Entering notes — three ways</h3>
+  <ol>
+    <li><strong>Acid-style keybed entry</strong> (stopped, REC off): press keys on the keyboard.
+        Each key drops its pitch into the cursor step and advances the cursor.</li>
+    <li><strong>Fill with K4</strong>: move the white square onto an empty cell (K1/K2), turn K4 —
+        a note appears at that exact pitch and gets its velocity (up/down from 64).
+        Turning it back down to 0 removes the note again.</li>
+    <li><strong>Live record</strong> (REC armed): play the keyboard (or a MIDI controller) —
+        every held note is written into the <strong>currently playing step</strong> (or the cursor
+        step while stopped). Play the pattern, jam over it, ideas land in the grid.</li>
+  </ol>
+  <p>Notes hold up to <strong>4 pitches per step</strong> (chords).</p>
+
+  <h3>3.3 Editing steps</h3>
+  <ul>
+    <li><strong>K3</strong> — gate length of the selected note (per-step override).</li>
+    <li><strong>K4</strong> — velocity of the selected note (velocity 0 = note removed).</li>
+    <li><strong>EDIT (tap)</strong> — note menu on the bottom of the screen:
+      <ul>
+        <li><span class="kbd">RATCHET</span> — repeat the note 2–8× inside its step</li>
+        <li><span class="kbd">TIE</span> — glue the step to the next (no retrigger)</li>
+        <li><span class="kbd">ACCENT</span> — accent flag (velocity 127)</li>
+        <li><span class="kbd">SLIDE</span> — portamento into the following step (acid glide)</li>
+      </ul></li>
+    <li><strong>SEL (tap)</strong> — delete the note at the cursor cell (or the whole step if empty).</li>
+    <li><strong>SEQ menu (EDIT hold)</strong> — pattern settings:
+      <ul>
+        <li><span class="kbd">STEPS</span> — pattern length</li>
+        <li><span class="kbd">BPM</span> — tempo (40–240)</li>
+        <li><span class="kbd">DIV</span> — step rate: 1/4 · 1/8 · 1/16 · 1/32 · 1/4T · 1/8T · 1/2 · 1/1 · 2/1 · 4/1</li>
+        <li><span class="kbd">GATE</span> — default gate length</li>
+        <li><span class="kbd">SWING</span> — 0–100 (even steps longer, odd shorter)</li>
+        <li><span class="kbd">REC</span> — record arm (same as REC button)</li>
+      </ul></li>
+    <li><strong>SEL (hold 0.5 s)</strong> — wipe everything: steps, flags <strong>and p-locks</strong>.</li>
+  </ul>
+
+  <h3>3.4 Parameter locks (REC)</h3>
+  <p>Arm <strong>REC</strong> while the pattern plays and turn any knob on any page — the value is
+     <strong>locked into the currently playing step</strong>. On each lap every step replays its
+     own locked values before the note fires. This covers <strong>all sound parameters</strong>:
+     cutoff, resonance, envelope, LFO, DCO flags, chorus, tape, everything.</p>
+  <ul>
+    <li>One lock per parameter per step (re-turning overwrites).</li>
+    <li>Up to 256 locks per pattern; oldest slots rotate out when full.</li>
+    <li>Arming mid-play is clean: only what you touch <em>after</em> arming is locked.</li>
+    <li><span class="kbd">SEL</span> hold wipes locks with the pattern.</li>
+  </ul>
+</section>
+
+<section id="tape">
+  <h2><span class="n">04</span>TAPE effect</h2>
+  <p><span class="kbd">FX</span> button twice → <strong>TAPE</strong> page (after the chorus in the signal path).</p>
+  <div class="tbl-wrap"><table>
+    <tr><th>Knob</th><th>Parameter</th></tr>
+    <tr><td class="cc">K1</td><td>Type on/off</td></tr>
+    <tr><td class="cc">K2</td><td>Mix</td></tr>
+    <tr><td class="cc">K3</td><td>Rate (wow/flutter)</td></tr>
+    <tr><td class="cc">K4</td><td>Character (saturation)</td></tr>
+  </table></div>
+</section>
+
+<section id="midi">
+  <h2><span class="n">05</span>MIDI reference</h2>
+  <p>Connection: <strong>USB</strong> (composite: MIDI + stereo audio) or <strong>DIN MIDI IN</strong>.
+     The synth <strong>receives on all channels</strong> and transmits on the channel set in the
+     global MIDI menu (default 1).</p>
+
+  <h3>5.1 Notes</h3>
+  <ul>
+    <li>Note-on/off in → voices (and the arp when enabled).</li>
+    <li>Note-on while <strong>REC is armed</strong> → recorded into the playing (or cursor) step,
+        exactly like the panel keybed.</li>
+    <li>Panel keybed and sequencer notes are sent out as note-on/off.</li>
+  </ul>
+
+  <h3>5.2 Complete CC map (input)</h3>
+  <p>Every parameter has its own CC. Incoming CCs also record p-locks when REC is armed + playing.</p>
+
+  <p><strong>Sound</strong></p>
+  <div class="tbl-wrap"><table>
+    <tr><th>CC</th><th>Parameter</th><th>Value</th></tr>
+    <tr><td class="cc">1</td><td>DCO LFO depth (mod wheel)</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">7 / 11</td><td>VCA level</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">9</td><td>DCO sub level (&gt;0 = sub on)</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">12</td><td>HPF mode</td><td class="val">0–31 off · 32–63 · 64–95 · 96–127</td></tr>
+    <tr><td class="cc">13</td><td>Noise level</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">64</td><td>Sustain pedal</td><td class="val">&lt;64 up, ≥64 hold</td></tr>
+    <tr><td class="cc">70</td><td>Env sustain</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">71</td><td>VCF resonance</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">72</td><td>Env release</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">73</td><td>Env attack</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">74</td><td>VCF cutoff</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">75</td><td>Env decay</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">76</td><td>VCF env modulation</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">77</td><td>VCF LFO modulation</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">78</td><td>VCF key tracking</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">79</td><td>DCO PWM depth</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">80</td><td>LFO rate</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">81</td><td>LFO delay</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">82</td><td>Arp rate</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">83</td><td>FX (tape) type</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">84</td><td>FX mix</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">85</td><td>FX rate</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">86</td><td>FX character</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">87</td><td>Bender → DCO depth</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">88</td><td>Bender → VCF depth</td><td class="val">0–127</td></tr>
+    <tr><td class="cc">89</td><td>Arp mode</td><td class="val">0–2 (wraps)</td></tr>
+    <tr><td class="cc">90</td><td>Arp range</td><td class="val">1–3 octaves</td></tr>
+    <tr><td class="cc">91</td><td>DCO pulse wave</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">92</td><td>DCO saw wave</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">93</td><td>Chorus mode</td><td class="val">&lt;32 off · &lt;64 I · &lt;96 II · else I+II</td></tr>
+    <tr><td class="cc">94</td><td>DCO sub</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">95</td><td>DCO range</td><td class="val">0 / 42 / 84</td></tr>
+    <tr><td class="cc">96</td><td>DCO PWM mode</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">97</td><td>VCF env polarity</td><td class="val">&lt;64 unipolar, ≥64 bipolar</td></tr>
+    <tr><td class="cc">98</td><td>VCA mode</td><td class="val">&lt;64 env, ≥64 gate</td></tr>
+  </table></div>
+
+  <p><strong>Sequencer</strong></p>
+  <div class="tbl-wrap"><table>
+    <tr><th>CC</th><th>Parameter</th><th>Value</th></tr>
+    <tr><td class="cc">99</td><td>Step accent (edit step)</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">100</td><td>Step slide (edit step)</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">101</td><td>Step ratchet (edit step)</td><td class="val">0/1 off, 2–8 hits</td></tr>
+    <tr><td class="cc">102</td><td>Tempo</td><td class="val">v×2+40 → 40–240 BPM</td></tr>
+    <tr><td class="cc">103</td><td>Step division</td><td class="val">0–9 (same order as the DIV menu; &gt;9 → 1/16)</td></tr>
+    <tr><td class="cc">104</td><td>Pattern length</td><td class="val">v+1 steps (1–128)</td></tr>
+    <tr><td class="cc">105</td><td>Gate length</td><td class="val">1–127</td></tr>
+    <tr><td class="cc">106</td><td>Swing</td><td class="val">0–100</td></tr>
+    <tr><td class="cc">107</td><td><strong>Transport</strong></td><td class="val">0 stop · 1 start · 2 continue · ≥3 toggle</td></tr>
+    <tr><td class="cc">108</td><td>Record arm (notes + p-locks)</td><td class="val">&lt;64 off, ≥64 on</td></tr>
+    <tr><td class="cc">109</td><td>Clear all p-locks</td><td class="val">≥64 clears</td></tr>
+    <tr><td class="cc">110</td><td>Edit cursor — step</td><td class="val">0–127 (wraps to pattern length)</td></tr>
+    <tr><td class="cc">111</td><td>Edit cursor — pitch row</td><td class="val">1–127</td></tr>
+    <tr><td class="cc">112</td><td>Clear the step at the cursor</td><td class="val">≥64 clears</td></tr>
+    <tr><td class="cc">113</td><td>Sync mode</td><td class="val">0 off · 1 master · 2 slave</td></tr>
+  </table></div>
+  <div class="callout cyan"><p style="margin:0">The "edit step" for CC 99–101/112 is the <strong>playing</strong> step while REC is armed
+     and running, otherwise the cursor step (CC 110). Note entry over MIDI: set the
+     cursor with CC 110, arm CC 108, then send note-ons — they land step by step.</p></div>
+
+  <p><strong>Patch / system</strong></p>
+  <div class="tbl-wrap"><table>
+    <tr><th>CC</th><th>Function</th></tr>
+    <tr><td class="cc">0 / 32</td><td>Bank select (0–3 → 4 × 64 patches); loads first patch of the bank</td></tr>
+    <tr><td class="cc">119</td><td>Telemetry inquiry: replies with CC 114–127 (CPU load, USB audio stats)</td></tr>
+  </table></div>
+  <p><strong>Program change</strong> — <span class="kbd">0-63</span> loads that slot in the current bank.</p>
+
+  <h3>5.3 CC output</h3>
+  <p>The synth transmits its state so motorized controllers and DAWs stay in sync:</p>
+  <ul>
+    <li><strong>Every sound parameter</strong> is sent (CC above) whenever it changes — knob,
+        menu, or incoming CC edits all report back.</li>
+    <li><strong>CC 102–106</strong> (tempo/div/length/gate/swing) on change.</li>
+    <li><strong>CC 107</strong> on transport changes (0 stopped, 1 running).</li>
+    <li>Notes on/off from the keybed and sequencer.</li>
+    <li>Bank (CC 0) + program change when patches change from the panel.</li>
+  </ul>
+
+  <h3>5.4 Clock &amp; transport</h3>
+  <p>Global menu (<span class="kbd">GLO</span> → MIDI setup) — <strong>SYNC</strong>:
+     <span class="kbd">OFF</span> <span class="kbd">MASTER</span> <span class="kbd">SLAVE</span>.</p>
+  <ul>
+    <li><strong>SLAVE</strong> — the sequencer follows incoming MIDI clock (F8) with
+        sample-accurate timing; Start (FA) starts from step 1, Continue (FB) resumes
+        in place, Stop (FC) stops. Tempo display follows the external clock.</li>
+    <li><strong>MASTER</strong> — pressing PLAY sends FA + a full F8 clock stream (24/quarter)
+        while running, FC on stop. A DAW or groovebox can slave to the FM-106.</li>
+    <li><strong>OFF</strong> — internal clock only (transport still works via CC 107).</li>
+  </ul>
+</section>
+
+<section id="daw">
+  <h2><span class="n">06</span>Connecting to a computer / DAW</h2>
+
+  <h3>6.1 What the computer sees</h3>
+  <p>Plug the FM-106 in over <strong>USB</strong>. It enumerates as two devices at once:</p>
+  <ul>
+    <li><strong>MIDI port</strong> — full duplex: everything in §5 works both ways.</li>
+    <li><strong>Audio interface</strong> — the synth's stereo output at 44.1 kHz arrives as a
+        USB audio stream, no separate line-out needed.</li>
+  </ul>
+  <div class="callout"><p style="margin:0">DIN MIDI is <strong>input only</strong> — use USB for MIDI out, clock master, or recording.</p></div>
+
+  <h3>6.2 DAW setup (recording the synth)</h3>
+  <ol>
+    <li>Set the DAW's input device to <strong>FM-106</strong> (audio).</li>
+    <li>Create a <strong>stereo audio track</strong>, input = FM-106 L/R, input monitor on.
+        You hear the synth through the DAW and can arm-record it like any interface
+        source — patterns, p-lock automation sweeps and all.</li>
+    <li>MIDI channel: set the FM-106 transmit channel in the global menu to match
+        the DAW track (default 1). Keybed plays and CC changes are recorded as MIDI
+        if you want to edit the performance later.</li>
+  </ol>
+
+  <h3>6.3 DAW setup (controlling the synth)</h3>
+  <ol>
+    <li>Create a <strong>MIDI track</strong> routed <em>to</em> the FM-106 port, any channel
+        (the synth receives on all channels).</li>
+    <li>Draw the CCs from §5.2 — cutoff (74), resonance (71), tempo (102),
+        transport (107)… The DAW automation writes straight into the sound, and if
+        REC is armed it lands as <strong>p-locks on the playing step</strong>, live.</li>
+    <li>To sequence from the DAW instead of the panel: CC 110 moves the edit
+        cursor, CC 108 arms recording, note-ons fill the steps; CC 99–101 set
+        accent/slide/ratchet per step.</li>
+  </ol>
+
+  <h3>6.4 Sync recipes</h3>
+  <ul>
+    <li><strong>DAW as master</strong> (most common): global menu → SYNC = <strong>SLAVE</strong>. Hit play in
+        the DAW — the FM-106 sequencer locks to it (clock, start, stop, continue).
+        Set the DAW's MIDI clock output on; the tempo display follows the DAW.</li>
+    <li><strong>FM-106 as master</strong>: SYNC = <strong>MASTER</strong>. Press PLAY on the FM-106 — it
+        transmits FA/F8/FC; set the DAW to <em>sync from external MIDI clock</em> and its
+        transport follows.</li>
+    <li><strong>Standalone with a controller</strong>: no computer needed — a MIDI keyboard
+        plays and records (REC armed), a MIDI knob box edits any parameter via CC,
+        and a hardware clock can slave the sequencer the same way.</li>
+  </ul>
+
+  <h3>6.5 Tips</h3>
+  <ul>
+    <li>Keep SYNC = OFF when you don't want the DAW to touch the transport.</li>
+    <li>CC 119 dump (CPU/USB stats) is a health check — if audio glitches, watch
+        CPU load CC 119/120 replies.</li>
+    <li>Pattern data lives in RAM: <strong>save</strong> the patch (SAVE button) after dialing in
+        a sequence you care about — p-locks and steps store with the patch.</li>
+  </ul>
+</section>
+
+<section id="recipes">
+  <h2><span class="n">07</span>Quick recipes</h2>
+  <ul>
+    <li><strong>Acid bassline</strong>: DIV = 1/32 · type notes with the keybed · EDIT-hold →
+        SLIDE on the offbeats · REC + sweep cutoff for p-locks.</li>
+    <li><strong>Percussive roll</strong>: select a step, EDIT-tap → RATCHET 4 · ACCENT on the 1.</li>
+    <li><strong>DAW-locked live set</strong>: SYNC = SLAVE, REC armed, automate CC 74/71 from the
+        DAW — every bar gets its own filter state.</li>
+  </ul>
+</section>
+
+<footer>
+  <div class="neon-line"></div>
+  <p>FM-106 Polyphonic Synthesizer Firmware &mdash; 6-Voice Dual-Core DSP, GPL-3.0.<br>
+     Built upon the Felucca / SLOOP platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89.<br>
+     M-VAVE and FM-1 are trademarks of their respective owners.<br>
+     <a href="index.html">Installer</a> · <a href="Librarian.html">Web Librarian</a> ·
+     <a href="https://github.com/PatttF/fm-106" target="_blank" rel="noopener">github.com/PatttF/fm-106</a></p>
+</footer>
+
+</main>
+</body>
+</html>
