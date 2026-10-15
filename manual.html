@@ -205,7 +205,12 @@
         Turning it back down to 0 removes the note again.</li>
     <li><strong>Live record</strong> (REC armed): play the keyboard (or a MIDI controller) —
         every held note is written into the <strong>currently playing step</strong> (or the cursor
-        step while stopped). Play the pattern, jam over it, ideas land in the grid.</li>
+        step while stopped). Play the pattern, jam over it, ideas land in the grid.
+        How long you hold each key becomes the note's <strong>gate length</strong>; holds longer
+        than one step extend into the following empty steps as <strong>ties</strong> (sustain, no
+        retrigger — the chain stops before any step that already has notes), and the
+        full current sound (all params) is stamped onto the step, so
+        playback matches what you played.</li>
   </ol>
   <p>Notes hold up to <strong>4 pitches per step</strong> (chords).</p>
 
@@ -261,8 +266,11 @@
 <section id="midi">
   <h2><span class="n">05</span>MIDI reference</h2>
   <p>Connection: <strong>USB</strong> (composite: MIDI + stereo audio) or <strong>DIN MIDI IN</strong>.
-     The synth <strong>receives on all channels</strong> and transmits on the channel set in the
-     global MIDI menu (default 1).</p>
+     Receive channel and transmit channel are set independently in the global MIDI
+     menu: <strong>MIDI IN</strong> = <code>All</code> (omni, default) or 1–16; <strong>MIDI OUT</strong> = 1–16 (default 1).
+     Same menu also has <strong>SYNC</strong> (off / master / slave), <strong>LOCAL</strong> (panel keys play
+     the engine — turn off to use the keybed purely as a MIDI controller), and
+     <strong>PC IN</strong> (accept program-change, default on).</p>
 
   <h3>5.1 Notes</h3>
   <ul>
@@ -396,7 +404,7 @@
   <h3>6.3 DAW setup (controlling the synth)</h3>
   <ol>
     <li>Create a <strong>MIDI track</strong> routed <em>to</em> the FM-106 port, any channel
-        (the synth receives on all channels).</li>
+        (the default IN setting is <code>All</code> = omni).</li>
     <li>Draw the CCs from §5.2 — cutoff (74), resonance (71), tempo (102),
         transport (107)… The DAW automation writes straight into the sound, and if
         REC is armed it lands as <strong>p-locks on the playing step</strong>, live.</li>

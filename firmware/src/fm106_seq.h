@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#define FM106_NSTEP   64u
+#define FM106_NSTEP   1024u
 #define FM106_ST_NOTE 0u
 #define FM106_ST_TIE  1u
 #define FM106_ST_REST 2u
@@ -28,6 +28,19 @@
 #define FM106_SF_SLIDE  2u
 #define FM106_MIDI_BEAT_UNITS 24576u /* 24ppqn * 1024 */
 #define FM106_SWING_MAX 100
+
+/* ---- Elektron-style parameter locks (B2) ----
+ * One lock = (step, param, value). Param indices are the preset p[0..39]
+ * sound space (see fm106_param_get/set in fm106_engine.h). Sparse table:
+ * 256 slots covers any realistic pattern; a full table drops silently. */
+#define FM106_PLOCK_SLOTS 1024u
+#define FM106_NPARAM      40u
+
+typedef struct {
+    uint16_t step;             /* locked step index (0..slen-1) */
+    uint8_t  param;            /* FM106 param index (preset p[] space) */
+    uint8_t  value;            /* locked value */
+} fm106_plock_t;
 
 typedef struct {
     uint8_t note[4];       /* MIDI notes held by this step */
@@ -37,17 +50,32 @@ typedef struct {
     uint8_t vel;           /* base velocity (0 -> default 96) */
     uint8_t acc;           /* gate length 1..255 (0 -> use sgate) */
     uint8_t probability;   /* 0 = 100%, 1..100 = percent, 101 = silent */
+    uint8_t ratchet;       /* 0/1 = off, 2..8 = repeats within the step */
 } fm106_step_t;
+
+/* seq → main-loop MIDI-out event (audio worker produces, main loop drains).
+ * midi_send is main-loop-only, but seq notes fire in the audio worker, so
+ * they cross via this lock-free single-producer/single-consumer queue. */
+typedef struct { uint8_t on; uint8_t note; uint8_t vel; } fm106_seq_msg_t;
+#define FM106_SEQ_Q 32u            /* power of two; drop-on-full, never block */
 
 typedef struct {
     /* --- user params (panel-editable) --- */
     uint8_t  playing;      /* 1 = running */
     uint8_t  bpm;          /* 40..240 internal tempo */
     uint8_t  sdiv;         /* step divisor (fm106_seq_div_samples) */
-    uint8_t  slen;         /* pattern length 1..64 steps */
+    uint16_t slen;         /* pattern length 1..1024 steps */
     uint8_t  sgate;        /* default gate /128 when step.acc == 0 */
     uint8_t  swing;        /* 0..100 global swing */
     fm106_step_t step[FM106_NSTEP];
+
+    /* --- parameter locks (pattern data) --- */
+    fm106_plock_t plock[FM106_PLOCK_SLOTS];
+    uint16_t nplock;             /* locks in use */
+    uint8_t  plock_cache[FM106_NPARAM]; /* last-seen snapshot; keeps the
+                                         * record diff and the ISR apply in
+                                         * sync (so applied locks aren't
+                                         * re-recorded as new changes) */
 
     /* --- runtime (engine-owned) --- */
     uint32_t seq_pos;      /* fractional position in current step (samples or MIDI units) */
@@ -56,16 +84,48 @@ typedef struct {
     uint8_t  seq_hold;     /* 1 = slide keeps notes sounding past gate */
     uint8_t  seq_n;        /* sounding sequencer notes */
     uint8_t  seq_notes[4]; /* sounding note list (clean release) */
+    uint8_t  seq_rch;      /* ratchet: remaining hits after the first */
+    uint8_t  seq_rch_n;    /* ratchet: total hits (0 = plain step) */
+    uint8_t  seq_rch_vel;  /* ratchet: refire velocity */
+    uint32_t seq_rch_period; /* ratchet: samples per hit */
     int32_t  rng;          /* xorshift32 for probability */
+
+    /* --- seq → main-loop MIDI-out queue (single-producer audio worker,
+     * single-consumer main loop; full drops the event, never blocks) --- */
+    fm106_seq_msg_t msgq[FM106_SEQ_Q];
+    volatile uint8_t msg_head;   /* written by producer only */
+    volatile uint8_t msg_tail;   /* written by consumer only */
 
     /* --- MIDI clock slave --- */
     uint8_t  midi_sync_active;
     uint32_t midi_beat_samples; /* external samples-per-beat (0 = none) */
     uint32_t mc_pos, mc_rendered, mc_last_time, mc_interval_time, mc_tempo_time;
     uint8_t  mc_have_pulse, mc_tempo_valid, mc_tempo_n;
+    uint8_t  mc_seen, mc_seen_last; /* pulse counter: engine resets interp on new pulse */
+    uint32_t mc_elapsed_ms, mc_elapsed_frac; /* engine-side ms since last pulse */
 } fm106_seq_t;
 
 static const uint8_t fm106_seq_div_den[6] = {1, 2, 4, 8, 3, 6}; /* Melodee DIV_DEN */
+
+/* SPSC queue: producer = audio worker (fm106_seq_advance), consumer = main
+ * loop (drain → midi_send). Head advanced only AFTER the entry is written so
+ * the consumer never reads a half-filled slot. */
+static inline void fm106_seq_msg_push(fm106_seq_t *s, uint8_t on, uint8_t note, uint8_t vel)
+{
+    uint8_t next = (uint8_t)((s->msg_head + 1u) & (FM106_SEQ_Q - 1u));
+    if (next == s->msg_tail) return;   /* full: drop, never block the audio path */
+    s->msgq[s->msg_head].on   = on;
+    s->msgq[s->msg_head].note = note;
+    s->msgq[s->msg_head].vel  = vel;
+    s->msg_head = next;
+}
+static inline int fm106_seq_msg_pop(fm106_seq_t *s, fm106_seq_msg_t *m)
+{
+    if (s->msg_tail == s->msg_head) return 0;
+    *m = s->msgq[s->msg_tail];
+    s->msg_tail = (uint8_t)((s->msg_tail + 1u) & (FM106_SEQ_Q - 1u));
+    return 1;
+}
 
 static inline uint32_t fm106_seq_rand(fm106_seq_t *s)
 {
@@ -132,7 +192,44 @@ static inline void fm106_seq_start(fm106_seq_t *s)
     s->seq_idx = (uint16_t)(s->slen ? s->slen - 1u : 0u);
     s->seq_pos = 0x7FFFFFFFu; /* sentinel: step 0 fires on first block */
     s->seq_n = 0; s->seq_hold = 0; s->seq_off = 0;
+    s->msg_tail = s->msg_head; /* drop stale queued MIDI-out events */
     s->playing = 1;
+}
+
+/* ---- parameter locks (Elektron-style) ----
+ * Upsert: one lock per (step,param); a full table drops silently.
+ * Safe from the main loop without irq_off: only the main loop appends
+ * (single writer), and the audio ISR only reads entries below nplock. */
+static void fm106_plock_set(fm106_seq_t *s, uint16_t step, uint8_t param, uint8_t value)
+{
+    if (param >= FM106_NPARAM) return;
+    for (uint32_t i = 0; i < s->nplock; i++) {
+        if (s->plock[i].step == step && s->plock[i].param == param) {
+            s->plock[i].value = value;
+            return;
+        }
+    }
+    if (s->nplock < FM106_PLOCK_SLOTS) {
+        s->plock[s->nplock].step  = step;
+        s->plock[s->nplock].param = param;
+        s->plock[s->nplock].value = value;
+        s->nplock++;
+    }
+}
+
+static inline void fm106_plock_clear(fm106_seq_t *s) { s->nplock = 0; }
+
+/* drop every lock belonging to one step (compacts the table) */
+static inline void fm106_plock_clear_step(fm106_seq_t *s, uint16_t step)
+{
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < s->nplock; i++) {
+        if (s->plock[i].step != step) {
+            s->plock[w] = s->plock[i];
+            w++;
+        }
+    }
+    s->nplock = (uint16_t)w;
 }
 
 /* ---- MIDI clock slave (Melodee midi_clock.c) ---- */
@@ -173,7 +270,7 @@ static void fm106_midi_clock_pulse(fm106_seq_t *s, uint32_t time)
         uint32_t dt = time - s->mc_tempo_time;
         s->mc_tempo_time = time; s->mc_tempo_n = 0;
         if (dt >= 62u && dt <= 375u) {                     /* 6 pulses -> beat */
-            s->midi_beat_samples = (uint32_t)((uint64_t)44100u * dt / 250u);
+            s->midi_beat_samples = (uint32_t)((uint64_t)44100u * dt / 1000u); /* dt in ms */
             uint32_t bpm = (15000u + dt / 2u) / dt;
             s->bpm = (uint8_t)(bpm < 40u ? 40u : bpm > 240u ? 240u : bpm);
         }
@@ -188,14 +285,15 @@ static void fm106_midi_clock_pulse(fm106_seq_t *s, uint32_t time)
     }
     if (!s->mc_interval_time) s->mc_interval_time = 60000u / (s->bpm * 24u);
     s->mc_last_time = time;
+    s->mc_seen++;   /* engine resets its interp on a fresh pulse */
 }
 
-/* Interpolate between pulses for sample-accurate advance; returns units to advance. */
-static uint32_t fm106_midi_clock_advance(fm106_seq_t *s, uint32_t now)
+/* Interpolate between pulses for sample-accurate advance; elapsed = ms since
+ * the last pulse (the engine accumulates it from audio blocks). Returns the
+ * number of beat-units to advance. */
+static uint32_t fm106_midi_clock_advance(fm106_seq_t *s, uint32_t elapsed)
 {
     if (!s->mc_have_pulse) return 0;
-    uint32_t elapsed = now - s->mc_last_time;
-    if ((int32_t)elapsed < 0) elapsed = 0;
     if (elapsed > s->mc_interval_time) elapsed = s->mc_interval_time;
     uint32_t unit = FM106_MIDI_BEAT_UNITS / 24u;
     uint32_t offset = s->mc_interval_time ? elapsed * unit / s->mc_interval_time : 0;

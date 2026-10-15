@@ -122,6 +122,7 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
             e->voice[i].dco.sub_level = 0; e->voice[i].dco.noise_level = 0;
             if (e->voice[i].note != 255u) e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
         }
+        fm106_param_snapshot(e);
         fm1_irq_on();
         return;
     }
@@ -179,15 +180,16 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
 
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
-        e->voice[i].dco.saw_on      = e->dco_saw_on;
-        e->voice[i].dco.pulse_on    = e->dco_pulse_on;
-        e->voice[i].dco.sub_on      = e->dco_sub_on;
-        e->voice[i].dco.sub_level   = e->dco_sub_level;
+        e->voice[i].dco.saw_on = e->dco_saw_on;
+        e->voice[i].dco.pulse_on = e->dco_pulse_on;
+        e->voice[i].dco.sub_on = e->dco_sub_on;
+        e->voice[i].dco.sub_level = e->dco_sub_level;
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
             e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
         }
     }
+    fm106_param_snapshot(e); /* p-lock cache follows the loaded sound */
     fm1_irq_on();
 }
 
@@ -241,6 +243,14 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[37] = (uint8_t)e->fx[0].mix;
     p->p[38] = (uint8_t)e->fx[0].rate;
     p->p[39] = (uint8_t)e->fx[0].character;
+
+    /* SEQ track params (bpm/sdiv/slen/sgate/swing) */
+    p->p[40] = (uint8_t)e->seq.bpm;
+    p->p[41] = (uint8_t)e->seq.sdiv;
+    p->p[42] = (uint8_t)(e->seq.slen & 0xFFu);
+    p->p[65] = (uint8_t)(e->seq.slen >> 8);
+    p->p[43] = (uint8_t)e->seq.sgate;
+    p->p[44] = (uint8_t)e->seq.swing;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */

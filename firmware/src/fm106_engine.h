@@ -52,7 +52,10 @@ typedef struct {
     uint8_t dco_range;          /* 0 = 16', 1 = 8', 2 = 4' */
 
     /* MIDI */
-    uint8_t midi_channel;       /* 1..16 */
+    uint8_t midi_channel;       /* 0 = All (omni), 1..16 */
+    uint8_t midi_out_ch;        /* 1..16: channel for CC/PC/notes we send */
+    uint8_t midi_local;         /* 1 = panel keys play the engine, 0 = keys only send MIDI */
+    uint8_t pc_in;              /* 1 = accept program change, 0 = ignore */
     uint8_t sync_mode;          /* 0 = off, 1 = master, 2 = slave */
 
     /* HPF */
@@ -199,6 +202,17 @@ static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
     e->vcf_env_polarity = p->p[34];
     e->vca_mode         = p->p[35];
 
+    /* SEQ track params */
+    e->seq.bpm    = p->p[40] < 40 ? 120 : (p->p[40] > 240 ? 240 : p->p[40]);
+    e->seq.sdiv   = p->p[41] > 9 ? 3 : p->p[41];
+    e->seq.slen   = (uint16_t)(p->p[42] | ((uint16_t)p->p[65] << 8));
+    if (e->seq.slen < 1u) e->seq.slen = 16u;
+    if (e->seq.slen > FM106_NSTEP) e->seq.slen = FM106_NSTEP;
+    /* old presets predate SEQ (p[43]=0): default to a full-step gate,
+     * not a 39% stub that chirps on slow-attack patches */
+    e->seq.sgate  = p->p[43] < 1 ? 128 : (p->p[43] > 127 ? 127 : p->p[43]);
+    e->seq.swing  = p->p[44] > 100 ? 0 : p->p[44];
+
     /* Update voice parameters */
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
@@ -267,6 +281,11 @@ static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
     if (vel == 0) {
         return;
     }
+
+    /* LFO delay re-arms per key: restart the delay ramp on every note-on
+     * (previously the timer froze at its last value, so the delay never
+     * waited again after the first note). */
+    e->lfo_delay_timer = 0;
 
     /* 1. If note already sounding on a voice, retrigger it */
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
@@ -526,6 +545,137 @@ static void fm106_arp_step(fm106_engine_t *e, uint32_t n)
     }
 }
 
+/* ---- Elektron-style parameter locks ----
+ * Param index space = preset p[0..39] (sound params only; 20-22/26/32 are
+ * unused gaps). get feeds the record diff; set is called by the audio ISR
+ * at step boundaries — lock-free field writes only, mirroring the side
+ * effects of fm106_load_preset. */
+static uint8_t fm106_param_get(const fm106_engine_t *e, uint8_t idx)
+{
+    switch (idx) {
+    case 0:  return e->bender_dco;
+    case 1:  return e->bender_vcf;
+    case 2:  return e->arp_rate;
+    case 3:  return e->lfo_rate;
+    case 4:  return e->lfo_delay;
+    case 5:  return e->dco_lfo_depth;
+    case 6:  return e->dco_pwm_depth;
+    case 7:  return e->dco_sub_level;
+    case 8:  return e->dco_noise_level;
+    case 9:  return e->hpf.mode > 3 ? 1 : e->hpf.mode;
+    case 10: return e->vcf_cutoff;
+    case 11: return e->vcf_resonance;
+    case 12: return e->vcf_env_mod;
+    case 13: return e->vcf_lfo_mod;
+    case 14: return e->vcf_kbd_track;
+    case 15: return e->vca_level;
+    case 16: return e->env_a;
+    case 17: return e->env_d;
+    case 18: return e->env_s;
+    case 19: return e->env_r;
+    case 23: return e->dco_pulse_on & 1u;
+    case 24: return e->dco_saw_on & 1u;
+    case 25: return e->dco_sub_on & 1u;
+    case 27: return (e->chorus.mode == FM106_CHORUS_I ||
+                     e->chorus.mode == FM106_CHORUS_I_II) ? 1u : 0u;
+    case 28: return (e->chorus.mode == FM106_CHORUS_II ||
+                     e->chorus.mode == FM106_CHORUS_I_II) ? 1u : 0u;
+    case 29: return e->dco_range > 2 ? 1 : e->dco_range;
+    case 30: return e->arp_mode > 2 ? 0 : e->arp_mode;
+    case 31: return e->arp_range ? e->arp_range : 1u;
+    case 33: return e->dco_pwm_mode & 1u;
+    case 34: return e->vcf_env_polarity & 1u;
+    case 35: return e->vca_mode & 1u;
+    case 36: return e->fx[0].type < FM106_FX_COUNT ? e->fx[0].type : 0u;
+    case 37: return (uint8_t)e->fx[0].mix;
+    case 38: return (uint8_t)e->fx[0].rate;
+    case 39: return (uint8_t)e->fx[0].character;
+    default: return 0;
+    }
+}
+
+static void fm106_param_set(fm106_engine_t *e, uint8_t idx, uint8_t v)
+{
+    uint32_t i;
+    switch (idx) {
+    case 0:  e->bender_dco = v; break;
+    case 1:  e->bender_vcf = v; break;
+    case 2:  e->arp_rate = v; break;
+    case 3:  e->lfo_rate = v; break;
+    case 4:  e->lfo_delay = v; break;
+    case 5:  e->dco_lfo_depth = v; break;
+    case 6:  e->dco_pwm_depth = v; break;
+    case 7:  e->dco_sub_level = v;
+             for (i = 0; i < FM106_NUM_VOICES; i++) e->voice[i].dco.sub_level = v;
+             break;
+    case 8:  e->dco_noise_level = v;
+             for (i = 0; i < FM106_NUM_VOICES; i++) e->voice[i].dco.noise_level = v;
+             break;
+    case 9:  e->hpf.mode = v > 3 ? 1 : v; break;
+    case 10: e->vcf_cutoff = v; break;
+    case 11: e->vcf_resonance = v; break;
+    case 12: e->vcf_env_mod = v; break;
+    case 13: e->vcf_lfo_mod = v; break;
+    case 14: e->vcf_kbd_track = v; break;
+    case 15: e->vca_level = v; break;
+    case 16: e->env_a = v; goto env_sync;
+    case 17: e->env_d = v; goto env_sync;
+    case 18: e->env_s = v; goto env_sync;
+    case 19: e->env_r = v; goto env_sync;
+    env_sync:
+        for (i = 0; i < FM106_NUM_VOICES; i++)
+            fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
+        break;
+    case 23: e->dco_pulse_on = v & 1u;
+             for (i = 0; i < FM106_NUM_VOICES; i++) e->voice[i].dco.pulse_on = v & 1u;
+             break;
+    case 24: e->dco_saw_on = v & 1u;
+             for (i = 0; i < FM106_NUM_VOICES; i++) e->voice[i].dco.saw_on = v & 1u;
+             break;
+    case 25: e->dco_sub_on = v & 1u;
+             for (i = 0; i < FM106_NUM_VOICES; i++) e->voice[i].dco.sub_on = v & 1u;
+             break;
+    case 27: { /* chorus I bit; re-derive mode from both bits */
+        uint8_t ii = (e->chorus.mode == FM106_CHORUS_II ||
+                      e->chorus.mode == FM106_CHORUS_I_II);
+        e->chorus.mode = v ? (ii ? FM106_CHORUS_I_II : FM106_CHORUS_I)
+                           : (ii ? FM106_CHORUS_II : FM106_CHORUS_OFF);
+        break;
+    }
+    case 28: {
+        uint8_t i1 = (e->chorus.mode == FM106_CHORUS_I ||
+                      e->chorus.mode == FM106_CHORUS_I_II);
+        e->chorus.mode = v ? (i1 ? FM106_CHORUS_I_II : FM106_CHORUS_II)
+                           : (i1 ? FM106_CHORUS_I : FM106_CHORUS_OFF);
+        break;
+    }
+    case 29: e->dco_range = v > 2 ? 1 : v;
+             for (i = 0; i < FM106_NUM_VOICES; i++)
+                 if (e->voice[i].note != 255u)
+                     e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+             break;
+    case 30: e->arp_mode = v > 2 ? 0 : v; break;
+    case 31: e->arp_range = v ? v : 1; break;
+    case 33: e->dco_pwm_mode = v & 1u; break;
+    case 34: e->vcf_env_polarity = v & 1u; break;
+    case 35: e->vca_mode = v & 1u; break;
+    case 36: e->fx[0].type = v >= FM106_FX_COUNT ? 0 : v; break; /* render re-inits via want */
+    case 37: e->fx[0].mix = v; break;
+    case 38: e->fx[0].rate = v; break;
+    case 39: e->fx[0].character = v; break;
+    default: break; /* unused indices */
+    }
+}
+
+/* Refresh the lock cache from live params (play start / preset load), so
+ * the record diff starts clean and a preset load is never mistaken for a
+ * knob edit. */
+static void fm106_param_snapshot(fm106_engine_t *e)
+{
+    for (uint8_t i = 0; i < FM106_NPARAM; i++)
+        e->seq.plock_cache[i] = fm106_param_get(e, i);
+}
+
 /* Advance the step sequencer across one audio block of n frames. Lock-free,
  * CPU0-only (mutates voice state via fm106_note_on/off) — mirrors arp_step.
  * Handles gate countdown, step stepping (internal-sample or MIDI-slave units),
@@ -534,21 +684,49 @@ static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
 {
     fm106_seq_t *s = &e->seq;
 
-    /* gate countdown */
+    /* units to advance this block: internal clock = samples; MIDI-slave
+     * interpolates beat-units between F8 pulses (elapsed-ms timebase) */
+    uint32_t nadv = n;
+    if (s->midi_sync_active) {
+        if (s->mc_seen != s->mc_seen_last) {   /* fresh pulse: restart interp */
+            s->mc_seen_last = s->mc_seen;
+            s->mc_elapsed_ms = 0; s->mc_elapsed_frac = 0;
+        }
+        s->mc_elapsed_frac += n * 1000u;
+        s->mc_elapsed_ms = s->mc_elapsed_frac / 44100u;
+        s->mc_elapsed_frac %= 44100u;
+        nadv = fm106_midi_clock_advance(s, s->mc_elapsed_ms);
+    }
+
+    /* gate countdown (with ratchet retriggers inside the step) — counted in
+     * the same units as nadv (samples internal, MIDI beat-units slaved) */
     if (s->seq_n && !s->seq_hold) {
-        if (s->seq_off <= n) {
-            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+        if (s->seq_off <= nadv) {
+            for (uint8_t i = 0; i < s->seq_n; i++) {
+                fm106_note_off(e, s->seq_notes[i]);
+                fm106_seq_msg_push(s, 0, s->seq_notes[i], 0); /* MIDI-out: note off */
+            }
             s->seq_n = 0;
+            if (s->seq_rch) {          /* ratchet: refire the same notes */
+                uint32_t gate = s->seq_rch_period * (s->step[s->seq_idx].acc
+                    ? s->step[s->seq_idx].acc
+                    : (uint32_t)s->sgate * 2u) / 255u;
+                if (!gate) gate = 1;
+                fm106_step_t *st = &s->step[s->seq_idx];
+                uint8_t m = st->n > 4u ? 4u : st->n;
+                for (uint8_t i = 0; i < m; i++) {
+                    fm106_note_on(e, st->note[i], s->seq_rch_vel);
+                    fm106_seq_msg_push(s, 1, st->note[i], s->seq_rch_vel); /* MIDI-out */
+                    if (s->seq_n < 4u) s->seq_notes[s->seq_n++] = st->note[i];
+                }
+                s->seq_off = gate;
+                s->seq_rch--;
+            }
         } else {
-            s->seq_off -= n;
+            s->seq_off -= nadv;
         }
     }
     if (!s->playing) return;
-
-    /* how many units to advance this block. B1: internal clock advances in
-     * samples. MIDI-slave sample-accurate interp (fm106_midi_clock_advance)
-     * needs a running timebase; wire in a later milestone. */
-    uint32_t nadv = n;
 
     uint32_t period = fm106_seq_div_samples(s, s->sdiv);
     uint32_t len = s->slen ? (uint32_t)s->slen : 1u;
@@ -559,6 +737,16 @@ static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
         uint8_t starting = s->seq_pos >= 0x7FFFFFFFu;
         s->seq_pos = starting ? 0u : s->seq_pos - cur;
         s->seq_idx = (uint16_t)((s->seq_idx + 1u) % len);
+
+        /* p-locks: apply this step's locks (also on rest/empty steps), and
+         * refresh the cache so the record diff doesn't see the apply as a
+         * fresh edit */
+        for (uint16_t li = 0; li < s->nplock; li++) {
+            if (s->plock[li].step == s->seq_idx) {
+                fm106_param_set(e, s->plock[li].param, s->plock[li].value);
+                s->plock_cache[s->plock[li].param] = s->plock[li].value;
+            }
+        }
 
         fm106_step_t *st = &s->step[s->seq_idx];
         uint8_t note[4], vel[4]; uint32_t gate = 0;
@@ -572,20 +760,36 @@ static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
             continue;
         }
         if (m <= 0) { /* rest / empty / failed roll: release */
-            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+            for (uint8_t i = 0; i < s->seq_n; i++) {
+                fm106_note_off(e, s->seq_notes[i]);
+                fm106_seq_msg_push(s, 0, s->seq_notes[i], 0); /* MIDI-out: note off */
+            }
             s->seq_n = 0; s->seq_hold = 0;
             continue;
         }
         if (!slide_in) {
-            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(e, s->seq_notes[i]);
+            for (uint8_t i = 0; i < s->seq_n; i++) {
+                fm106_note_off(e, s->seq_notes[i]);
+                fm106_seq_msg_push(s, 0, s->seq_notes[i], 0); /* MIDI-out: note off */
+            }
             s->seq_n = 0;
         }
         for (int i = 0; i < m; i++) {
             fm106_note_on(e, note[i], vel[i]);
+            fm106_seq_msg_push(s, 1, note[i], vel[i]); /* MIDI-out: note on */
             if (s->seq_n < 4u) s->seq_notes[s->seq_n++] = note[i];
         }
         s->seq_off = gate;
         s->seq_hold = (st->flags & FM106_SF_SLIDE) || next_tie;
+        /* ratchet: arm retriggers within this step (not on slide/tie) */
+        if (st->ratchet > 1u && !s->seq_hold) {
+            s->seq_rch = (uint8_t)(st->ratchet - 1u);
+            s->seq_rch_n = st->ratchet;
+            s->seq_rch_vel = (uint8_t)(st->flags & FM106_SF_ACCENT) ? 127u : (st->vel ? st->vel : 96u);
+            s->seq_rch_period = fm106_seq_step_samples(s, period, s->seq_idx) / st->ratchet;
+        } else {
+            s->seq_rch = 0; s->seq_rch_n = 0;
+        }
     }
 }
 
@@ -711,10 +915,13 @@ static void fm106_render_voice(fm106_engine_t *e, uint32_t vi, int32_t *sum, uin
         int32_t lfo_s = (int32_t)g_lfo_buf[i];
 
         uint32_t eff_inc = v->base_inc;
-        /* Continuous per-sample DCO LFO modulation */
+        /* Continuous per-sample DCO LFO modulation. Scaled to match the Juno-106:
+         * full depth (127) ≈ ±1 semitone (104 cents) peak. The original >>12 gave
+         * ±0.2 cents at full depth (inaudible); an interim >>7 gave only ±6.7 cents.
+         * Max intermediate stays ~6e8, inside int32, at the highest note. */
         if (e->dco_lfo_depth > 0) {
             int32_t pitch_mod = (lfo_s * (int32_t)e->dco_lfo_depth) >> 15;
-            eff_inc = (uint32_t)((int32_t)eff_inc + ((pitch_mod * (int32_t)(eff_inc >> 8)) >> 12));
+            eff_inc = (uint32_t)((int32_t)eff_inc + ((pitch_mod * (int32_t)(eff_inc >> 8)) >> 3));
         }
         /* Pitch Bend modulation on DCO (scaled by bender_dco) */
         if (e->pitch_bend_val != 0 && e->bender_dco > 0) {
@@ -811,12 +1018,20 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
      * the lock-free fm106_note_on/off seam). */
     fm106_seq_advance(e, n);
 
-    /* Generate continuous per-sample LFO buffer for this block with authentic LFO Delay */
-    uint32_t lfo_step = (uint32_t)e->lfo_rate * 320u;
+    /* Juno-106 LFO range ≈ 0.12 Hz (rate=1) .. 15.6 Hz (rate=127). Phase is 32-bit,
+     * read as ph>>16, so one cycle = 2^32 units: step = rate * 12000 gives
+     * freq = rate*12000*44100/2^32. The old *320 gave 0.003..0.42 Hz — far too slow
+     * to hear as vibrato/tremolo, which made DCO LFO look dead. rate=0 holds phase. */
+    uint32_t lfo_step = (uint32_t)e->lfo_rate * 12000u;
     uint32_t lfo_ph = e->lfo_ph;
     uint32_t delay_samples = (uint32_t)e->lfo_delay * 520u;   /* 0..~1.5s @ 44.1 kHz */
     uint32_t ramp_samples = 11025u;                           /* ~250ms ramp */
     int any_keys = (fm106_bit_count(e->keys_down) > 0) || e->arp_on;
+    if (!any_keys) {
+        for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++) {   /* seq-fired notes gate the LFO too */
+            if (e->voice[vi].gate) { any_keys = 1; break; }
+        }
+    }
 
     for (uint32_t i = 0; i < n; i++) {
         lfo_ph += lfo_step;

@@ -43,7 +43,7 @@ enum {
     PAGE_ARP,           /* ON MODE RATE RANGE */
     PAGE_FX,            /* CHO HPF VCA LEVEL */
     PAGE_TAPE,          /* TAPE: TYPE MIX RATE CHAR */
-    PAGE_SEQ,           /* SEQ: PLAY LEN DIV GATE */
+    PAGE_SEQ,           /* SEQ: STEP PITCH GATE VEL (piano-roll edit) */
     PAGE_COUNT = 10
 };
 
@@ -229,11 +229,535 @@ static uint8_t save_held_active = 0;     /* 1 if long press triggered UI_MODE_SA
 static char g_banner_msg[32] = {0};      /* Screen notification banner */
 static uint32_t g_banner_until = 0;      /* Expiry timestamp for banner */
 
+/* ---- SEQ piano-roll UI state (Melodee single-track port) ---- */
+static uint16_t g_seq_cursor   = 0;        /* edit cursor: step 0..slen-1 */
+static uint8_t  g_seq_view_lo  = 48;        /* bottom pitch of roll window */
+static uint16_t g_seq_view_step= 0;         /* first visible step (0..slen-16) */
+static uint8_t  g_seq_rec_arm  = 0;         /* live-record armed */
+static uint32_t g_clk_next     = 0;         /* master clock out: next F8 due (ms) */
+static uint8_t  g_seq_last_pitch = 60;      /* last entered pitch (for follow) */
+static uint8_t  g_seq_row      = 60;        /* K2: selected pitch row (scale cursor) */
+static uint8_t  g_seq_dirty    = 1;         /* redraw request */
+static uint32_t t_last_seq     = 0;         /* SEQ playhead refresh timer */
+
+/* SEQ options menu (long-press EDIT on the roll) */
+static uint8_t  g_seq_menu_on   = 0;
+static uint8_t  g_seq_menu_sel  = 0;
+static uint32_t t_edit_down    = 0;
+static uint8_t  edit_held_active= 0;
+static uint32_t t_sel_down     = 0;
+static uint8_t  sel_held_active= 0;
+#define SEQ_MENU_COUNT 6u
+
+/* note options menu (short-press EDIT on the roll) */
+static uint8_t  g_note_menu_on  = 0;
+static uint8_t  g_note_menu_sel = 0;
+#define NOTE_MENU_COUNT 4u
+
+/* live-record hold tracker: note-on stamps (pitch, step, ms), note-off
+ * computes the hold length into the step's gate (acc) — playback length
+ * then matches what was actually played */
+#define SEQ_HOLD_SLOTS 4u
+static struct { uint8_t pitch, used; uint16_t step; uint32_t t0; } g_seq_hold[SEQ_HOLD_SLOTS];
+
+#define SEQ_ROLL_X0   34                   /* step-area left edge */
+#define SEQ_STEP_W    12                   /* per-step column width */
+#define SEQ_ROWS      14                   /* visible pitch rows */
+#define SEQ_ROW_H     12                   /* row height */
+
+static const char *const NOTE_NAMES[12] = {
+    "C","C#","D","D#","E","F","F#","G","G#","A","A#","B"
+};
+
+static void seq_note_name(uint8_t pitch, char *buf)
+{
+    int32_t oct = (int32_t)(pitch / 12u) - 1;
+    if (oct < 0) oct = 0;
+    if (oct > 9) oct = 9;
+    const char *n = NOTE_NAMES[pitch % 12u];
+    uint8_t j = 0;
+    while (n[j] && j < 2) { buf[j] = n[j]; j++; }
+    buf[j++] = (char)('0' + oct);
+    buf[j] = '\0';
+}
+
+/* REC armed + playing: edits land on the playing step (live overdub);
+ * otherwise on the edit cursor. */
+static uint16_t seq_ui_edit_idx(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    uint16_t len = s->slen ? s->slen : 1u;
+    return (g_seq_rec_arm && s->playing) ? (uint16_t)(s->seq_idx % len)
+                                         : (uint16_t)(g_seq_cursor % len);
+}
+
+/* ---- MIDI CC layer ----
+ * One CC per sound param (out: on panel/menu/knob change; in: controller
+ * edits). Seq params get 102-106, transport 107, edit helpers 108-113. */
+
+/* FM106 param index -> CC (out). 0xFF = no CC. */
+static const uint8_t g_param_cc[FM106_NPARAM] = {
+    87, 88, 82, 80, 81,  1, 79,  9, 13, 12,  /* 0-9: bender dco/vcf, arp rate, lfo
+                                                rate/delay, dco lfo/pwm depth, sub
+                                                level, noise, hpf mode */
+    74, 71, 76, 77, 78, 11, 73, 75, 70, 72,  /* 10-19: cutoff, reso, env mod, lfo
+                                                mod, kbd track, vca level, env A/D/S/R */
+    0xFF, 0xFF, 0xFF,                        /* 20-22: preset-only gaps */
+    91, 92, 94, 0xFF, 93, 93,                /* 23-28: pulse/saw/sub on, (gap),
+                                                chorus I/II bits -> CC 93 */
+    95, 89, 90, 0xFF,                        /* 29-32: dco range, arp mode, arp range */
+    96, 97, 98,                              /* 33-35: pwm mode, env polarity, vca mode */
+    83, 84, 85, 86,                          /* 36-39: fx type/mix/rate/character */
+};
+
+/* CC 87..98 -> param index (0xFF = handled specially). */
+static const uint8_t g_cc_param[12] = {
+    0, 1, 30, 31, 23, 24, 0xFF, 25, 29, 33, 34, 35,
+    /*      87  88  89  90  91  92  93  94  95  96  97  98 */
+};
+
+/* param raw value -> full-range CC out (modes/flags stretched for faders) */
+static uint8_t param_cc_value(uint8_t i, uint8_t v)
+{
+    switch (i) {
+    case 9: case 29: case 30: case 31: return (uint8_t)(v * 42u);  /* small enums */
+    case 36: return v ? 127u : 0u;                                  /* fx type */
+    case 23: case 24: case 25: case 27: case 28:
+    case 33: case 34: case 35: return v ? 127u : 0u;                /* flags */
+    default: return v;
+    }
+}
+
+/* CC value (0-127) -> param raw value on receive */
+static uint8_t cc_to_param_value(uint8_t idx, uint8_t v)
+{
+    switch (idx) {
+    case 9:  return v / 32u > 3u ? 3u : v / 32u;      /* hpf mode zones */
+    case 23: case 24: case 25: case 33: case 34: case 35:
+        return (uint8_t)(v >= 64u);
+    case 29: return v / 42u > 2u ? 2u : v / 42u;       /* dco range 0-2 */
+    case 30: return (uint8_t)(v % 3u);                 /* arp mode wrap */
+    case 31: return v >= 85u ? 3u : v >= 42u ? 2u : 1u; /* arp range 1-3 */
+    default: return v;
+    }
+}
+
+/* master clock out: F8/FA/FB/FC only when SYNC=MASTER */
+static void seq_clock_out(uint8_t status)
+{
+    if (g_synth.sync_mode == 1u) midi_send(status, 0, 0);
+}
+
+/* transport: 0=stop, 1=start, 2=continue, 3=toggle (BTN_PLAY / CC 107 / CC out) */
+static void seq_transport_cmd(uint8_t cmd)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    uint8_t was = s->playing;
+    if (cmd == 0u || (cmd == 3u && was)) {
+        if (was) {
+            uint8_t nflush = s->seq_n;
+            uint8_t flushed[4];
+            for (uint8_t i = 0; i < nflush; i++) flushed[i] = s->seq_notes[i];
+            uint8_t och = (g_synth.midi_out_ch - 1u) & 0x0Fu;
+            fm1_irq_off();
+            for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(&g_synth, s->seq_notes[i]);
+            s->seq_n = 0;
+            s->playing = 0;
+            s->msg_tail = s->msg_head;  /* drop queued seq MIDI events */
+            fm1_irq_on();
+            /* release any externally-sounding seq notes (main loop → midi_send ok) */
+            for (uint8_t i = 0; i < nflush; i++) midi_send(0x80u | och, flushed[i], 0u);
+            seq_clock_out(0xFCu);
+            midi_send(0xB0u | och, 107u, 0u);
+        }
+    } else if (cmd == 2u) {         /* continue: resume in place */
+        if (!was) {
+            s->playing = 1;
+            seq_clock_out(0xFBu);
+            midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 107u, 1u);
+        }
+    } else if (cmd == 1u || (cmd == 3u && !was)) {
+        fm1_irq_off();
+        fm106_param_snapshot(&g_synth); /* p-lock diff starts from the live sound */
+        fm106_seq_start(s);
+        fm1_irq_on();
+        seq_clock_out(0xFAu);
+        midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 107u, 1u);
+    }
+}
+
+/* SYNC menu/CC -> engine clock-slave state (and clear stale pulse interp) */
+static void seq_sync_apply(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    uint8_t slave = (uint8_t)(g_synth.sync_mode == 2u);
+    fm106_midi_clock_mode(s, slave);
+    if (slave) {
+        s->mc_pos = s->mc_rendered = 0;
+        s->mc_have_pulse = s->mc_tempo_valid = 0;
+        s->mc_interval_time = 0;
+    }
+}
+
+/* ---- Elektron-style p-lock record + CC out ----
+ * Called once per main-loop pass: diff every sound param against the
+ * snapshot. REC armed + playing locks each changed param into the playing
+ * step; CC out reports any change (panel, menu or incoming CC) to a
+ * controller; otherwise the cache just tracks the live sound, so arming
+ * mid-play only locks what the user touches from then on. */
+static void plock_scan(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    uint8_t rec = (uint8_t)(g_seq_rec_arm && s->playing);
+    uint8_t ch = (uint8_t)(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu));
+    static uint8_t primed = 0;
+    static uint8_t seq_cache[5]; /* bpm sdiv slen sgate swing (CC 102-106 out) */
+    for (uint8_t i = 0; i < FM106_NPARAM; i++) {
+        uint8_t v = fm106_param_get(&g_synth, i);
+        if (!primed) { s->plock_cache[i] = v; continue; } /* boot: prime silently, no CC dump */
+        if (v == s->plock_cache[i]) continue;
+        s->plock_cache[i] = v;
+        if (g_param_cc[i] != 0xFFu)
+            midi_send(ch, g_param_cc[i], param_cc_value(i, v));
+        if (rec) {
+            uint16_t idx = (uint16_t)(s->seq_idx % (s->slen ? s->slen : 1u)); /* fresh per lock */
+            fm1_irq_off();
+            fm106_plock_set(s, idx, i, v);
+            fm1_irq_on();
+            g_dirty_screen = 1;
+        }
+    }
+    /* seq track params -> CC 102-106 out (scaled to match CC in) */
+    uint8_t now[5];
+    now[0] = (uint8_t)((s->bpm > 40u ? s->bpm - 40u : 0u) / 2u);           /* 102 tempo */
+    now[1] = s->sdiv;                                                      /* 103 division */
+    now[2] = (uint8_t)(s->slen > 128u ? 127u : (s->slen ? s->slen - 1u : 0u)); /* 104 length */
+    now[3] = s->sgate;                                                     /* 105 gate */
+    now[4] = s->swing;                                                     /* 106 swing */
+    static const uint8_t base[5] = { 102, 103, 104, 105, 106 };
+    for (uint8_t j = 0; j < 5u; j++) {
+        if (now[j] != seq_cache[j]) {
+            if (primed) midi_send(ch, base[j], now[j]);
+            seq_cache[j] = now[j];
+        }
+    }
+    primed = 1;
+}
+
+/* toggle a pitch in the cursor step (add if absent, remove if present) */
+static void seq_ui_toggle_pitch(uint8_t pitch)
+{
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)];
+    for (uint8_t i = 0; i < st->n; i++) {
+        if (st->note[i] == pitch) {
+            for (uint8_t j = i; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
+            st->n--;
+            g_seq_dirty = 1;
+            fm1_irq_on();
+            return;
+        }
+    }
+    if (st->n < 4u) {
+        st->note[st->n++] = pitch;
+        st->time = FM106_ST_NOTE;
+        if (!st->vel) st->vel = 100;
+        g_seq_last_pitch = pitch;
+        /* follow: keep pitch in view */
+        if (pitch < g_seq_view_lo) g_seq_view_lo = pitch;
+        if (pitch > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = pitch - SEQ_ROWS + 1u;
+        if (g_seq_view_lo > 114u) g_seq_view_lo = 114u; /* 127-13 */
+        g_seq_dirty = 1;
+    }
+    fm1_irq_on();
+}
+
+/* SEL short: remove the note at the cursor cell (step x row); none there = wipe the step */
+static void seq_ui_clear_step(void)
+{
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)];
+    uint8_t found = 0;
+    for (uint8_t i = 0; i < st->n; i++) {
+        if (st->note[i] == g_seq_row) {
+            for (uint8_t j = i; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
+            st->n--;
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        st->n = 0; st->time = FM106_ST_NOTE; st->flags = 0;
+        st->acc = 0; st->vel = 0; st->probability = 0; st->ratchet = 0;
+        fm106_plock_clear_step(&g_synth.seq, (uint16_t)(g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)));
+    }
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+/* K2: move the pitch-row cursor up/down the scale (the white square's row) */
+static void seq_ui_move_row(int32_t d)
+{
+    int32_t r = (int32_t)g_seq_row + d;
+    if (r < 1) r = 1;
+    if (r > 127) r = 127;
+    g_seq_row = (uint8_t)r;
+    /* follow: keep the cursor row in the window */
+    if (g_seq_row < g_seq_view_lo) g_seq_view_lo = g_seq_row;
+    if (g_seq_row > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = g_seq_row - SEQ_ROWS + 1u;
+    if (g_seq_view_lo > 114u) g_seq_view_lo = 114u;
+    g_seq_dirty = 1;
+}
+
+static void seq_ui_adjust_gate(int32_t d)
+{
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    int32_t g = st->acc ? (int32_t)st->acc : (int32_t)g_synth.seq.sgate;
+    g += d * 8;
+    if (g < 1) g = 1;
+    if (g > 255) g = 255;
+    st->acc = (uint8_t)(g > 255 ? 255 : g);
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+/* K4: fill the cursor cell (step x row) with this velocity; 0 removes the note */
+static void seq_ui_adjust_vel(int32_t d)
+{
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    int8_t idx = -1;
+    for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == g_seq_row) { idx = (int8_t)i; break; }
+    if (idx < 0) {           /* empty cell: fill it */
+        if (st->n >= 4u) { fm1_irq_on(); return; }
+        idx = (int8_t)st->n;
+        st->note[st->n++] = g_seq_row;
+        st->time = FM106_ST_NOTE;
+        st->vel = (uint8_t)(d > 0 ? 64 : 96);
+        g_seq_last_pitch = g_seq_row;
+    }
+    int32_t v = (int32_t)st->vel + d * 4;
+    if (v <= 0) {           /* velocity 0: the note leaves the step */
+        for (uint8_t j = (uint8_t)idx; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
+        st->n--;
+        if (!st->n) { st->time = FM106_ST_NOTE; st->flags = 0; st->acc = 0; st->vel = 0; }
+        g_seq_dirty = 1;
+        fm1_irq_on();
+        return;
+    }
+    if (v > 127) v = 127;
+    st->vel = (uint8_t)v;
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+static void seq_ui_toggle_flag(uint8_t flag)
+{
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    st->flags ^= flag;
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+/* note options (short-press EDIT): ratchet / tie / clear on the edited step */
+static void seq_ui_note_adjust(int32_t d)
+{
+    if (!d) return;
+    fm1_irq_off();
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    switch (g_note_menu_sel) {
+    case 0: /* RATCHET 1..8 */
+        if (d > 0) { if (st->ratchet < 8u) st->ratchet++; }
+        else       { if (st->ratchet > 0u) st->ratchet--; }
+        break;
+    case 1: /* TIE */
+        st->time = (st->time == FM106_ST_TIE) ? FM106_ST_NOTE : FM106_ST_TIE;
+        break;
+    case 2: /* ACCENT */
+        st->flags ^= FM106_SF_ACCENT;
+        break;
+    case 3: /* SLIDE */
+        st->flags ^= FM106_SF_SLIDE;
+        break;
+    }
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+static void seq_ui_move_cursor(int32_t d)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    int32_t len = s->slen ? (int32_t)s->slen : 1;
+    int32_t c = (int32_t)g_seq_cursor + d;
+    while (c < 0) c += len;
+    while (c >= len) c -= len;
+    g_seq_cursor = (uint16_t)c;
+    /* follow cursor into view */
+    int32_t vs = (int32_t)g_seq_cursor - 8;
+    if (vs < 0) vs = 0;
+    if (vs > len - 16) vs = len - 16;
+    if (vs < 0) vs = 0;
+    g_seq_view_step = (uint16_t)vs;
+    /* follow cursor note into pitch view */
+    fm106_step_t *st = &s->step[g_seq_cursor % (s->slen ? s->slen : 1u)];
+    if (st->n) {
+        uint8_t p = st->note[0];
+        if (p < g_seq_view_lo) g_seq_view_lo = p;
+        if (p > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = p - SEQ_ROWS + 1u;
+        if (g_seq_view_lo > 114u) g_seq_view_lo = 114u;
+    }
+    g_seq_dirty = 1;
+    g_dirty_screen = 1;
+}
+
+/* a key (panel keybed or MIDI note-on) contributes to the sequence: live
+ * record into the playing (or cursor) step when REC is armed, acid-style
+ * step entry on the SEQ page when stopped */
+static void seq_note_entry(uint8_t pitch, uint8_t vel)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    if (g_seq_rec_arm) {
+        uint16_t len = s->slen ? s->slen : 1u;
+        uint16_t idx;
+        fm1_irq_off();
+        if (s->playing) {
+            /* a keypress in the last quarter of the step means the upcoming
+             * one — land it there, not in the dying step */
+            idx = s->seq_idx;
+            uint32_t base = fm106_seq_div_samples(s, s->sdiv);
+            uint32_t step_len = fm106_seq_step_samples(s, base, s->seq_idx);
+            if (step_len && s->seq_pos > step_len - (step_len >> 2))
+                idx = (uint16_t)((idx + 1u) % len);
+        } else {
+            idx = (uint16_t)(g_seq_cursor % len);
+        }
+        fm106_step_t *st = &s->step[idx % len];
+        uint8_t found = 0;
+        for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == pitch) { found = 1; break; }
+        if (!found && st->n < 4u) {
+            st->note[st->n++] = pitch;
+            st->time = FM106_ST_NOTE;
+            if (!st->vel) st->vel = vel ? vel : 100u;
+            g_seq_last_pitch = pitch;
+            /* arm the hold tracker: remember which step took this pitch so
+             * note-off can write the held length into that step's gate.
+             * Retrigger of a still-held pitch updates the slot in place. */
+            uint8_t slot = SEQ_HOLD_SLOTS;
+            for (uint8_t h = 0; h < SEQ_HOLD_SLOTS; h++) {
+                if (g_seq_hold[h].used && g_seq_hold[h].pitch == pitch) { slot = h; break; }
+                if (slot == SEQ_HOLD_SLOTS && !g_seq_hold[h].used) slot = h;
+            }
+            if (slot < SEQ_HOLD_SLOTS) {
+                g_seq_hold[slot].used  = 1;
+                g_seq_hold[slot].pitch = pitch;
+                g_seq_hold[slot].step  = idx;
+                g_seq_hold[slot].t0    = fm106_now_ms();
+            }
+        }
+        fm1_irq_on();
+        /* stamp the current sound into the step: the whole param set rides
+         * along with a live-recorded note (Elektron scene capture). Written
+         * without irq_off: only the main loop appends, the ISR only reads. */
+        for (uint8_t pi = 0; pi < FM106_NPARAM; pi++) {
+            if ((pi >= 20u && pi <= 22u) || pi == 26u || pi == 32u) continue; /* unused indices */
+            uint8_t v = fm106_param_get(&g_synth, pi);
+            s->plock_cache[pi] = v;
+            fm106_plock_set(s, idx, pi, v);
+        }
+        if (!s->playing) seq_ui_move_cursor(1);
+        g_seq_dirty = 1;
+        g_dirty_screen = 1;
+    } else if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && !s->playing) {
+        seq_ui_toggle_pitch(pitch);
+        seq_ui_move_cursor(1);
+    }
+}
+
+/* note-off while live-recording: convert the held length into the recorded
+ * step's gate (acc 1..255 = 0..100% of the step period). Holds longer than
+ * one step extend into following EMPTY steps as TIEs (sustain, no retrigger),
+ * so playback length matches what was held. The chain stops at the first
+ * step that already has notes — we never overwrite existing material. */
+static void seq_note_release(uint8_t pitch)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    if (!g_seq_rec_arm) return;
+    uint32_t now = fm106_now_ms();
+    for (uint8_t h = 0; h < SEQ_HOLD_SLOTS; h++) {
+        if (g_seq_hold[h].used && g_seq_hold[h].pitch == pitch) {
+            uint32_t held_ms = now - g_seq_hold[h].t0;
+            uint16_t idx = g_seq_hold[h].step;
+            g_seq_hold[h].used = 0;
+            uint16_t len = s->slen ? s->slen : 1u;
+            idx %= len;
+            uint32_t base = fm106_seq_div_samples(s, s->sdiv);
+            uint32_t period_ms = base ? (base * 1000u) / 44100u : 0u; /* base < ~1M samples; *1000 fits u32 */
+            fm1_irq_off();
+            if (!period_ms || held_ms < period_ms) {
+                /* under one step: plain gate fraction on the first step */
+                uint8_t acc = 255u;
+                if (period_ms) {
+                    acc = (uint8_t)((held_ms * 255u) / period_ms);
+                    if (!acc) acc = 1u;               /* never a zero-length note */
+                }
+                s->step[idx].acc = acc;
+            } else {
+                /* one step or more: full gate, then TIE the held span. Ties
+                 * must exist before the playhead reaches those steps — they
+                 * land now and sustain from the next loop pass onward. */
+                uint32_t full = held_ms / period_ms;  /* whole steps held */
+                uint32_t rem   = held_ms % period_ms; /* tail fraction */
+                if (full > len) full = len;           /* never longer than the loop */
+                s->step[idx].acc = 255u;
+                for (uint32_t k = 1u; k <= full; k++) {
+                    fm106_step_t *st = &s->step[(idx + (uint16_t)k) % len];
+                    if (st->n) break;                 /* occupied: stop, don't clobber */
+                    st->time = FM106_ST_TIE;
+                    st->acc  = 255u;
+                }
+                if (rem && full < len) {              /* partial tail: last tie carries it */
+                    fm106_step_t *st = &s->step[(idx + (uint16_t)full) % len];
+                    if (!st->n) {
+                        uint8_t acc = (uint8_t)((rem * 255u) / period_ms);
+                        if (acc) st->acc = acc;
+                    }
+                }
+            }
+            fm1_irq_on();
+            g_seq_dirty = 1;
+            g_dirty_screen = 1;
+            return;
+        }
+    }
+}
+
+/* MIDI CC 99/100/101: accent / slide / ratchet on the edit step (playing
+ * step while REC armed + playing, else the cursor step) */
+static void seq_ui_cc_flag(uint8_t which, uint8_t v)
+{
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    fm1_irq_off();
+    if (which == 0u) {          /* accent */
+        if (v >= 64u) st->flags |= FM106_SF_ACCENT;
+        else          st->flags &= (uint8_t)~FM106_SF_ACCENT;
+    } else if (which == 1u) {   /* slide (portamento into the next step) */
+        if (v >= 64u) st->flags |= FM106_SF_SLIDE;
+        else          st->flags &= (uint8_t)~FM106_SF_SLIDE;
+    } else {                    /* ratchet: 0/1 = off, 2..8 = hits in the step */
+        st->ratchet = v > 8u ? 8u : v;
+    }
+    fm1_irq_on();
+    g_seq_dirty = 1;
+    g_dirty_screen = 1;
+}
+
 static const char CHAR_SET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-_./#+!";
 #define CHAR_SET_LEN ((int32_t)(sizeof(CHAR_SET) - 1))
 
 #define MENU_MAIN_COUNT 2
-#define MENU_MIDI_COUNT 2
+#define MENU_MIDI_COUNT 5
 
 #ifndef RING_PUBLISH
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
@@ -609,6 +1133,318 @@ static void draw_waveform_section(void)
     cv_blit(0, 150);
 }
 
+/* ---- SEQ options menu (long-press EDIT) ---- */
+static void seq_ui_menu_adjust(int32_t d)
+{
+    if (!d) return;
+    fm1_irq_off();
+    fm106_seq_t *s = &g_synth.seq;
+    switch (g_seq_menu_sel) {
+    case 0: /* STEPS */
+        if (d > 0) { if (s->slen < FM106_NSTEP) s->slen = (uint16_t)(s->slen + 1u); }
+        else       { if (s->slen > 1u) s->slen = (uint16_t)(s->slen - 1u); }
+        if (g_seq_cursor >= s->slen) g_seq_cursor = (uint16_t)(s->slen - 1u);
+        break;
+    case 1: /* BPM */
+        if (d > 0) { if (s->bpm < 240u) s->bpm++; }
+        else       { if (s->bpm > 40u)  s->bpm--; }
+        break;
+    case 2: /* DIV */
+        if (d > 0) { if (s->sdiv < 9u) s->sdiv++; else s->sdiv = 0u; }
+        else       { if (s->sdiv > 0u) s->sdiv--; else s->sdiv = 9u; }
+        break;
+    case 3: /* GATE */
+        if (d > 0) { if (s->sgate < 127u) s->sgate = (uint8_t)(s->sgate + 4u > 127u ? 127u : s->sgate + 4u); }
+        else       { if (s->sgate > 8u)   s->sgate = (uint8_t)(s->sgate - 4u < 8u ? 8u : s->sgate - 4u); }
+        break;
+    case 4: /* SWING */
+        if (d > 0) { if (s->swing < 100u) s->swing = (uint8_t)(s->swing + 4u > 100u ? 100u : s->swing + 4u); }
+        else       { if (s->swing >= 4u) s->swing = (uint8_t)(s->swing - 4u); else s->swing = 0u; }
+        break;
+    case 5: /* REC arm */
+        g_seq_rec_arm ^= 1u;
+        break;
+    }
+    g_seq_dirty = 1;
+    fm1_irq_on();
+}
+
+/* value text for SEQ menu row i */
+static void seq_menu_value(uint32_t i, char *val)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    switch (i) {
+    case 0: {                                   /* STEPS (1..1024, 3 digits) */
+        uint32_t v = s->slen;
+        val[0] = (char)('0' + v / 100);
+        val[1] = (char)('0' + (v / 10) % 10);
+        val[2] = (char)('0' + v % 10);
+        val[3] = '\0';
+        break;
+    }
+    case 1: {                                   /* BPM */
+        uint32_t v = s->bpm;
+        val[0] = (char)('0' + v / 100);
+        val[1] = (char)('0' + (v / 10) % 10);
+        val[2] = (char)('0' + v % 10);
+        val[3] = '\0';
+        break;
+    }
+    case 2: {                                   /* DIV */
+        uint32_t j = 0;
+        while (N_SDIV[s->sdiv][j] && j < 7u) { val[j] = N_SDIV[s->sdiv][j]; j++; }
+        val[j] = '\0';
+        break;
+    }
+    case 3: {                                   /* GATE */
+        uint32_t v = s->sgate;
+        val[0] = (char)('0' + v / 100);
+        val[1] = (char)('0' + (v / 10) % 10);
+        val[2] = (char)('0' + v % 10);
+        val[3] = '\0';
+        break;
+    }
+    case 4: {                                   /* SWING */
+        uint32_t v = s->swing;
+        val[0] = (char)('0' + v / 100);
+        val[1] = (char)('0' + (v / 10) % 10);
+        val[2] = (char)('0' + v % 10);
+        val[3] = '\0';
+        break;
+    }
+    case 5: {                                   /* REC */
+        const char *v = g_seq_rec_arm ? "ON" : "OFF";
+        uint32_t j = 0;
+        while (v[j]) { val[j] = v[j]; j++; }
+        val[j] = '\0';
+        break;
+    }
+    }
+}
+
+/* one glo-menu-style row: "> LABEL" left, value right, amber when selected */
+static void menu_row_draw(uint32_t x, uint32_t y, uint32_t sel, const char *label, const char *val)
+{
+    char buf[24];
+    buf[0] = sel ? '>' : ' ';
+    buf[1] = ' ';
+    uint32_t j = 2;
+    while (label[j-2] && j < sizeof(buf) - 1u) { buf[j] = label[j-2]; j++; }
+    buf[j] = '\0';
+    uint16_t c = sel ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_text_plate(x, y, 140, buf, c, C_BLACK, 0);
+    cv_text_plate(x + 150, y, 80, val, c, C_BLACK, 1);
+}
+
+static void draw_seq_menu(void)
+{
+    static const char *const opts[SEQ_MENU_COUNT] = {"STEPS", "BPM", "DIV", "GATE", "SWING", "REC"};
+
+    cv_begin(240, 96, C_BG);
+    cv_text_plate(0, 0, 240, "SEQ OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
+    for (uint32_t i = 0; i < 4u; i++) {
+        char val[8];
+        seq_menu_value(i, val);
+        menu_row_draw(10, 20u + i * 20u, i == g_seq_menu_sel, opts[i], val);
+    }
+    cv_blit(0, 22);
+    cv_begin(240, 68, C_BG);
+    for (uint32_t i = 4u; i < SEQ_MENU_COUNT; i++) {
+        char val[8];
+        seq_menu_value(i, val);
+        menu_row_draw(10, (i - 4u) * 20u, i == g_seq_menu_sel, opts[i], val);
+    }
+    cv_blit(0, 118);
+}
+
+/* ---- note options menu (short-press EDIT): glo-menu style ---- */
+static void draw_note_menu(void)
+{
+    static const char *const opts[NOTE_MENU_COUNT] = {"RATCHET", "TIE", "ACCENT", "SLIDE"};
+    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+
+    cv_begin(240, 96, C_BG);
+    cv_text_plate(0, 0, 240, "NOTE OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
+    for (uint32_t i = 0; i < 4u; i++) {
+        char val[8];
+        switch (i) {
+        case 0: {
+            uint32_t v = st->ratchet ? st->ratchet : 1u;
+            val[0] = (char)('0' + v); val[1] = '\0';
+            break;
+        }
+        case 1: {
+            uint8_t tie = st->time == FM106_ST_TIE;
+            val[0] = tie ? 'O' : '-'; val[1] = tie ? 'N' : 'F'; val[2] = '\0';
+            break;
+        }
+        case 2: {
+            uint8_t on = st->flags & FM106_SF_ACCENT;
+            val[0] = on ? 'O' : '-'; val[1] = on ? 'N' : 'F'; val[2] = '\0';
+            break;
+        }
+        default: {
+            uint8_t on = st->flags & FM106_SF_SLIDE;
+            val[0] = on ? 'O' : '-'; val[1] = on ? 'N' : 'F'; val[2] = '\0';
+            break;
+        }
+        }
+        menu_row_draw(10, 20u + i * 20u, i == g_note_menu_sel, opts[i], val);
+    }
+    cv_blit(0, 22);
+}
+
+/* fader-style knob guide for the SEQ page bottom (matches draw_faders_section) */
+static void draw_seq_fader_guide(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    fm106_step_t *st = &s->step[g_seq_cursor % (s->slen ? s->slen : 1u)];
+    static const char *const lbl[4] = {"STEP", "NOTE", "GATE", "VEL"};
+    int32_t val[4];
+    int32_t max[4];
+
+    val[0] = (int32_t)g_seq_cursor;                 max[0] = FM106_NSTEP - 1; /* 1023 */
+    val[1] = (int32_t)g_seq_row;                    max[1] = 127;
+    val[2] = st->acc ? (int32_t)st->acc : (int32_t)s->sgate;           max[2] = 255;
+    val[3] = (int32_t)st->vel;                      max[3] = 127;
+
+    cv_begin(240, 50, C_BG);
+    for (int i = 0; i < 4; i++) {
+        int32_t fx = 12 + i * 58;
+        int32_t v = val[i];
+        if (v < 0) v = 0;
+        if (v > max[i]) v = max[i];
+
+        /* fader track + center line (same geometry as draw_faders_section) */
+        cv_rect(fx + 19, 10, 6, 20, C_FADER_BG);
+        cv_line(fx + 21, 11, fx + 21, 29, C_FADER_LINE);
+
+        int32_t travel = 14;
+        int32_t cap_y = 10 + (travel - (v * travel) / (max[i] ? max[i] : 1));
+        if (cap_y < 10) cap_y = 10;
+        if (cap_y > 24) cap_y = 24;
+        cv_rect(fx + 13, cap_y, 18, 8, C_FADER_CAP);
+        cv_line(fx + 13, cap_y + 4, fx + 30, cap_y + 4, C_TEXT_WHITE);
+
+        int32_t lw = text_w(&FONT_S, lbl[i]);
+        cv_text(fx + (44 - lw) / 2, 0, &FONT_S, lbl[i], C_TEXT_DIM);
+
+        char num_str[8];
+        if (i == 1) {
+            seq_note_name((uint8_t)v, num_str);
+        } else {
+            if (v >= 100) {
+                num_str[0] = (char)('0' + v / 100);
+                num_str[1] = (char)('0' + (v / 10) % 10);
+                num_str[2] = (char)('0' + v % 10);
+                num_str[3] = '\0';
+            } else if (v >= 10) {
+                num_str[0] = (char)('0' + v / 10);
+                num_str[1] = (char)('0' + v % 10);
+                num_str[2] = '\0';
+            } else {
+                num_str[0] = (char)('0' + v);
+                num_str[1] = '\0';
+            }
+        }
+        int32_t nw = text_w(&FONT_S, num_str);
+        cv_text(fx + (44 - nw) / 2, 38, &FONT_S, num_str, C_TEXT_WHITE);
+    }
+    if (g_seq_rec_arm) cv_text(200, 38, &FONT_S, "REC", C_ROLAND_RED);
+    cv_blit(0, 190);
+}
+
+/* ---- SEQ piano-roll page (Melodee single-track port) ---- */
+static void draw_seq_roll_band(uint8_t row_lo, uint8_t row_hi, uint32_t y, int32_t play_idx)
+{
+    uint8_t rows = row_hi - row_lo;
+    cv_begin(240, rows * SEQ_ROW_H, C_BG);
+
+    for (uint8_t r = row_lo; r < row_hi; r++) {
+        uint8_t pitch = g_seq_view_lo + SEQ_ROWS - 1u - r;
+        int32_t yb = (int32_t)((r - row_lo) * SEQ_ROW_H);
+
+        if (r & 1u) cv_rect(0, yb, 240, SEQ_ROW_H, C_BLACK);
+
+        char nb[4];
+        seq_note_name(pitch, nb);
+        cv_text(2, yb + 1, &FONT_S, nb, C_TEXT_DIM);
+
+        for (uint8_t c = 0; c < 16; c++) {
+            uint16_t step_idx = g_seq_view_step + c;
+            if (step_idx >= g_synth.seq.slen) break;
+            fm106_step_t *st = &g_synth.seq.step[step_idx];
+            int32_t x = SEQ_ROLL_X0 + (int32_t)c * SEQ_STEP_W;
+
+            if ((step_idx & 3u) == 0) cv_rect(x, yb, 1, SEQ_ROW_H, C_LINE_DIV);
+
+            uint8_t has = 0;
+            for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == pitch) { has = 1; break; }
+            if (has) {
+                if (st->time == FM106_ST_TIE) {
+                    cv_rect(x + 1, yb + SEQ_ROW_H / 2 - 1, SEQ_STEP_W - 2, 3, C_TEXT_DIM);
+                } else {
+                    uint16_t bc = (st->flags & FM106_SF_ACCENT) ? C_TEXT_WHITE : C_ROLAND_AMBER;
+                    cv_rect(x + 1, yb + 1, SEQ_STEP_W - 2, SEQ_ROW_H - 2, bc);
+                }
+            }
+
+            if (play_idx >= 0 && step_idx == (uint16_t)play_idx) {
+                cv_rect(x, yb, SEQ_STEP_W, 1, C_STRIPE_CYAN);
+                cv_rect(x, yb + SEQ_ROW_H - 1, SEQ_STEP_W, 1, C_STRIPE_CYAN);
+            }
+
+            if (step_idx == g_seq_cursor) {
+                cv_rect(x, yb, SEQ_STEP_W, 1, C_ROLAND_RED);
+                cv_rect(x, yb + SEQ_ROW_H - 1, SEQ_STEP_W, 1, C_ROLAND_RED);
+                cv_rect(x, yb, 1, SEQ_ROW_H, C_ROLAND_RED);
+                cv_rect(x + SEQ_STEP_W - 1, yb, 1, SEQ_ROW_H, C_ROLAND_RED);
+                if (pitch == g_seq_row) {   /* white square: the K1 x K2 cursor cell */
+                    cv_rect(x + 1, yb + 1, SEQ_STEP_W - 2, 1, C_TEXT_WHITE);
+                    cv_rect(x + 1, yb + SEQ_ROW_H - 2, SEQ_STEP_W - 2, 1, C_TEXT_WHITE);
+                    cv_rect(x + 1, yb + 1, 1, SEQ_ROW_H - 2, C_TEXT_WHITE);
+                    cv_rect(x + SEQ_STEP_W - 2, yb + 1, 1, SEQ_ROW_H - 2, C_TEXT_WHITE);
+                }
+            }
+        }
+    }
+
+    cv_blit(0, y);
+}
+
+static void draw_seq_page(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+
+    /* header */
+    cv_begin(240, 22, C_BG);
+    cv_text(6, 4, &FONT_S, "SEQ", C_ROLAND_AMBER);
+    if (s->playing) cv_text(60, 4, &FONT_S, "PLAY", C_STRIPE_CYAN);
+    else           cv_text(60, 4, &FONT_S, "STOP", C_TEXT_DIM);
+    char buf[16];
+    buf[0] = (char)('0' + s->bpm / 100);
+    buf[1] = (char)('0' + (s->bpm / 10) % 10);
+    buf[2] = (char)('0' + s->bpm % 10);
+    buf[3] = '\0';
+    cv_text(110, 4, &FONT_S, buf, C_TEXT_WHITE);
+    cv_text(140, 4, &FONT_S, "BPM", C_TEXT_DIM);
+    buf[0] = (char)('0' + s->swing / 100);
+    buf[1] = (char)('0' + (s->swing / 10) % 10);
+    buf[2] = (char)('0' + s->swing % 10);
+    buf[3] = '\0';
+    cv_text(180, 4, &FONT_S, buf, C_TEXT_WHITE);
+    cv_text(210, 4, &FONT_S, "SWG", C_TEXT_DIM);
+    cv_blit(0, 0);
+
+    /* roll bands: one playhead snapshot so both halves always agree */
+    int32_t ph = s->playing ? (int32_t)s->seq_idx : -1;
+    draw_seq_roll_band(0, 8, 22, ph);
+    draw_seq_roll_band(8, 14, 118, ph);
+
+    /* bottom: fader-style knob guide */
+    draw_seq_fader_guide();
+}
+
 /* 4. OPT Menu (y=76..171, single blit) */
 static void draw_menu_main(void)
 {
@@ -632,29 +1468,41 @@ static void draw_menu_main(void)
 
 static void draw_menu_midi(void)
 {
-    char ch_str[8], sync_str[8];
+    char in_str[8], out_str[8], sync_str[8], yn1[8], yn2[8];
     uint32_t ch = g_synth.midi_channel;
-    if (ch > 9) { ch_str[0] = (char)('0' + ch/10); ch_str[1] = (char)('0' + ch%10); ch_str[2] = '\0'; }
-    else { ch_str[0] = (char)('0' + ch); ch_str[1] = '\0'; }
+    if (ch == 0u) { in_str[0]='A'; in_str[1]='L'; in_str[2]='L'; in_str[3]='\0'; } /* 0 = omni */
+    else if (ch > 9) { in_str[0] = (char)('0' + ch/10); in_str[1] = (char)('0' + ch%10); in_str[2] = '\0'; }
+    else { in_str[0] = (char)('0' + ch); in_str[1] = '\0'; }
+    uint32_t oc = g_synth.midi_out_ch;
+    if (oc > 9) { out_str[0] = (char)('0' + oc/10); out_str[1] = (char)('0' + oc%10); out_str[2] = '\0'; }
+    else { out_str[0] = (char)('0' + oc); out_str[1] = '\0'; }
     const char *sync_names[3] = {"OFF", "MASTER", "SLAVE"};
     uint32_t s = 0;
     while (sync_names[g_synth.sync_mode][s] && s < 7) { sync_str[s] = sync_names[g_synth.sync_mode][s]; s++; }
     sync_str[s] = '\0';
+    const char *yes = "ON", *no = "OFF";
+    uint32_t j = 0; while (yes[j] && j < 7) { yn1[j] = yes[j]; j++; } yn1[j] = '\0';
+    j = 0; while (no[j] && j < 7) { yn2[j] = no[j]; j++; } yn2[j] = '\0';
 
+    /* rows 0-2 in the 96px band, rows 3-4 in the 68px band below */
+    const char *labels[5] = {"MIDI IN", "MIDI OUT", "SYNC", "LOCAL", "PC IN"};
+    const char *vals[5]   = {in_str, out_str, sync_str,
+                             g_synth.midi_local ? yes : no,
+                             g_synth.pc_in ? yes : no};
     cv_begin(240, 96, C_BG);
     cv_text_plate(0, 0, 240, "MIDI SETUP", C_ROLAND_AMBER, C_BLACK, 1);
-
-    uint16_t c0 = (g_midi_sel == 0) ? C_ROLAND_AMBER : C_TEXT_DIM;
-    uint16_t c1 = (g_midi_sel == 1) ? C_ROLAND_AMBER : C_TEXT_DIM;
-
-    cv_text_plate(20, 24, 80, "CHANNEL", C_TEXT_DIM, C_BLACK, 0);
-    cv_text_plate(140, 24, 60, ch_str, c0, C_BLACK, 1);
-
-    cv_text_plate(20, 48, 80, "SYNC", C_TEXT_DIM, C_BLACK, 0);
-    cv_text_plate(140, 48, 80, sync_str, c1, C_BLACK, 1);
-
+    for (uint32_t i = 0; i < 3u; i++) {
+        uint16_t c = (g_midi_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
+        cv_text_plate(20, 24 + i*24, 90, labels[i], C_TEXT_DIM, C_BLACK, 0);
+        cv_text_plate(140, 24 + i*24, 80, vals[i], c, C_BLACK, 1);
+    }
     cv_blit(0, 76);
     cv_begin(240, 68, C_BG);
+    for (uint32_t i = 3u; i < 5u; i++) {
+        uint16_t c = (g_midi_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
+        cv_text_plate(20, 10 + (i-3u)*24, 90, labels[i], C_TEXT_DIM, C_BLACK, 0);
+        cv_text_plate(140, 10 + (i-3u)*24, 80, vals[i], c, C_BLACK, 1);
+    }
     cv_blit(0, 172);
 }
 
@@ -662,7 +1510,10 @@ static void draw_menu_midi(void)
 typedef struct {
     int8_t octave;
     uint8_t patch;
-    uint8_t midi_channel;   /* 1..16 */
+    uint8_t midi_channel;   /* 0 = All (omni), 1..16 */
+    uint8_t midi_out_ch;    /* 1..16: channel for everything we send */
+    uint8_t midi_local;     /* 1 = panel keys play engine, 0 = send-only */
+    uint8_t pc_in;          /* 1 = accept program change */
     uint8_t sync_mode;      /* 0 = off, 1 = master, 2 = slave */
 } fm106_settings_t;
 
@@ -946,7 +1797,9 @@ static int synth_quiet(void)
 /* Main application entry loop */
 static void app_main(void)
 {
-    fm106_settings_t set = {0, 0};
+    /* full defaults for the load-fail path (loader leaves `set` untouched):
+     * octave 0, patch 0, IN=All, OUT=1, LOCAL=on, PC IN=on, SYNC=off */
+    fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0};
     uint32_t prev_notes = 0, k;
     uint32_t dirty_screen = 1;
     uint32_t prev_voice_active = 0;
@@ -961,11 +1814,18 @@ static void app_main(void)
 
     settings_load(&set, sizeof(set));
     if (set.octave < -2 || set.octave > 2) set.octave = 0;
-    if (set.midi_channel < 1 || set.midi_channel > 16) set.midi_channel = 1;
+    if (set.midi_channel > 16) set.midi_channel = 0;    /* 0 = All (omni) */
+    if (set.midi_out_ch < 1 || set.midi_out_ch > 16) set.midi_out_ch = 1;
+    if (set.midi_local > 1) set.midi_local = 1;
+    if (set.pc_in > 1) set.pc_in = 1;
     if (set.sync_mode > 2) set.sync_mode = 0;
     g_synth.octave_shift = set.octave;
     g_synth.midi_channel = set.midi_channel;
+    g_synth.midi_out_ch = set.midi_out_ch;
+    g_synth.midi_local = set.midi_local;
+    g_synth.pc_in = set.pc_in;
     g_synth.sync_mode = set.sync_mode;
+    seq_sync_apply();
     fm106_load_user_preset(&g_synth, set.patch);
 
     lcd_fill(0, 0, 240, 240, C_BG);
@@ -983,6 +1843,32 @@ static void app_main(void)
         uint8_t st, d1, d2;
 
         platform_poll();
+        plock_scan();
+
+        /* drain seq MIDI-out events queued by the audio worker (SPSC) */
+        {
+            fm106_seq_msg_t sm;
+            uint8_t och = (g_synth.midi_out_ch - 1u) & 0x0Fu;
+            while (fm106_seq_msg_pop(&g_synth.seq, &sm)) {
+                if (sm.on) midi_send(0x90u | och, sm.note, sm.vel);
+                else       midi_send(0x80u | och, sm.note, 0u);
+            }
+        }
+
+        /* master MIDI clock out (SYNC=MASTER): 24 x F8 per beat while playing */
+        if (g_synth.sync_mode == 1u && g_synth.seq.playing && !g_synth.seq.midi_sync_active) {
+            uint32_t now = fm106_now_ms();
+            uint32_t bpm = g_synth.seq.bpm ? g_synth.seq.bpm : 120u;
+            uint32_t gap = 60000u / (bpm * 24u);
+            if (!g_clk_next) g_clk_next = now + gap;
+            while ((int32_t)(now - g_clk_next) >= 0) {
+                midi_send(0xF8u, 0, 0);
+                g_clk_next += gap;
+                if ((int32_t)(now - g_clk_next) >= (int32_t)gap * 4) { g_clk_next = now; break; }
+            }
+        } else {
+            g_clk_next = 0;
+        }
 
         /* 1. Panel Keys (27 note keyboard) */
         keys = fm1_in.notes;
@@ -993,12 +1879,17 @@ static void app_main(void)
         for (k = 0; k < 27u; k++) {
             if (down >> k & 1u) {
                 held[k] = (uint8_t)(base + k);
-                fm106_key_on(&g_synth, held[k], 100);
-                midi_send(0x90, held[k], 100);
+                if (g_synth.midi_local) fm106_key_on(&g_synth, held[k], 100);
+                midi_send(0x90u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), held[k], 100);
+                if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
+                    seq_note_entry(held[k], 100); /* rec arm -> live record; else acid entry */
+                    dirty_screen = 1;
+                }
             }
             if (up >> k & 1u) {
-                fm106_key_off(&g_synth, held[k]);
-                midi_send(0x80, held[k], 0);
+                if (g_synth.midi_local) fm106_key_off(&g_synth, held[k]);
+                midi_send(0x80u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), held[k], 0);
+                seq_note_release(held[k]); /* live-rec: stamp held length as gate */
             }
         }
 
@@ -1038,7 +1929,11 @@ static void app_main(void)
 
         /* Page jump buttons */
         if (b & (1u << BTN_HOME)) {
-            if (g_ui_mode == UI_MODE_SAVE) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && (g_seq_menu_on || g_note_menu_on)) {
+                g_seq_menu_on = 0u;      /* HOME closes the SEQ menus first */
+                g_note_menu_on = 0u;
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_SAVE) {
                 if (g_save_del_confirm) {
                     g_save_del_confirm = 0;
                     dirty_screen = 1;
@@ -1055,26 +1950,107 @@ static void app_main(void)
                 dirty_screen = 1;
             }
         }
+        /* SEQ page: EDIT long-press menu + short clear; REC arm; SEL/ENV flags */
+        if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
+            if (b & (1u << BTN_EDIT)) {
+                if (g_seq_menu_on) {
+                    edit_held_active = 0u; g_seq_menu_on = 0u;
+                }
+                else if (g_note_menu_on) { g_note_menu_on = 0u; }
+                else { t_edit_down = fm1_ms; edit_held_active = 0u; }
+                dirty_screen = 1;
+            }
+            if (b & (1u << BTN_REC)) { g_seq_rec_arm ^= 1u; g_seq_dirty = 1; dirty_screen = 1; }
+            if (b & (1u << BTN_SEL)) {
+                if (g_seq_menu_on) g_seq_menu_sel = (g_seq_menu_sel + SEQ_MENU_COUNT - 1u) % SEQ_MENU_COUNT;
+                else if (g_note_menu_on) g_note_menu_sel = (g_note_menu_sel + NOTE_MENU_COUNT - 1u) % NOTE_MENU_COUNT;
+                else { t_sel_down = fm1_ms; sel_held_active = 0u; }   /* short press clears on release */
+                dirty_screen = 1;
+            }
+            if (b & (1u << BTN_ENV)) {
+                if (g_seq_menu_on) g_seq_menu_sel = (g_seq_menu_sel + 1u) % SEQ_MENU_COUNT;
+                else if (g_note_menu_on) g_note_menu_sel = (g_note_menu_sel + 1u) % NOTE_MENU_COUNT;
+                else seq_ui_toggle_flag(FM106_SF_SLIDE);
+                dirty_screen = 1;
+            }
+        }
         if (b & (1u << BTN_EDIT)) {
-            if (g_ui_mode == UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
                 g_current_page = (g_current_page + 1u) % PAGE_COUNT;
                 dirty_screen = 1;
             }
         }
         if (b & (1u << BTN_ENV)) {
-            if (g_ui_mode == UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
                 g_current_page = PAGE_ENVELOPE;
                 dirty_screen = 1;
             }
         }
         if (b & (1u << BTN_LFO)) {
-            if (g_ui_mode == UI_MODE_NORMAL) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
                 g_current_page = PAGE_LFO;
                 dirty_screen = 1;
             }
         }
+
+        /* SEQ EDIT: held 500ms opens options; release short-clears (or clears all) */
+        if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
+            if (!edit_held_active && !g_seq_menu_on && (fm1_in.buttons & (1u << BTN_EDIT))) {
+                if (fm1_ms - t_edit_down >= 500u) {
+                    edit_held_active = 1u;
+                    g_seq_menu_on = 1u;
+                    g_seq_menu_sel = 0u;
+                    dirty_screen = 1;
+                }
+            }
+            if (rel & (1u << BTN_EDIT)) {
+                if (edit_held_active) {
+                    /* menu opened by hold: it stays up until HOME (or EDIT tap) */
+                    edit_held_active = 0u;
+                    dirty_screen = 1;
+                } else if (!g_seq_menu_on && !g_note_menu_on) {
+                    /* short press: note options for the edited step */
+                    g_note_menu_on = 1u;
+                    g_note_menu_sel = 0u;
+                    dirty_screen = 1;
+                }
+                edit_held_active = 0u;
+            }
+            /* SEQ SEL: held 500ms clears ALL steps; release short clears the step */
+            if (!sel_held_active && !g_seq_menu_on && !g_note_menu_on
+                && (fm1_in.buttons & (1u << BTN_SEL))) {
+                if (fm1_ms - t_sel_down >= 500u) {
+                    sel_held_active = 1u;
+                    fm1_irq_off();
+                    for (uint32_t i = 0; i < FM106_NSTEP; i++) {
+                        g_synth.seq.step[i].n = 0;
+                        g_synth.seq.step[i].time = FM106_ST_NOTE;
+                        g_synth.seq.step[i].flags = 0;
+                        g_synth.seq.step[i].acc = 0;
+                        g_synth.seq.step[i].vel = 0;
+                        g_synth.seq.step[i].probability = 0;
+                        g_synth.seq.step[i].ratchet = 0;
+                    }
+                    fm106_plock_clear(&g_synth.seq); /* wipes go with the pattern */
+                    fm1_irq_on();
+                    g_seq_dirty = 1;
+                    fm106_set_banner("SEQ ", "CLEARED");
+                    dirty_screen = 1;
+                }
+            }
+            if (rel & (1u << BTN_SEL)) {
+                if (!sel_held_active && !g_seq_menu_on && !g_note_menu_on) {
+                    seq_ui_clear_step();
+                    dirty_screen = 1;
+                }
+                sel_held_active = 0u;
+            }
+        }
         if (b & (1u << BTN_SEL)) {
-            if (g_ui_mode == UI_MODE_SAVE) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
+                g_synth.vca_mode ^= 1u;
+                g_dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_SAVE) {
                 int can_del = (g_save_slot < FM106_NUM_USER_PRESETS) && (g_user_presets[g_save_slot].name[0] != '\0');
                 if (can_del) {
                     if (g_save_del_confirm == 0) {
@@ -1124,14 +2100,7 @@ static void app_main(void)
             }
         }
         if (b & (1u << BTN_PLAY)) {   /* transport: start/stop the sequencer */
-            if (g_synth.seq.playing) {
-                for (uint8_t i = 0; i < g_synth.seq.seq_n; i++)
-                    fm106_note_off(&g_synth, g_synth.seq.seq_notes[i]);
-                g_synth.seq.seq_n = 0;
-                g_synth.seq.playing = 0;
-            } else {
-                fm106_seq_start(&g_synth.seq);
-            }
+            seq_transport_cmd(3);
         }
         if (b & (1u << BTN_SAVE)) {
             if (g_ui_mode == UI_MODE_SAVE) {
@@ -1207,7 +2176,7 @@ static void app_main(void)
                     fm106_load_user_preset(&g_synth, (uint32_t)np);
                     set.patch = (uint8_t)np;
                     dirty_screen = 1;
-                    midi_send(0xC0u | ((g_synth.midi_channel - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
+                    midi_send(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
                 }
             }
         }
@@ -1215,7 +2184,19 @@ static void app_main(void)
         /* Select / Page encoder */
         int32_t enc_s = fm1_enc_take(ENC_SELECT);
         if (enc_s != 0) {
-            if (g_ui_mode == UI_MODE_SAVE) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_seq_menu_on) {
+                int32_t nm = (int32_t)g_seq_menu_sel + enc_s;   /* glo-menu nav: SELECT moves rows */
+                while (nm < 0) nm += SEQ_MENU_COUNT;
+                while (nm >= (int32_t)SEQ_MENU_COUNT) nm -= SEQ_MENU_COUNT;
+                g_seq_menu_sel = (uint8_t)nm;
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_note_menu_on) {
+                int32_t nm = (int32_t)g_note_menu_sel + enc_s;
+                while (nm < 0) nm += NOTE_MENU_COUNT;
+                while (nm >= (int32_t)NOTE_MENU_COUNT) nm -= NOTE_MENU_COUNT;
+                g_note_menu_sel = (uint8_t)nm;
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_SAVE) {
                 int32_t ns = (int32_t)g_save_slot + enc_s;
                 while (ns < 0) ns += (int32_t)FM106_NUM_USER_PRESETS;
                 while (ns >= (int32_t)FM106_NUM_USER_PRESETS) ns -= (int32_t)FM106_NUM_USER_PRESETS;
@@ -1246,13 +2227,19 @@ static void app_main(void)
         /* ALGORITHM knob: bank switching in NORMAL mode, cursor in SAVE mode, menu editing in MENU mode */
         int32_t ealgo = fm1_enc_take(ENC_ALGORITHM);
         if (ealgo != 0) {
-            if (g_ui_mode == UI_MODE_SAVE) {
+            if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_seq_menu_on) {
+                seq_ui_menu_adjust(ealgo > 0 ? 1 : -1);          /* glo-menu nav: ALGORITHM edits value */
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_note_menu_on) {
+                seq_ui_note_adjust(ealgo > 0 ? 1 : -1);
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_SAVE) {
                 int32_t ncur = (int32_t)g_save_cursor + ealgo;
                 if (ncur < 0) ncur = 0;
                 if (ncur > 14) ncur = 14;
                 g_save_cursor = (uint8_t)ncur;
                 dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_NORMAL) {
+            } else if (g_ui_mode == UI_MODE_NORMAL && !g_seq_menu_on && !g_note_menu_on) {
                 int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
                 int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
                 int32_t nb = cur_bank + ealgo;
@@ -1262,19 +2249,35 @@ static void app_main(void)
                 fm106_load_user_preset(&g_synth, np);
                 set.patch = (uint8_t)np;
                 dirty_screen = 1;
-                midi_send(0xB0u | ((g_synth.midi_channel - 1u) & 0x0Fu), 0, (uint8_t)nb);
-                midi_send(0xC0u | ((g_synth.midi_channel - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
+                midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 0, (uint8_t)nb);
+                midi_send(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
             } else if (g_ui_mode == UI_MODE_MIDI) {
-                if (g_midi_sel == 0) {
+                if (g_midi_sel == 0) {          /* MIDI IN: 0 = All, 1..16 */
                     int32_t nc = (int32_t)g_synth.midi_channel + ealgo;
+                    if (nc < 0) nc = 16;
+                    if (nc > 16) nc = 0;
+                    g_synth.midi_channel = (uint8_t)nc;
+                } else if (g_midi_sel == 1) {   /* MIDI OUT: 1..16 */
+                    int32_t nc = (int32_t)g_synth.midi_out_ch + ealgo;
                     if (nc < 1) nc = 16;
                     if (nc > 16) nc = 1;
-                    g_synth.midi_channel = (uint8_t)nc;
-                } else {
+                    g_synth.midi_out_ch = (uint8_t)nc;
+                } else if (g_midi_sel == 2) {   /* SYNC */
                     int32_t ns = (int32_t)g_synth.sync_mode + (ealgo > 0 ? 1 : -1);
                     if (ns < 0) ns = 2;
                     if (ns > 2) ns = 0;
                     g_synth.sync_mode = (uint8_t)ns;
+                    seq_sync_apply();
+                } else if (g_midi_sel == 3) {   /* LOCAL: keys play engine */
+                    g_synth.midi_local ^= (uint8_t)(ealgo > 0 ? 1u : 0u);
+                    if (!g_synth.midi_local) {   /* going local-off: release any held voices */
+                        fm1_irq_off();
+                        for (uint8_t v = 0; v < FM106_NUM_VOICES; v++)
+                            if (g_synth.voice[v].note != 255u) fm106_note_off(&g_synth, g_synth.voice[v].note);
+                        fm1_irq_on();
+                    }
+                } else {                        /* PC IN: accept program change */
+                    g_synth.pc_in ^= (uint8_t)(ealgo > 0 ? 1u : 0u);
                 }
                 dirty_screen = 1;
                 dirty_save = 1;
@@ -1406,19 +2409,12 @@ static void app_main(void)
                 break;
             }
             case PAGE_SEQ: {
-                fm106_seq_t *s = &g_synth.seq;
-                if (k1) {   /* transport toggle */
-                    if (k1 > 0) fm106_seq_start(s);
-                    else        { for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(&g_synth, s->seq_notes[i]); s->seq_n = 0; s->playing = 0; }
+                if (!g_seq_menu_on && !g_note_menu_on) {   /* menus use SELECT/ALGORITHM (glo scheme) */
+                    if (k1) seq_ui_move_cursor(k1 > 0 ? 1 : -1);
+                    if (k2) seq_ui_move_row(k2 > 0 ? 1 : -1);
+                    if (k3) seq_ui_adjust_gate(k3 > 0 ? 1 : -1);
+                    if (k4) seq_ui_adjust_vel(k4 > 0 ? 1 : -1);
                 }
-                if (k2) s->slen = (uint8_t)fm106_clamp((int32_t)s->slen + (k2 > 0 ? 1 : -1), 1, FM106_NSTEP);
-                if (k3) {
-                    int32_t m = (int32_t)s->sdiv + (k3 > 0 ? 1 : -1);
-                    if (m < 0) m = 9;
-                    if (m > 9) m = 0;
-                    s->sdiv = (uint8_t)m;
-                }
-                if (k4) s->sgate = (uint8_t)fm106_clamp(s->sgate + k4 * 4, 8, 127);
                 break;
             }
             }
@@ -1436,15 +2432,23 @@ static void app_main(void)
                     fm106_midi_clock_transport(&g_synth.seq, st);
                 continue;
             }
+            /* channel filter: IN = All (0) hears everything, 1..16 only their
+             * channel. System Common (0xF0..0xF7) passes unfiltered. */
+            if (g_synth.midi_channel && (st & 0xF0u) < 0xF0u
+                && ((st & 0x0Fu) + 1u) != g_synth.midi_channel)
+                continue;
             uint8_t type = st & 0xF0u;
             if (type == 0x90u && d2 > 0) {
                 fm106_key_on(&g_synth, d1, d2);
+                seq_note_entry(d1, d2); /* armed -> live record anywhere; else acid entry on SEQ page */
             } else if (type == 0x80u || (type == 0x90u && d2 == 0)) {
                 fm106_key_off(&g_synth, d1);
+                seq_note_release(d1); /* live-rec: stamp held length as gate */
             } else if (type == 0xE0u) {  /* Pitch Bend */
                 int32_t raw = ((int32_t)d2 << 7) | (int32_t)d1;
                 g_synth.pitch_bend_val = (int16_t)(raw - 8192);
-            } else if (type == 0xC0u) {  /* Program Change */
+            } else if (type == 0xC0u) {  /* Program Change (gated by PC IN) */
+                if (!g_synth.pc_in) continue;
                 int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
                 uint32_t target_patch = (uint32_t)(cur_bank * 64 + (d1 % 64u));
                 fm106_load_user_preset(&g_synth, target_patch);
@@ -1527,31 +2531,87 @@ static void app_main(void)
                 } else if (d1 == 12) {   /* HPF Mode */
                     g_synth.hpf.mode = (d2 / 32u) > 3 ? 3 : (d2 / 32u);
                     dirty_screen = 1;
-                } else if (d1 == 93) {   /* Chorus send */
-                    g_synth.chorus.mode = d2 > 80 ? FM106_CHORUS_II : (d2 > 40 ? FM106_CHORUS_I : FM106_CHORUS_OFF);
-                    dirty_screen = 1;
                 } else if (d1 >= 83 && d1 <= 86) {         /* Tape: type/mix/rate/char */
                     fm106_cc_fx(&g_synth.fx[0], d1 - 83, d2);
                     dirty_screen = 1;
+                } else if (d1 == 93) {   /* Chorus mode: off / I / II / I+II zones */
+                    g_synth.chorus.mode = d2 < 32u ? 0u : d2 < 64u ? 1u : d2 < 96u ? 2u : 3u;
+                    dirty_screen = 1;
+                } else if (d1 >= 87u && d1 <= 98u) {    /* one CC per param */
+                    uint8_t idx = g_cc_param[d1 - 87u];
+                    if (idx != 0xFFu) {
+                        fm106_param_set(&g_synth, idx, cc_to_param_value(idx, d2));
+                        dirty_screen = 1;
+                    }
+                } else if (d1 == 99u || d1 == 100u || d1 == 101u) {
+                    /* step accent / slide / ratchet on the edit step */
+                    seq_ui_cc_flag(d1 - 99u, d2);
+                } else if (d1 == 102u) {        /* Tempo: v*2+40 (40..240 BPM) */
+                    uint32_t bpm = (uint32_t)d2 * 2u + 40u;
+                    g_synth.seq.bpm = (uint8_t)(bpm > 240u ? 240u : bpm);
+                    dirty_screen = 1;
+                } else if (d1 == 103u) {        /* Step division (0-9, >9 -> 16ths) */
+                    g_synth.seq.sdiv = d2 > 9u ? 3u : d2;
+                    dirty_screen = 1;
+                } else if (d1 == 104u) {        /* Pattern length: v+1 steps (1..128) */
+                    fm1_irq_off();
+                    g_synth.seq.slen = (uint16_t)((uint32_t)d2 + 1u);
+                    if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = (uint16_t)(g_synth.seq.slen - 1u);
+                    fm1_irq_on();
+                    dirty_screen = 1;
+                } else if (d1 == 105u) {        /* Gate length */
+                    g_synth.seq.sgate = d2 ? d2 : 1u;
+                    dirty_screen = 1;
+                } else if (d1 == 106u) {        /* Swing */
+                    g_synth.seq.swing = d2 > 100u ? 100u : d2;
+                    dirty_screen = 1;
+                } else if (d1 == 107u) {        /* Transport: 0 stop, 1 start, 2 continue, 3 toggle */
+                    seq_transport_cmd(d2 == 0u ? 0u : d2 == 1u ? 1u : d2 == 2u ? 2u : 3u);
+                } else if (d1 == 108u) {        /* Record arm */
+                    g_seq_rec_arm = d2 >= 64u;
+                    dirty_screen = 1;
+                } else if (d1 == 109u && d2 >= 64u) {  /* Clear all p-locks */
+                    fm1_irq_off();
+                    fm106_plock_clear(&g_synth.seq);
+                    fm1_irq_on();
+                } else if (d1 == 110u) {        /* Edit cursor step */
+                    g_seq_cursor = (uint16_t)((uint32_t)d2 % (g_synth.seq.slen ? g_synth.seq.slen : 1u));
+                    dirty_screen = 1;
+                } else if (d1 == 111u) {        /* Edit cursor pitch row (1..127) */
+                    uint8_t row = d2 < 1u ? 1u : d2;
+                    g_seq_row = row;
+                    if (g_seq_row < g_seq_view_lo) g_seq_view_lo = g_seq_row;
+                    if (g_seq_row > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = g_seq_row - SEQ_ROWS + 1u;
+                    if (g_seq_view_lo > 114u) g_seq_view_lo = 114u;
+                    dirty_screen = 1;
+                } else if (d1 == 112u && d2 >= 64u) {   /* Clear cursor step */
+                    seq_ui_clear_step();
+                    dirty_screen = 1;
+                } else if (d1 == 113u) {        /* Sync mode: 0 off, 1 master, 2 slave */
+                    g_synth.sync_mode = (uint8_t)(d2 % 3u);
+                    seq_sync_apply();
+                    dirty_save = 1;
+                    dirty_screen = 1;
                 } else if (d1 == 119) {  /* Debug telemetry inquiry */
-                    midi_send(0xB0, 114, (uint8_t)(uac.alt & 0x7Fu));
-                    midi_send(0xB0, 115, (uint8_t)(uac.starts & 0x7Fu));
-                    midi_send(0xB0, 116, (uint8_t)(uac.stalls & 0x7Fu));
-                    midi_send(0xB0, 117, (uint8_t)(uac.rate_sets & 0x7Fu));
-                    midi_send(0xB0, 118, (uint8_t)(uac.flowing & 0x7Fu));
-                    midi_send(0xB0, 119, (uint8_t)g_cpu0_load_pct);
-                    midi_send(0xB0, 120, (uint8_t)g_cpu1_load_pct);
-                    midi_send(0xB0, 121, (uint8_t)(g_cpu0_ticks / 1000u));
-                    midi_send(0xB0, 122, (uint8_t)(g_cpu1_ticks / 1000u));
-                    midi_send(0xB0, 123, (uint8_t)(uac.overruns & 0x7Fu));
-                    midi_send(0xB0, 124, (uint8_t)(uac.underruns & 0x7Fu));
+                    uint8_t tch = (uint8_t)(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu));
+                    midi_send(tch, 114, (uint8_t)(uac.alt & 0x7Fu));
+                    midi_send(tch, 115, (uint8_t)(uac.starts & 0x7Fu));
+                    midi_send(tch, 116, (uint8_t)(uac.stalls & 0x7Fu));
+                    midi_send(tch, 117, (uint8_t)(uac.rate_sets & 0x7Fu));
+                    midi_send(tch, 118, (uint8_t)(uac.flowing & 0x7Fu));
+                    midi_send(tch, 119, (uint8_t)g_cpu0_load_pct);
+                    midi_send(tch, 120, (uint8_t)g_cpu1_load_pct);
+                    midi_send(tch, 121, (uint8_t)(g_cpu0_ticks / 1000u));
+                    midi_send(tch, 122, (uint8_t)(g_cpu1_ticks / 1000u));
+                    midi_send(tch, 123, (uint8_t)(uac.overruns & 0x7Fu));
+                    midi_send(tch, 124, (uint8_t)(uac.underruns & 0x7Fu));
 #if DINGHY_DUAL_CORE
-                    midi_send(0xB0, 125, (uint8_t)(audio_worker.timeouts & 0x7Fu));
+                    midi_send(tch, 125, (uint8_t)(audio_worker.timeouts & 0x7Fu));
 #else
-                    midi_send(0xB0, 125, 0);
+                    midi_send(tch, 125, 0);
 #endif
-                    midi_send(0xB0, 126, (uint8_t)(uac.missed & 0x7Fu));
-                    midi_send(0xB0, 127, (uint8_t)(audio_lates & 0x7Fu));
+                    midi_send(tch, 126, (uint8_t)(uac.missed & 0x7Fu));
+                    midi_send(tch, 127, (uint8_t)(audio_lates & 0x7Fu));
                 } else if (d1 == 64) {   /* Sustain pedal */
                     fm1_irq_off();
 #if DINGHY_DUAL_CORE
@@ -1595,6 +2655,7 @@ static void app_main(void)
         fm1_led_key(BTN_SEQ, g_synth.seq.playing);
         fm1_led_key(BTN_PLAY, g_synth.seq.playing);
         fm1_led_key(BTN_SAVE, (g_ui_mode == UI_MODE_SAVE));
+        fm1_led_key(BTN_REC, g_seq_rec_arm);
 
         if (g_banner_msg[0] != '\0' && fm1_ms >= g_banner_until) {
             g_banner_msg[0] = '\0';
@@ -1614,8 +2675,11 @@ static void app_main(void)
             dirty_screen = 1;
         }
         static uint8_t prev_ui_mode = UI_MODE_NORMAL;
+        static uint8_t prev_page = 0xFF;
         int ui_mode_changed = (g_ui_mode != prev_ui_mode);
+        int page_changed = (g_current_page != prev_page);
         prev_ui_mode = g_ui_mode;
+        prev_page = g_current_page;
         int voice_changed = (voice_active != prev_voice_active);
 
         if (dirty_screen) {
@@ -1625,24 +2689,52 @@ static void app_main(void)
                 draw_menu_midi();
             } else if (g_ui_mode == UI_MODE_SAVE) {
                 draw_save_menu();
+            } else if (g_current_page == PAGE_SEQ) {
+                if (g_seq_menu_on) draw_seq_menu();
+                else if (g_note_menu_on) draw_note_menu();
+                else draw_seq_page();
             } else {
                 draw_top_section(g_synth.patch_idx, g_synth.patch_name);
                 draw_faders_section(g_current_page);
-                if (ui_mode_changed) {
+                if (ui_mode_changed || page_changed) {
                     draw_waveform_section();
                 }
             }
             dirty_screen = 0;
             t_last_top = fm1_ms;
             prev_voice_active = voice_active;
-        } else if (voice_changed && (fm1_ms - t_last_top >= 50u) && (g_ui_mode == UI_MODE_NORMAL)) {
+        } else if (voice_changed && (fm1_ms - t_last_top >= 50u) && (g_ui_mode == UI_MODE_NORMAL)
+                   && g_current_page != PAGE_SEQ) {   /* SEQ page owns its header — never overdraw it */
             t_last_top = fm1_ms;
             prev_voice_active = voice_active;
             draw_top_section(g_synth.patch_idx, g_synth.patch_name);
         }
 
+        /* SEQ page: periodic redraw for playhead — roll bands only (fast), and
+         * follow the playhead when the pattern is longer than the window. */
+        if ((g_ui_mode == UI_MODE_NORMAL) && (g_current_page == PAGE_SEQ) && !g_seq_menu_on && !g_note_menu_on) {
+            fm106_seq_t *sq = &g_synth.seq;
+            if (sq->playing) {
+                if (sq->seq_idx < g_seq_view_step ||
+                    sq->seq_idx >= (uint16_t)(g_seq_view_step + 16u)) {
+                    int32_t vs = (int32_t)sq->seq_idx - 8;
+                    int32_t len = sq->slen ? (int32_t)sq->slen : 1;
+                    if (vs > len - 16) vs = len - 16;
+                    if (vs < 0) vs = 0;
+                    g_seq_view_step = (uint16_t)vs;
+                }
+            }
+            if ((sq->playing && fm1_ms - t_last_seq >= 40u) || g_seq_dirty) {
+                t_last_seq = fm1_ms;
+                g_seq_dirty = 0;
+                int32_t ph = sq->playing ? (int32_t)sq->seq_idx : -1; /* one snapshot: both bands agree */
+                draw_seq_roll_band(0, 8, 22, ph);
+                draw_seq_roll_band(8, 14, 118, ph);
+            }
+        }
+
         /* Continuous oscilloscope refresh in performance mode */
-        if (g_ui_mode == UI_MODE_NORMAL) {
+        if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
             uint32_t scope_active = (voice_active != 0) || !synth_quiet();
             if ((scope_active && (fm1_ms - t_last_scope >= 50u)) ||
                 (!scope_active && scope_was_active && (fm1_ms - t_last_scope >= 50u))) {
@@ -1654,6 +2746,13 @@ static void app_main(void)
 
         /* 7. Flash Settings Persistence (only when synth is completely silent) */
         if (dirty_save && synth_quiet() && (fm1_ms - t_change > 1000u)) {
+            /* menu edits live in g_synth; mirror them into set before the flush
+             * (the old code never did — MIDI menu changes were lost on reboot) */
+            set.midi_channel = g_synth.midi_channel;
+            set.midi_out_ch  = g_synth.midi_out_ch;
+            set.midi_local   = g_synth.midi_local;
+            set.pc_in        = g_synth.pc_in;
+            set.sync_mode    = g_synth.sync_mode;
             settings_save(&set, sizeof(set));
             dirty_save = 0;
         }
