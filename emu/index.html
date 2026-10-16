@@ -1,0 +1,795 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+     FM-106 Web Simulator — Authentic Roland Juno-106 Synthesizer Emulator -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FM-106 // Web Simulator</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23ff2d95%22/%3E%3Crect x=%223%22 y=%223%22 width=%2210%22 height=%2210%22 rx=%222%22 fill=%22%230b0020%22/%3E%3Ctext x=%228%22 y=%2211%22 font-size=%228%22 font-weight=%22900%22 fill=%22%232de2e6%22 text-anchor=%22middle%22%3EJ%3C/text%3E%3C/svg%3E">
+<meta name="description" content="FM-106 Roland Juno-106 Synthesizer running in your browser: the same DSP engine that runs on the hardware instrument.">
+<style>
+@font-face {
+  font-family: "DotGothic16";
+  src: url("fonts/DotGothic16-subset.woff") format("woff");
+  font-display: swap;
+}
+
+:root {
+  --bg: #0b0020;
+  --fg: #f3e9ff;
+  --dim: #9d86c9;
+  --pink: #ff2d95;
+  --cyan: #2de2e6;
+  --purple: #b026ff;
+  --gold: #ffd319;
+  --green: #39ff9e;
+  --line: rgba(176, 38, 255, .35);
+  --grid: rgba(45, 226, 230, .08);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --chassis: #150f28;
+  --tray: #0c071a;
+  --part: #241940;
+  --edge: #472d7c;
+  --label: #e2d8f5;
+  --lit: #ff2d95;
+  --lit-glow: rgba(255, 45, 149, .65);
+}
+
+body {
+  margin: 0;
+  color: var(--fg);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 39px, var(--grid) 39px 40px),
+    repeating-linear-gradient(90deg, transparent 0 39px, var(--grid) 39px 40px),
+    radial-gradient(120% 60% at 50% -10%, rgba(176, 38, 255, .28), transparent 60%),
+    radial-gradient(90% 50% at 50% 110%, rgba(255, 45, 149, .16), transparent 60%),
+    linear-gradient(180deg, #0b0020, #12002e);
+  background-attachment: fixed;
+  font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+main {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 24px 16px 36px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+h1 {
+  font-family: var(--mono);
+  font-size: 32px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  margin: 0;
+  background: linear-gradient(180deg, #fff 8%, var(--cyan) 42%, var(--pink) 58%, var(--purple) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 16px rgba(255, 45, 149, .5));
+}
+
+.subhead {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--cyan);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.nav-links a {
+  color: var(--cyan);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(45, 226, 230, .35);
+  margin-left: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all .15s ease;
+}
+.nav-links a:hover {
+  color: var(--pink);
+  border-color: var(--pink);
+  text-shadow: 0 0 8px rgba(255, 45, 149, .6);
+}
+
+.device {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1000 / 624;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+  border-radius: 20px;
+  box-shadow:
+    0 12px 48px rgba(0, 0, 0, .8),
+    0 0 24px rgba(176, 38, 255, .35),
+    inset 0 1px 1px rgba(255, 255, 255, .15);
+  border: 1px solid var(--line);
+}
+
+.device svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.device canvas {
+  position: absolute;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  background: #000;
+  box-shadow: 0 0 16px rgba(0, 165, 225, .25), inset 0 0 6px rgba(0, 0, 0, .8);
+  border-radius: 4px;
+}
+
+.hit {
+  position: absolute;
+  touch-action: none;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  border-radius: 10px;
+}
+
+.hit.knob {
+  cursor: ns-resize;
+  border-radius: 50%;
+}
+
+.hit:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.face { transition: fill .06s, stroke .06s; }
+.face.btn { fill: var(--part); stroke: var(--edge); }
+.face.btn:hover { stroke: var(--cyan); }
+.dim .face.btn { fill: #36225a; }
+.lit .face.btn { fill: var(--pink); stroke: #fff; filter: drop-shadow(0 0 8px var(--lit-glow)); }
+.lit text { fill: #fff !important; font-weight: 700; }
+.green .face.btn { fill: var(--green); stroke: #fff; filter: drop-shadow(0 0 8px rgba(57, 255, 158, .7)); }
+.green text { fill: #002e14 !important; }
+
+.face.key { fill: #0c071a; stroke: #3a2266; stroke-width: 1.5; }
+.slit { fill: #382460; transition: fill .05s; }
+.dim .slit { fill: #5b3e9a; }
+.lit .slit {
+  fill: var(--cyan);
+  filter: drop-shadow(0 0 6px rgba(45, 226, 230, .85));
+}
+.held .face {
+  stroke: var(--cyan);
+  stroke-width: 2.5;
+}
+.latched .face {
+  stroke: var(--gold);
+  stroke-width: 3;
+}
+
+.start {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  background: rgba(11, 0, 32, .82);
+  backdrop-filter: blur(8px);
+  border-radius: 20px;
+  z-index: 10;
+}
+.start[hidden] { display: none; }
+.start button {
+  font: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  padding: 14px 36px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--cyan), var(--pink));
+  color: #0b0020;
+  border: 0;
+  cursor: pointer;
+  box-shadow: 0 0 28px rgba(255, 45, 149, .7);
+  letter-spacing: .06em;
+  transition: transform .1s, box-shadow .15s;
+}
+.start button:hover:not(:disabled) {
+  transform: scale(1.03);
+  box-shadow: 0 0 40px rgba(255, 45, 149, .95);
+}
+.start button:disabled {
+  opacity: .4;
+  cursor: progress;
+}
+.start p {
+  margin: 0;
+  max-width: 36em;
+  text-align: center;
+  color: var(--gold);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.keys, footer {
+  margin: 20px 0 0;
+  color: var(--dim);
+  text-align: center;
+  font-size: 13px;
+}
+.keys span {
+  white-space: nowrap;
+  margin: 0 10px;
+}
+.keys select {
+  font: inherit;
+  font-size: 12px;
+  background: var(--part);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+kbd {
+  font: 700 11px var(--mono);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--cyan);
+  background: rgba(45, 226, 230, .08);
+}
+footer {
+  margin-top: 24px;
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+footer a {
+  color: var(--cyan);
+  text-decoration: none;
+}
+footer a:hover {
+  color: var(--pink);
+}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <div>
+    <h1>FM-106</h1>
+    <div class="subhead">Authentic 6-Voice Roland Juno-106 Web Simulator</div>
+  </div>
+  <div class="nav-links">
+    <a href="../index.html">Installer</a>
+    <a href="../Librarian.html">Librarian / Editor</a>
+    <a href="../manual.html">Manual</a>
+  </div>
+</header>
+
+<div class="device" id="device">
+  <svg id="panel" viewBox="0 0 1000 624" aria-hidden="true"></svg>
+  <canvas id="screen" width="240" height="240" role="img" aria-label="Juno-106 LCD Screen"></canvas>
+  <div class="start" id="start">
+    <button id="go" type="button">Power On FM-106</button>
+    <p id="status" hidden></p>
+  </div>
+</div>
+
+<p class="keys">
+  <span><kbd>Z</kbd>–<kbd>'</kbd> <kbd>Q</kbd>–<kbd>O</kbd> Keyboard</span>
+  <span><kbd>1</kbd>–<kbd>=</kbd> FX … REC</span>
+  <span><kbd>[</kbd> <kbd>]</kbd> OCT</span>
+  <span><kbd>↑</kbd> <kbd>↓</kbd> SELECT</span>
+  <span><kbd>←</kbd> <kbd>→</kbd> ALGORITHM</span>
+  <span><kbd>Shift</kbd>-click latches button</span>
+  <span id="midiknobs" hidden><label><input type="checkbox" id="knobson"> MIDI CC 20–27 turn knobs</label>
+  <select id="knobmode" aria-label="Knob CC mode" hidden>
+    <option value="abs">absolute</option>
+    <option value="bin">relative 64±n</option>
+    <option value="twos">relative 2's complement</option>
+    <option value="sign">relative sign bit</option>
+  </select></span>
+</p>
+
+<footer>
+  FM-106 Roland Juno-106 Synthesizer Firmware &middot; WebAssembly DSP Simulator<br>
+  Built with the Felucca AudioWorklet engine by Leo Kuroshita (@kurogedelic), Hügelton Instruments &middot; <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0</a><br>
+  <small>Roland, Juno-106, M-VAVE, and FM-1 are trademarks of their respective owners. FM-106 is an independent open-source project.</small>
+</footer>
+</main>
+
+<script type="module">
+import { midiKnob, KNOB_MODES } from "./worklet.js";
+const NS = "http://www.w3.org/2000/svg";
+
+const B = {
+  FX: 0, SCL: 1, ENV: 2, LFO: 3, EDIT: 4, GLO: 5,
+  HOME: 6, SAVE: 7, ARP: 8, SEQ: 9, PLAY: 10, REC: 11,
+  "OCT-": 12, "OCT+": 13
+};
+
+const EN = {
+  SELECT: 0, ALGORITHM: 1, PRESETS: 2,
+  "KNOB 1": 3, "KNOB 2": 4, "KNOB 3": 5, "KNOB 4": 6
+};
+
+const PLAY_GREEN = 14;
+const WHITE = [0, 2, 4, 6, 7, 9, 11, 12, 14, 16, 18, 19, 21, 23, 24, 26];
+const BLACK = [1, 3, 5, 8, 10, 13, 15, 17, 20, 22, 25];
+const BLACK_AFTER = [0, 1, 2, 4, 5, 7, 8, 9, 11, 12, 14];
+const STORE = "fm106-emu-flash", KNOBS_ON = "fm106-emu-knobs", KNOB_MODE = "fm106-emu-knobmode";
+
+const ROW1 = ["FX", "SCL", "ENV", "LFO", "EDIT", "GLO"];
+const ROW2 = ["HOME", "SAVE", "ARP", "SEQ", "PLAY", "REC"];
+const KNOBS = ["MASTER", "SELECT", "PRESETS", "ALGORITHM", "KNOB 1", "KNOB 2", "KNOB 3", "KNOB 4"];
+
+const LAYOUTS = {
+  wide: {
+    w: 1000, h: 624, screen: [292, 44, 256],
+    knobs: [
+      [105, 100, 24], [215, 100, 24], [105, 205, 24], [215, 205, 24],
+      [610, 100, 22], [714, 100, 22], [818, 100, 22], [922, 100, 22]
+    ],
+    trays: [[50, 250, 220, 50], [568, 160, 400, 140]],
+    oct: [[60, 258, 90, 34], [170, 258, 90, 34]],
+    grid: [582, 174, 54, 48, 63, 62],
+    keybed: [36, 332, 928, 256],
+  },
+  tall: {
+    w: 600, h: 1070, screen: [130, 104, 340],
+    knobs: [
+      [66, 64, 24], [186, 64, 24], [414, 64, 24], [534, 64, 24],
+      [90, 512, 26], [230, 512, 26], [370, 512, 26], [510, 512, 26]
+    ],
+    trays: [[14, 572, 572, 146], [150, 728, 300, 62]],
+    oct: [[164, 737, 128, 44], [308, 737, 128, 44]],
+    grid: [24, 582, 86, 60, 94, 70],
+    keybed: [14, 800, 572, 256],
+  },
+};
+
+const svg = document.getElementById("panel"),
+      device = document.getElementById("device"),
+      canvas = document.getElementById("screen");
+
+function el(tag, attrs, parent = svg) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  parent.appendChild(e);
+  return e;
+}
+
+const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+      DOT = "'DotGothic16', " + SANS;
+
+function label(parent, x, y, s, size, font = SANS, ink = "var(--label)") {
+  const t = el("text", {
+    x, y, "text-anchor": "middle", "font-family": font,
+    "font-size": size, "font-weight": 700, fill: ink, "letter-spacing": ".04em"
+  }, parent);
+  t.textContent = s;
+  return t;
+}
+
+const KEYNAMES = ["F", "F♯", "G", "G♯", "A", "A♯", "B", "C", "C♯", "D", "D♯", "E"];
+const keyName = (k) => KEYNAMES[k % 12] + (3 + Math.floor((k + 5) / 12));
+
+let node = null, btnMask = 0, keyMask = 0, latched = 0, masterValue = 700, lastLeds = [0, 0, 0, 0, 0], layout = null;
+const angle = Object.fromEntries(KNOBS.map((n) => [n, 0]));
+angle.MASTER = -135 + 270 * masterValue / 1023;
+const knobs = [], buttons = [], keys = [];
+const btnBy = new Map(), keyBy = new Map();
+const send = (m) => { if (node) node.port.postMessage(m); };
+
+function build(name) {
+  const L = LAYOUTS[name];
+  layout = name;
+  svg.innerHTML = "";
+  svg.setAttribute("viewBox", `0 0 ${L.w} ${L.h}`);
+  device.style.aspectRatio = `${L.w} / ${L.h}`;
+  for (const d of device.querySelectorAll(".hit")) d.remove();
+  knobs.length = buttons.length = keys.length = 0;
+
+  // Main chassis with Roland Juno-106 stripes
+  el("rect", { x: 4, y: 4, width: L.w - 8, height: L.h - 8, rx: 20, fill: "var(--chassis)" });
+  // Signature Juno stripes: cyan top stripe, pink bottom stripe
+  el("line", { x1: 24, y1: 24, x2: L.w - 24, y2: 24, stroke: "var(--cyan)", "stroke-width": 2.5, opacity: 0.9 });
+  el("line", { x1: 24, y1: 28, x2: L.w - 24, y2: 28, stroke: "var(--pink)", "stroke-width": 1.5, opacity: 0.8 });
+
+  // Roland Badge
+  label(svg, 70, 48, "Roland", 15, SANS, "#ff2d95");
+  label(svg, 140, 48, "JUNO-106", 13, SANS, "var(--cyan)");
+
+  for (const [x, y, w, h] of L.trays)
+    el("rect", { x, y, width: w, height: h, rx: 12, fill: "var(--tray)", stroke: "var(--edge)", "stroke-width": 1.5 });
+
+  const [sx, sy, ss] = L.screen;
+  el("rect", { x: sx, y: sy, width: ss, height: ss, rx: 14, fill: "#06020e", stroke: "var(--edge)", "stroke-width": 2 });
+  const inset = ss / 32;
+  Object.assign(canvas.style, {
+    left: `${(sx + inset) / L.w * 100}%`, top: `${(sy + inset) / L.h * 100}%`,
+    width: `${(ss - 2 * inset) / L.w * 100}%`, height: `${(ss - 2 * inset) / L.h * 100}%`
+  });
+
+  KNOBS.forEach((n, i) => {
+    const [x, y, r] = L.knobs[i], g = el("g", {});
+    el("circle", { cx: x, cy: y, r: r + 5, fill: "var(--tray)" }, g);
+    el("circle", { cx: x, cy: y, r, fill: "var(--part)", stroke: "var(--edge)", "stroke-width": 2 }, g);
+    const ind = n === "MASTER" ?
+      el("line", { x1: x, y1: y - r + 4, x2: x, y2: y - r + 13, stroke: "var(--pink)", "stroke-width": 3, "stroke-linecap": "round" }, g) :
+      el("line", { x1: x, y1: y - r + 5, x2: x, y2: y - r + 11, stroke: "var(--cyan)", "stroke-width": 2.5, "stroke-linecap": "round" }, g);
+    label(g, x, y - r - 10, n, 14, DOT, n === "MASTER" ? "var(--pink)" : "var(--label)");
+    el("circle", { cx: x, cy: y, r: r + 12, fill: "transparent" }, g);
+    knobs.push({ g, ind, x, y, name: n, role: n === "MASTER" ? "master" : EN[n] });
+  });
+
+  const button = ([x, y, w, h], n, sub) => {
+    const g = el("g", {});
+    el("rect", { x, y, width: w, height: h, rx: 8, class: "face btn" }, g);
+    const ink = n === "REC" ? "#ff453a" : (n === "PLAY" ? "var(--green)" : undefined);
+    if (sub) {
+      label(g, x + w / 2, y + h / 2 - 2, n, 11, SANS, ink);
+      label(g, x + w / 2, y + h / 2 + 11, sub, 9.5, SANS, "var(--dim)");
+    } else {
+      label(g, x + w / 2, y + h / 2 + 4.5, n, 12, SANS, ink);
+    }
+    buttons.push({ g, bit: B[n], name: sub ? `${n} / ${sub}` : n });
+  };
+
+  button(L.oct[0], "OCT-");
+  button(L.oct[1], "OCT+");
+  const [gx, gy, gw, gh, dx, dy] = L.grid;
+  for (let i = 0; i < 6; i++) {
+    button([gx + i * dx, gy, gw, gh], ROW1[i]);
+    button([gx + i * dx, gy + dy, gw, gh], ROW2[i], ROW2[i] === "PLAY" ? "STOP" : "");
+  }
+
+  const [x0, y0, w, h] = L.keybed;
+  el("rect", { x: x0, y: y0, width: w, height: h, rx: 16, fill: "var(--tray)", stroke: "var(--edge)", "stroke-width": 1.5 });
+  const pitch = (w - 24) / 16, kw = pitch * 0.78, kh = h * 0.425, sw = Math.max(3, kw * 0.14);
+  const key = (cx, cy, k) => {
+    const g = el("g", {}), y = cy - kh / 2;
+    el("rect", { x: cx - kw / 2, y, width: kw, height: kh, rx: kw / 2, class: "face key" }, g);
+    el("rect", { x: cx - sw / 2, y: y + kw * 0.4, width: sw, height: kh - kw * 0.8, rx: sw / 2, class: "slit" }, g);
+    el("rect", { x: cx - pitch / 2, y: cy - h * 0.24, width: pitch, height: h * 0.48, fill: "transparent" }, g);
+    keys[k] = { g, name: keyName(k) };
+  };
+
+  WHITE.forEach((k, i) => key(x0 + 12 + (i + 0.5) * pitch, y0 + h * 0.75, k));
+  BLACK_AFTER.forEach((a, j) => key(x0 + 12 + (a + 1) * pitch, y0 + h * 0.25, BLACK[j]));
+
+  const hit = (c, cls, role) => {
+    const b = c.g.getBBox(), d = document.createElement("div");
+    d.className = "hit" + (cls ? " " + cls : "");
+    Object.assign(d.style, {
+      left: `${b.x / L.w * 100}%`, top: `${b.y / L.h * 100}%`,
+      width: `${b.width / L.w * 100}%`, height: `${b.height / L.h * 100}%`
+    });
+    d.setAttribute("role", role);
+    d.setAttribute("aria-label", c.name);
+    d.title = c.name;
+    d.tabIndex = 0;
+    d.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
+    d.addEventListener("contextmenu", (e) => e.preventDefault());
+    device.insertBefore(d, document.getElementById("start"));
+    c.hit = d;
+  };
+
+  knobs.forEach((k) => { hit(k, "knob", "slider"); bindKnob(k); drawKnob(k); });
+  buttons.forEach((b) => { hit(b, "", "button"); bindButton(b); });
+  keys.forEach((k, i) => { hit(k, "", "button"); bindKey(k, i); });
+  syncButtons(true);
+  syncKeys(true);
+  drawLights(lastLeds);
+}
+
+function syncButtons(redraw) {
+  let m = latched;
+  for (const b of btnBy.values()) m |= 1 << b;
+  if (m !== btnMask) { btnMask = m; send({ type: "buttons", mask: m }); }
+  else if (!redraw) return;
+  for (const b of buttons) {
+    const on = !!(m & (1 << b.bit));
+    b.g.classList.toggle("held", on);
+    b.g.classList.toggle("latched", !!(latched & (1 << b.bit)));
+    b.hit.setAttribute("aria-pressed", on);
+  }
+}
+
+function syncKeys(redraw) {
+  let m = 0;
+  for (const k of keyBy.values()) m |= 1 << k;
+  if (m !== keyMask) { keyMask = m; send({ type: "keys", mask: m }); }
+  else if (!redraw) return;
+  keys.forEach((k, i) => k.g.classList.toggle("held", !!(m & (1 << i))));
+}
+
+function bindButton(b) {
+  b.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (e.shiftKey || e.button === 2) { latched ^= 1 << b.bit; syncButtons(true); return; }
+    if (latched & (1 << b.bit)) { latched &= ~(1 << b.bit); syncButtons(true); return; }
+    b.hit.setPointerCapture(e.pointerId);
+    btnBy.set("p" + e.pointerId, b.bit);
+    syncButtons();
+  });
+  b.hit.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+      btnBy.set("f" + b.bit, b.bit);
+      syncButtons();
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  b.hit.addEventListener("keyup", () => {
+    if (btnBy.delete("f" + b.bit)) syncButtons();
+  });
+}
+
+function bindKey(k, i) {
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    k.hit.setPointerCapture(e.pointerId);
+    keyBy.set("p" + e.pointerId, i);
+    syncKeys();
+  });
+}
+
+function release(e) {
+  const id = "p" + e.pointerId;
+  if (btnBy.delete(id)) syncButtons();
+  if (keyBy.delete(id)) syncKeys();
+}
+for (const t of ["pointerup", "pointercancel", "lostpointercapture"])
+  device.addEventListener(t, release);
+
+function drawKnob(k) {
+  if (k.ind) k.ind.setAttribute("transform", `rotate(${angle[k.name]} ${k.x} ${k.y})`);
+}
+
+function setMaster(v) {
+  masterValue = Math.max(0, Math.min(1023, v));
+  angle.MASTER = -135 + 270 * masterValue / 1023;
+  send({ type: "master", value: masterValue });
+}
+
+function turn(k, n) {
+  if (!n) return;
+  if (k.role === "master") setMaster(masterValue + n * 16);
+  else {
+    angle[k.name] = (angle[k.name] + n * 18) % 360;
+    send({ type: "enc", role: k.role, n });
+  }
+  drawKnob(k);
+}
+
+function bindKnob(k) {
+  let drag = null, wheel = 0;
+  k.hit.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    k.hit.setPointerCapture(e.pointerId);
+    drag = { x: e.clientX, y: e.clientY, acc: 0 };
+  });
+  k.hit.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = drag.y - e.clientY;
+    drag.acc += Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    const step = k.role === "master" ? 3 : 8, n = Math.trunc(drag.acc / step);
+    if (n) { drag.acc -= n * step; turn(k, n); }
+  });
+  const end = () => { drag = null; };
+  k.hit.addEventListener("pointerup", end);
+  k.hit.addEventListener("pointercancel", end);
+  k.hit.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+    if (Math.abs(dy) >= 50) { turn(k, dy < 0 ? 1 : -1); wheel = 0; return; }
+    wheel -= dy;
+    const n = Math.trunc(wheel / 25);
+    if (n) { wheel -= n * 25; turn(k, n); }
+  }, { passive: false });
+  k.hit.addEventListener("keydown", (e) => {
+    const d = { ArrowUp: 1, ArrowRight: 1, ArrowDown: -1, ArrowLeft: -1 }[e.key];
+    if (d) { turn(k, d); e.preventDefault(); e.stopPropagation(); }
+  });
+}
+
+const tall = matchMedia("(orientation: portrait) and (max-width: 700px)");
+build(tall.matches ? "tall" : "wide");
+tall.addEventListener("change", () => build(tall.matches ? "tall" : "wide"));
+document.fonts?.load("16px DotGothic16").then(() => build(layout), () => {});
+
+const KEYMAP = {};
+["KeyZ", "KeyX", "KeyC", "KeyV", "KeyB", "KeyN", "KeyM", "Comma", "Period", "Slash"].forEach((c, i) => KEYMAP[c] = { key: WHITE[i] });
+[["KeyS", 1], ["KeyD", 3], ["KeyF", 5], ["KeyH", 8], ["KeyJ", 10], ["KeyL", 13], ["Semicolon", 15], ["Quote", 17]].forEach(([c, k]) => KEYMAP[c] = { key: k });
+["KeyQ", "KeyW", "KeyE", "KeyR", "KeyT", "KeyY", "KeyU", "KeyI", "KeyO"].forEach((c, i) => KEYMAP[c] = { key: 18 + i });
+["Digit1", "Digit2", "Digit3", "Digit4", "Digit5", "Digit6", "Digit7", "Digit8", "Digit9", "Digit0", "Minus", "Equal"]
+  .forEach((c, i) => KEYMAP[c] = { btn: B[[...ROW1, ...ROW2][i]] });
+Object.assign(KEYMAP, { BracketLeft: { btn: B["OCT-"] }, BracketRight: { btn: B["OCT+"] } });
+const ARROWS = { ArrowUp: [EN.SELECT, 1], ArrowDown: [EN.SELECT, -1], ArrowRight: [EN.ALGORITHM, 1], ArrowLeft: [EN.ALGORITHM, -1] };
+
+addEventListener("keydown", (e) => {
+  if (!node || e.metaKey || e.ctrlKey || e.altKey || e.target.closest?.(".hit.knob")) return;
+  if (ARROWS[e.code]) { const [r, n] = ARROWS[e.code]; turn(knobs.find((k) => k.role === r), n); e.preventDefault(); return; }
+  const m = KEYMAP[e.code];
+  if (!m) return;
+  e.preventDefault();
+  if (e.repeat) return;
+  if (m.key !== undefined) { keyBy.set("k" + e.code, m.key); syncKeys(); }
+  else { btnBy.set("k" + e.code, m.btn); syncButtons(); }
+});
+addEventListener("keyup", (e) => {
+  const id = "k" + e.code;
+  if (keyBy.delete(id)) syncKeys();
+  if (btnBy.delete(id)) syncButtons();
+});
+addEventListener("blur", () => {
+  for (const id of [...btnBy.keys()]) if (id[0] !== "p") btnBy.delete(id);
+  for (const id of [...keyBy.keys()]) if (id[0] !== "p") keyBy.delete(id);
+  syncButtons();
+  syncKeys();
+});
+
+const ctx = document.getElementById("screen").getContext("2d");
+const img = ctx.createImageData(240, 240);
+function drawScreen(fb) {
+  const d = img.data;
+  for (let i = 0; i < 240 * 240; i++) {
+    const v = fb[i], p = ((v >> 8) | (v << 8)) & 0xFFFF;
+    d[i * 4] = ((p >> 11) & 31) * 255 / 31;
+    d[i * 4 + 1] = ((p >> 5) & 63) * 255 / 63;
+    d[i * 4 + 2] = (p & 31) * 255 / 31;
+    d[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function drawLights([litB, litK, dimB, dimK, dimLo = 0, brB = 0, brK = 0, midK = 0]) {
+  for (const b of buttons) {
+    const bit = 1 << b.bit, green = b.bit === B.PLAY && (litB & (1 << PLAY_GREEN));
+    b.g.classList.toggle("lit", !!(litB & bit) && !green);
+    b.g.classList.toggle("green", !!green);
+    b.g.classList.toggle("dim", !!(dimB & bit));
+  }
+  keys.forEach((k, i) => {
+    k.g.classList.toggle("lit", !!(litK & (1 << i)));
+    k.g.classList.toggle("dim", !!(dimK & (1 << i)));
+  });
+}
+
+function loadFlash() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE) || "{}"), out = {};
+    for (const [off, b64] of Object.entries(raw))
+      out[off] = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    return out;
+  } catch { return {}; }
+}
+function saveFlash(sectors) {
+  try {
+    const raw = {};
+    for (const [off, u8] of Object.entries(sectors)) {
+      let s = "";
+      for (let i = 0; i < u8.length; i += 4096)
+        s += String.fromCharCode.apply(null, u8.subarray(i, i + 4096));
+      raw[off] = btoa(s);
+    }
+    localStorage.setItem(STORE, JSON.stringify(raw));
+    return true;
+  } catch { return false; }
+}
+
+const knobCC = [], knobBox = document.getElementById("knobson"), knobSelect = document.getElementById("knobmode");
+let knobsOn = false, knobMode = "abs";
+try {
+  knobsOn = localStorage.getItem(KNOBS_ON) === "1";
+  const m = localStorage.getItem(KNOB_MODE);
+  if (KNOB_MODES.includes(m)) knobMode = m;
+} catch {}
+knobBox.checked = knobsOn;
+knobSelect.hidden = !knobsOn;
+knobSelect.value = knobMode;
+knobBox.addEventListener("change", () => {
+  knobsOn = knobBox.checked;
+  knobSelect.hidden = !knobsOn;
+  knobCC.length = 0;
+  try { localStorage.setItem(KNOBS_ON, knobsOn ? "1" : "0"); } catch {}
+});
+knobSelect.addEventListener("change", () => {
+  knobMode = knobSelect.value;
+  knobCC.length = 0;
+  try { localStorage.setItem(KNOB_MODE, knobMode); } catch {}
+});
+document.getElementById("midiknobs").hidden = !navigator.requestMIDIAccess;
+
+async function midiOn() {
+  if (!navigator.requestMIDIAccess) return;
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const bind = () => {
+      for (const input of access.inputs.values()) {
+        input.onmidimessage = (e) => {
+          const d = e.data;
+          if (d.length < 2 || d[0] < 0x80 || d[0] >= 0xF0) return;
+          const k = knobsOn && (d[0] & 0xF0) === 0xB0 ? midiKnob(knobCC, d[1], d[2] || 0, knobMode) : null;
+          if (!k) send({ type: "midi", data: [d[0], d[1], d[2] || 0] });
+          else if (k.master !== undefined) { setMaster(k.master); drawKnob(knobs.find((x) => x.role === "master")); }
+          else turn(knobs.find((x) => x.role === k.role), k.n);
+        };
+      }
+    };
+    access.onstatechange = bind;
+    bind();
+  } catch {}
+}
+
+const status = document.getElementById("status");
+const say = (t) => { status.textContent = t; status.hidden = !t; };
+
+async function switchOn() {
+  const go = document.getElementById("go");
+  go.disabled = true;
+  go.textContent = "Booting FM-106…";
+  try {
+    const ac = new AudioContext({ sampleRate: 44100, latencyHint: "interactive" });
+    const [wasm] = await Promise.all([
+      fetch("fm106.wasm").then((r) => {
+        if (!r.ok) throw new Error(`fm106.wasm: ${r.status}`);
+        return r.arrayBuffer();
+      }),
+      ac.audioWorklet.addModule("worklet.js")
+    ]);
+
+    node = new AudioWorkletNode(ac, "fm106", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    node.connect(ac.destination);
+
+    await new Promise((res, rej) => {
+      node.port.onmessage = (e) => {
+        const m = e.data;
+        if (m.type === "ready") res();
+        else if (m.type === "error") rej(new Error(m.message));
+        else if (m.type === "frame") {
+          if (m.fb) drawScreen(m.fb);
+          if (m.leds) drawLights(lastLeds = m.leds);
+          if (m.sectors) saveFlash(m.sectors);
+        }
+      };
+      node.port.postMessage({ type: "load", wasm, sectors: loadFlash(), master: masterValue }, [wasm]);
+    });
+
+    await ac.resume();
+    document.getElementById("start").hidden = true;
+    go.textContent = "On";
+    syncButtons();
+    syncKeys();
+    send({ type: "visible", on: !document.hidden });
+    midiOn();
+  } catch (err) {
+    node = null;
+    go.disabled = false;
+    go.textContent = "Power On FM-106";
+    say("Could not start: " + (err && err.message || err));
+  }
+}
+
+document.getElementById("go").addEventListener("click", switchOn);
+document.addEventListener("visibilitychange", () => send({ type: "visible", on: !document.hidden }));
+</script>
+</body>
+</html>
