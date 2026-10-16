@@ -1,14 +1,14 @@
 <!doctype html>
 <!-- SPDX-License-Identifier: GPL-3.0-only
      Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
-     FM-106 Web Simulator — Authentic Roland Juno-106 Synthesizer Emulator -->
+     FM-106 Web Simulator — Authentic Polyphonic Synthesizer Emulator -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FM-106 // Web Simulator</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23ff2d95%22/%3E%3Crect x=%223%22 y=%223%22 width=%2210%22 height=%2210%22 rx=%222%22 fill=%22%230b0020%22/%3E%3Ctext x=%228%22 y=%2211%22 font-size=%228%22 font-weight=%22900%22 fill=%22%232de2e6%22 text-anchor=%22middle%22%3EJ%3C/text%3E%3C/svg%3E">
-<meta name="description" content="FM-106 Synthesizer running in your browser: the same DSP engine that runs on the hardware instrument.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Crect width=%2216%22 height=%2216%22 rx=%223%22 fill=%22%23ff2d95%22/%3E%3Crect x=%223%22 y=%223%22 width=%2210%22 height=%2210%22 rx=%222%22 fill=%22%230b0020%22/%3E%3Ctext x=%228%22 y=%2211%22 font-size=%228%22 font-weight=%22900%22 fill=%22%232de2e6%22 text-anchor=%22middle%22%3EF%3C/text%3E%3C/svg%3E">
+<meta name="description" content="FM-106 Polyphonic Synthesizer running in your browser: the same DSP engine that runs on the hardware instrument.">
 <style>
 @font-face {
   font-family: "DotGothic16";
@@ -271,7 +271,7 @@ footer a:hover {
 <header>
   <div>
     <h1>FM-106</h1>
-    <div class="subhead">Authentic 6-Voice FM-106 Web Simulator</div>
+    <div class="subhead">Authentic 6-Voice Polyphonic Synthesizer Web Simulator</div>
   </div>
   <div class="nav-links">
     <a href="../index.html">Installer</a>
@@ -282,7 +282,7 @@ footer a:hover {
 
 <div class="device" id="device">
   <svg id="panel" viewBox="0 0 1000 624" aria-hidden="true"></svg>
-  <canvas id="screen" width="240" height="240" role="img" aria-label="Juno-106 LCD Screen"></canvas>
+  <canvas id="screen" width="240" height="240" role="img" aria-label="FM-106 LCD Screen"></canvas>
   <div class="start" id="start">
     <button id="go" type="button">Power On FM-106</button>
     <p id="status" hidden></p>
@@ -306,9 +306,9 @@ footer a:hover {
 </p>
 
 <footer>
-  FM-106 Synthesizer Firmware &middot; WebAssembly DSP Simulator<br>
+  FM-106 Polyphonic Synthesizer Firmware &middot; WebAssembly DSP Simulator<br>
   Built with the Felucca AudioWorklet engine by Leo Kuroshita (@kurogedelic), Hügelton Instruments &middot; <a href="https://www.gnu.org/licenses/gpl-3.0.html">GPL-3.0</a><br>
-  <small>Roland, Juno-106, M-VAVE, and FM-1 are trademarks of their respective owners. FM-106 is an independent open-source project.</small>
+  <small>M-VAVE and FM-1 are trademarks of their respective owners. FM-106 is an independent open-source project.</small>
 </footer>
 </main>
 
@@ -404,13 +404,15 @@ function build(name) {
   for (const d of device.querySelectorAll(".hit")) d.remove();
   knobs.length = buttons.length = keys.length = 0;
 
-  // Main chassis with Roland Juno-106 stripes
+  // Main chassis with signature stripes
   el("rect", { x: 4, y: 4, width: L.w - 8, height: L.h - 8, rx: 20, fill: "var(--chassis)" });
-  // Signature Juno stripes: cyan top stripe, pink bottom stripe
+  // Signature accent stripes: cyan top stripe, pink bottom stripe
   el("line", { x1: 24, y1: 24, x2: L.w - 24, y2: 24, stroke: "var(--cyan)", "stroke-width": 2.5, opacity: 0.9 });
   el("line", { x1: 24, y1: 28, x2: L.w - 24, y2: 28, stroke: "var(--pink)", "stroke-width": 1.5, opacity: 0.8 });
 
-  // Roland Badge
+  // Chassis Badge
+  label(svg, 70, 48, "FM-106", 15, SANS, "#ff2d95");
+  label(svg, 160, 48, "POLY SYNTH", 13, SANS, "var(--cyan)");
 
   for (const [x, y, w, h] of L.trays)
     el("rect", { x, y, width: w, height: h, rx: 12, fill: "var(--tray)", stroke: "var(--edge)", "stroke-width": 1.5 });
