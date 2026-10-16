@@ -897,9 +897,6 @@ static void fm106_render_voice(fm106_engine_t *e, uint32_t vi, int32_t *sum, uin
     fm106_voice_t *v = &e->voice[vi];
     if (v->adsr.stage == FM106_ENV_IDLE && !v->gate && v->vca_slew <= 10) {
         v->vca_slew = 0;
-        /* Clear residual DC blocker state to prevent next note-on click */
-        v->dc_post_osc = 0;
-        v->dc_post_vcf = 0;
         return;   /* Voice silent */
     }
 
@@ -956,7 +953,7 @@ static void fm106_render_voice(fm106_engine_t *e, uint32_t vi, int32_t *sum, uin
         uint32_t vca_idx = (uint32_t)env_q15 >> 7;   /* 0..255 */
         if (vca_idx > 255u) vca_idx = 255u;
         int32_t vca_hw = FM106_VCA_HW[vca_idx];
-        int32_t vca_target = (e->vca_mode == 1) ? (v->gate ? 32767 : 0) : vca_hw;
+        int32_t vca_target = (e->vca_mode == 1) ? ((v->gate || (e->hold_pedal && v->adsr.stage != FM106_ENV_IDLE)) ? 32767 : 0) : vca_hw;
         v->vca_slew += ((vca_target - v->vca_slew) * 1064) >> 15;
         int32_t vca_gain = v->vca_slew;
 
@@ -1119,7 +1116,7 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
     /* Post-processing: HPF -> VCA -> Stereo Chorus -> Insert FX -> Output */
     for (uint32_t i = 0; i < n; i++) {
         /* Headroom scaling: calibrated for clean polyphony across 6 voices even with HPF Bass Boost and max VCA */
-        int32_t voice_sum = (int32_t)(((int64_t)g_mix0[i] * 1LL) >> 4);
+        int32_t voice_sum = (int32_t)(((int64_t)g_mix0[i] * 3LL) >> 6);
 
         /* Apply 4-position HPF */
         int32_t hpf_out = fm106_hpf_process(&e->hpf, voice_sum);

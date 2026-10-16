@@ -316,21 +316,19 @@ static inline int32_t fm106_bass_boost(fm106_hpf_t *h, int32_t in)
 
 static inline int32_t fm106_hpf_process(fm106_hpf_t *h, int32_t in)
 {
+    /* Pre-HPF AC coupling capacitor (10µF / 44.9K, C38 on hardware Juno-106):
+     * sits in series before the 4-position HPF switch in all modes */
+    int32_t dc_blocked = fm106_dc_block_hpf(in, &h->dc_state);
+
     switch (h->mode) {
-    case 0: {   /* Bass boost: +10.5 dB shelf + 0.35 Hz AC coupling */
-        int32_t boosted = fm106_bass_boost(h, in);
-        return fm106_dc_block_hpf(boosted, &h->dc_state);
-    }
-    case 1:     /* Flat (bypass with 0.35 Hz AC coupling) */
-        return fm106_dc_block_hpf(in, &h->dc_state);
-    case 2: {   /* 236 Hz 1-pole HPF (g_div in Q24: 277423) */
-        int32_t dc_blocked = fm106_dc_block_hpf(in, &h->dc_state);
+    case 0:    /* Bass boost: +10.5 dB low shelf on AC signal */
+        return fm106_bass_boost(h, dc_blocked);
+    case 1:    /* Flat (bypass) */
+        return dc_blocked;
+    case 2:    /* 236 Hz 1-pole HPF (g_div in Q24: 277423) */
         return fm106_hpf_cut(dc_blocked, &h->hp_state, 277423LL);
-    }
-    case 3: {   /* 754 Hz 1-pole HPF (g_div in Q24: 856006) */
-        int32_t dc_blocked = fm106_dc_block_hpf(in, &h->dc_state);
+    case 3:    /* 754 Hz 1-pole HPF (g_div in Q24: 856006) */
         return fm106_hpf_cut(dc_blocked, &h->hp_state, 856006LL);
-    }
     default:
         return in;
     }

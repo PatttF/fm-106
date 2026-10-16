@@ -283,11 +283,19 @@ static void seq_note_name(uint8_t pitch, char *buf)
 
 /* REC armed + playing: edits land on the playing step (live overdub);
  * otherwise on the edit cursor. */
+/* Between transport start and the first audio advance, seq_idx still holds
+ * slen-1 (the 0x7FFFFFFF sentinel makes step 0 fire first). Every main-loop
+ * reader must see step 0 there, or the playhead flashes on the right edge. */
+static uint16_t seq_ph_idx(const fm106_seq_t *s)
+{
+    return (s->seq_pos >= 0x7FFFFFFFu) ? 0u : s->seq_idx;
+}
+
 static uint16_t seq_ui_edit_idx(void)
 {
     fm106_seq_t *s = &g_synth.seq;
     uint16_t len = s->slen ? s->slen : 1u;
-    return (g_seq_rec_arm && s->playing) ? (uint16_t)(s->seq_idx % len)
+    return (g_seq_rec_arm && s->playing) ? (uint16_t)(seq_ph_idx(s) % len)
                                          : (uint16_t)(g_seq_cursor % len);
 }
 
@@ -348,11 +356,22 @@ static void seq_clock_out(uint8_t status)
     if (g_synth.sync_mode == 1u) midi_send(status, 0, 0);
 }
 
+/* REC+PLAY count-in: four clicks at the pattern tempo (quarter notes), then
+ * the transport starts on the would-be downbeat. Clicks are engine notes with
+ * the current sound; beat 4 is a fifth up so the last count stands out. */
+static uint8_t  g_count_in;       /* beats left to click; 0xFF = final gap; 0 = idle */
+static uint32_t g_count_next_ms;
+static uint8_t  g_click_note;     /* sounding click note; 0 = none */
+static uint32_t g_click_off_ms;
+static void count_in_start(void);
+static void count_in_cancel(void);
+
 /* transport: 0=stop, 1=start, 2=continue, 3=toggle (BTN_PLAY / CC 107 / CC out) */
 static void seq_transport_cmd(uint8_t cmd)
 {
     fm106_seq_t *s = &g_synth.seq;
     uint8_t was = s->playing;
+    count_in_cancel();             /* any transport command aborts a pending count-in */
     if (cmd == 0u || (cmd == 3u && was)) {
         if (was) {
             uint8_t nflush = s->seq_n;
@@ -384,6 +403,53 @@ static void seq_transport_cmd(uint8_t cmd)
         seq_clock_out(0xFAu);
         midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 107u, 1u);
     }
+}
+
+static void count_in_start(void)
+{
+    g_count_in = 4;
+    g_count_next_ms = fm106_now_ms();  /* first click on the next loop pass */
+}
+
+static void count_in_cancel(void)
+{
+    g_count_in = 0;
+    if (g_click_note) {
+        fm1_irq_off();
+        fm106_note_off(&g_synth, g_click_note);
+        fm1_irq_on();
+        g_click_note = 0;
+    }
+}
+
+/* called from the main loop: click beats, then hand off to the transport */
+static void count_in_tick(void)
+{
+    if (!g_count_in && !g_click_note) return;
+    uint32_t now = fm106_now_ms();
+    if (g_click_note && (int32_t)(now - g_click_off_ms) >= 0) {
+        fm1_irq_off();
+        fm106_note_off(&g_synth, g_click_note);
+        fm1_irq_on();
+        g_click_note = 0;
+    }
+    if (!g_count_in || (int32_t)(now - g_count_next_ms) < 0) return;
+    if (g_count_in == 0xFFu) {         /* final gap elapsed: the downbeat */
+        g_count_in = 0;
+        seq_transport_cmd(1u);
+        return;
+    }
+    uint32_t bpm = g_synth.seq.bpm ? g_synth.seq.bpm : 120u;
+    uint32_t gap = 60000u / bpm;       /* one click per quarter note */
+    uint8_t note = (g_count_in == 1u) ? 88u : 81u;  /* beat 4 a fifth up */
+    fm1_irq_off();
+    if (g_click_note) fm106_note_off(&g_synth, g_click_note);
+    fm106_note_on(&g_synth, note, 100u);
+    fm1_irq_on();
+    g_click_note = note;
+    g_click_off_ms = now + 70u;
+    g_count_next_ms = now + gap;
+    g_count_in = (g_count_in == 1u) ? 0xFFu : (uint8_t)(g_count_in - 1u);
 }
 
 /* SYNC menu/CC -> engine clock-slave state (and clear stale pulse interp) */
@@ -420,7 +486,7 @@ static void plock_scan(void)
         if (g_param_cc[i] != 0xFFu)
             midi_send(ch, g_param_cc[i], param_cc_value(i, v));
         if (rec) {
-            uint16_t idx = (uint16_t)(s->seq_idx % (s->slen ? s->slen : 1u)); /* fresh per lock */
+            uint16_t idx = (uint16_t)(seq_ph_idx(s) % (s->slen ? s->slen : 1u)); /* fresh per lock */
             fm1_irq_off();
             fm106_plock_set(s, idx, i, v);
             fm1_irq_on();
@@ -623,13 +689,17 @@ static void seq_note_entry(uint8_t pitch, uint8_t vel)
         uint16_t idx;
         fm1_irq_off();
         if (s->playing) {
-            /* a keypress in the last quarter of the step means the upcoming
-             * one — land it there, not in the dying step */
-            idx = s->seq_idx;
-            uint32_t base = fm106_seq_div_samples(s, s->sdiv);
-            uint32_t step_len = fm106_seq_step_samples(s, base, s->seq_idx);
-            if (step_len && s->seq_pos > step_len - (step_len >> 2))
-                idx = (uint16_t)((idx + 1u) % len);
+            if (s->seq_pos >= 0x7FFFFFFFu) { /* pre-first-advance: step 0 */
+                idx = 0;
+            } else {
+                /* a keypress in the last quarter of the step means the upcoming
+                 * one — land it there, not in the dying step */
+                idx = s->seq_idx;
+                uint32_t base = fm106_seq_div_samples(s, s->sdiv);
+                uint32_t step_len = fm106_seq_step_samples(s, base, s->seq_idx);
+                if (step_len && s->seq_pos > step_len - (step_len >> 2))
+                    idx = (uint16_t)((idx + 1u) % len);
+            }
         } else {
             idx = (uint16_t)(g_seq_cursor % len);
         }
@@ -1437,7 +1507,7 @@ static void draw_seq_page(void)
     cv_blit(0, 0);
 
     /* roll bands: one playhead snapshot so both halves always agree */
-    int32_t ph = s->playing ? (int32_t)s->seq_idx : -1;
+    int32_t ph = s->playing ? (int32_t)seq_ph_idx(s) : -1;
     draw_seq_roll_band(0, 8, 22, ph);
     draw_seq_roll_band(8, 14, 118, ph);
 
@@ -1794,21 +1864,11 @@ static int synth_quiet(void)
     return 1;
 }
 
-/* Main application entry loop */
-static void app_main(void)
-{
-    /* full defaults for the load-fail path (loader leaves `set` untouched):
-     * octave 0, patch 0, IN=All, OUT=1, LOCAL=on, PC IN=on, SYNC=off */
-    fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0};
-    uint32_t prev_notes = 0, k;
-    uint32_t dirty_screen = 1;
-    uint32_t prev_voice_active = 0;
-    uint32_t t_change = 0, dirty_save = 0;
-    uint32_t t_last_scope = 0;
-    uint8_t scope_was_active = 1;
-    uint8_t held[27] = {0};
-    uint32_t lit = 0;
+static fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0};
 
+/* Initialize application and synth state */
+static void fm106_app_init(void)
+{
     fm106_engine_init(&g_synth);
     fm106_user_presets_init();
 
@@ -1836,8 +1896,20 @@ static void app_main(void)
             if (FM1_KEYMAP[row][col] >= 0 && FM1_KEYMAP[row][col] < 14)
                 fm1_led_bg[col] |= (uint8_t)(1u << row);
     fm1_led_bg_ns = 10000u;  /* dim pulse: ~1/6 of a fully lit LED */
+}
 
-    for (;;) {
+/* One frame / poll iteration of the application */
+static void fm106_app_frame(void)
+{
+    static uint32_t prev_notes = 0;
+    static uint32_t dirty_screen = 1;
+    static uint32_t prev_voice_active = 0;
+    static uint32_t t_change = 0, dirty_save = 0;
+    static uint32_t t_last_scope = 0;
+    static uint8_t scope_was_active = 1;
+    static uint8_t held[27] = {0};
+    static uint32_t lit = 0;
+    uint32_t k;
         uint32_t keys, down, up, rel, b;
         uint32_t base = (uint32_t)(KEY0 + 12 * g_synth.octave_shift);
         uint8_t st, d1, d2;
@@ -1854,6 +1926,9 @@ static void app_main(void)
                 else       midi_send(0x80u | och, sm.note, 0u);
             }
         }
+
+        /* REC+PLAY count-in: clicks, then the transport starts on the downbeat */
+        count_in_tick();
 
         /* master MIDI clock out (SYNC=MASTER): 24 x F8 per beat while playing */
         if (g_synth.sync_mode == 1u && g_synth.seq.playing && !g_synth.seq.midi_sync_active) {
@@ -1960,7 +2035,7 @@ static void app_main(void)
                 else { t_edit_down = fm1_ms; edit_held_active = 0u; }
                 dirty_screen = 1;
             }
-            if (b & (1u << BTN_REC)) { g_seq_rec_arm ^= 1u; g_seq_dirty = 1; dirty_screen = 1; }
+            if (b & (1u << BTN_REC)) { g_seq_rec_arm ^= 1u; if (!g_seq_rec_arm) count_in_cancel(); g_seq_dirty = 1; dirty_screen = 1; }
             if (b & (1u << BTN_SEL)) {
                 if (g_seq_menu_on) g_seq_menu_sel = (g_seq_menu_sel + SEQ_MENU_COUNT - 1u) % SEQ_MENU_COUNT;
                 else if (g_note_menu_on) g_note_menu_sel = (g_note_menu_sel + NOTE_MENU_COUNT - 1u) % NOTE_MENU_COUNT;
@@ -2100,7 +2175,13 @@ static void app_main(void)
             }
         }
         if (b & (1u << BTN_PLAY)) {   /* transport: start/stop the sequencer */
-            seq_transport_cmd(3);
+            if (g_count_in) {
+                count_in_cancel();    /* second press aborts the count-in */
+            } else if (!g_synth.seq.playing && g_seq_rec_arm) {
+                count_in_start();     /* REC armed: click in four beats first */
+            } else {
+                seq_transport_cmd(3);
+            }
         }
         if (b & (1u << BTN_SAVE)) {
             if (g_ui_mode == UI_MODE_SAVE) {
@@ -2715,9 +2796,10 @@ static void app_main(void)
         if ((g_ui_mode == UI_MODE_NORMAL) && (g_current_page == PAGE_SEQ) && !g_seq_menu_on && !g_note_menu_on) {
             fm106_seq_t *sq = &g_synth.seq;
             if (sq->playing) {
-                if (sq->seq_idx < g_seq_view_step ||
-                    sq->seq_idx >= (uint16_t)(g_seq_view_step + 16u)) {
-                    int32_t vs = (int32_t)sq->seq_idx - 8;
+                uint16_t ph_idx = seq_ph_idx(sq);
+                if (ph_idx < g_seq_view_step ||
+                    ph_idx >= (uint16_t)(g_seq_view_step + 16u)) {
+                    int32_t vs = (int32_t)ph_idx - 8;
                     int32_t len = sq->slen ? (int32_t)sq->slen : 1;
                     if (vs > len - 16) vs = len - 16;
                     if (vs < 0) vs = 0;
@@ -2727,7 +2809,7 @@ static void app_main(void)
             if ((sq->playing && fm1_ms - t_last_seq >= 40u) || g_seq_dirty) {
                 t_last_seq = fm1_ms;
                 g_seq_dirty = 0;
-                int32_t ph = sq->playing ? (int32_t)sq->seq_idx : -1; /* one snapshot: both bands agree */
+                int32_t ph = sq->playing ? (int32_t)seq_ph_idx(sq) : -1; /* one snapshot: both bands agree */
                 draw_seq_roll_band(0, 8, 22, ph);
                 draw_seq_roll_band(8, 14, 118, ph);
             }
@@ -2756,5 +2838,14 @@ static void app_main(void)
             settings_save(&set, sizeof(set));
             dirty_save = 0;
         }
+}
+
+#ifndef FM106_WEB
+static void app_main(void)
+{
+    fm106_app_init();
+    for (;;) {
+        fm106_app_frame();
     }
 }
+#endif

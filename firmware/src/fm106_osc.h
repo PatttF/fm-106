@@ -146,8 +146,11 @@ static inline int32_t fm106_dco_process(
         uint32_t pw_edge = next_ph - eff_pw;
         pulse += fm106_poly_blep(pw_edge, eff_inc);
 
-        /* DC is removed downstream by the authentic 1.59 Hz analog coupling filter (fm106_dc_block),
-         * matching hardware Juno-106 and reference KR106Oscillators.h */
+        /* AC coupling: remove theoretical DC offset of rectangular pulse
+         * (matches hardware C11 10µF coupling capacitor at steady state) */
+        int32_t pulse_dc = (int32_t)(((int64_t)mod_pw * 18407003LL) >> 16);
+        pulse -= pulse_dc;
+
         total += (pulse * 16384) >> 15;
     }
 
