@@ -848,12 +848,12 @@ const TEXT = {
     brick: "万一インストールに失敗して起動しなくなった場合は、復旧に Transporter が必要です:",
     beta: "FM-106 は非公式ファームウェアです。不具合は GitHub で知らせてください。このファームウェアを使ったことで FM-1 が壊れたり不具合が起きたりしても、作者は一切の責任を負いません。自己責任でお使いください。",
     back: "M-VAVEから公式FM-1 V15を取得し、未変更のFM-1.fwscを選んでください。ファイルはこのブラウザ内で検証し、サーバーへ送りません。",
-    stockTitle: "公式V15に戻す", stockFile: "公式FM-1.fwsc", stockGo: "バックアップして公式V15へ戻す",
-    stockBackup: "現在の曲・保存曲・音色バンク・サンプル・設定を先に保存します。全体バックアップ非対応版は、FM-106を更新してから行ってください。復元はFM-106を再インストールしてライブラリアンから行います。",
-    stockRecovery: "更新中断の再開：全体バックアップはすでにパソコンへ保存済み",
-    stockValid: "公式V15を確認しました", stockConfirm: "全体バックアップファイルをパソコンに保存できましたか？ 続けると公式V15へ戻します。FM-106の曲は公式V15では開けません。",
+    stockTitle: "公式V15に戻す", stockFile: "公式FM-1.fwsc", stockGo: "公式V15へ戻す",
+    stockBackup: "FM-106のプリセット音色はWebライブラリアンで保存・バックアップできます。公式V15へ戻すと公式ファームウェアに置き換わります。",
+    stockRecovery: "直接復元（バックアップをスキップ / 中断した更新を再開）",
+    stockValid: "公式V15を確認しました", stockConfirm: "公式FM-1 V15へ戻しますか？FM-106から公式ファームウェアへ書き換えます。（FM-106のプリセットが必要な場合はWebライブラリアンで保存済みか確認してください。）",
     stockNeedBackup: "書き込みモードからはバックアップできません。保存済みバックアップがある場合だけ、更新中断の再開にチェックしてください。",
-    stockUnsupported: "このFM-106は全体バックアップに未対応です。先に最新版をインストールしてください。",
+    stockUnsupported: "この機器は全体バックアップに未対応です。",
     backup: "全体バックアップ保存中 ", stockError: "公式ファイルを確認できません: ",
     nomidi: "このブラウザでは使えません。Chrome か Edge で開いてください。", loadfail: "読み込めませんでした: ",
     midiblocked: "MIDI がブロックされています。アドレスバーの鍵（鍵＋音符）アイコン → サイトの設定 → MIDI → 「許可」にして、ページを再読み込みしてください。",
@@ -881,12 +881,12 @@ const TEXT = {
     brick: "If an install fails and the FM-1 no longer starts, recovering it needs a Transporter:",
     beta: "FM-106 is unofficial firmware. Please report problems on GitHub. The author accepts no responsibility if your FM-1 is damaged or misbehaves because of this firmware. Installed at your own risk.",
     back: "Get official FM-1 V15 from M-VAVE and select the unmodified FM-1.fwsc. The browser validates it locally; it is not sent to a server.",
-    stockTitle: "Return to official V15", stockFile: "Official FM-1.fwsc", stockGo: "Back up and return to official V15",
-    stockBackup: "Current music, saved music, sound banks, samples and settings are saved first. Older firmware needs an FM-106 update for complete backups. To restore an archive later, reinstall FM-106 and use the Web Librarian.",
-    stockRecovery: "Resume an interrupted update: I already saved a complete backup to this computer",
-    stockValid: "Official V15 verified", stockConfirm: "Has the complete backup file been saved to this computer? Continue to return to official V15. Official V15 cannot open FM-106 music.",
+    stockTitle: "Return to official V15", stockFile: "Official FM-1.fwsc", stockGo: "Return to official V15",
+    stockBackup: "FM-106 presets can be backed up using the Web Librarian. Returning to official V15 will replace FM-106 with the official stock firmware.",
+    stockRecovery: "Direct restore (skip backup / resume interrupted update)",
+    stockValid: "Official V15 verified", stockConfirm: "Return to official FM-1 V15? This will replace FM-106 with the official stock firmware. (Ensure you have saved any FM-106 presets with the Web Librarian if needed.)",
     stockNeedBackup: "An update loader cannot export a backup. Only select resume if you already saved a complete backup.",
-    stockUnsupported: "This FM-106 does not support complete backups. Install the current FM-106 first.",
+    stockUnsupported: "This device does not support complete backups.",
     backup: "Saving complete backup ", stockError: "Cannot validate official firmware: ",
     nomidi: "This browser cannot do it. Open the page in Chrome or Edge.", loadfail: "Could not load: ",
     midiblocked: "MIDI is blocked for this site. Click the icon next to the address bar (tune/key) → Site settings → MIDI → Allow, then reload the page.",
@@ -1015,30 +1015,44 @@ $("stock-go").addEventListener("click", async () => {
     let midi;
     try { midi = await navigator.requestMIDIAccess({sysex:true}); } catch (e) { sayK("denied"); return; }
     const up = new Updater(midi, log);
-    const step = (k, n) => { log(`${k} ${n ?? ""}`); if (["start","verify","loader","write","reboot","done"].includes(k)) sayK(k); if (k === "done") $("bar").value = 100; };
+    const total = 74 + 1174;
+    const step = (k, n) => {
+      log(`${k} ${n ?? ""}`);
+      if (["start","verify","loader","write","reboot","done"].includes(k)) sayK(k);
+      if (k === "verify") $("bar").value = (n / total) * 100;
+      if (k === "write") $("bar").value = ((74 + n) / total) * 100;
+      if (k === "done") $("bar").value = 100;
+    };
     const loader = await up.find(id => IS_OTA(id));
     if (loader) {
-      if (!$("stock-recovery").checked) { await loader.link.close(); sayK("stockNeedBackup"); return; }
-      if (!confirm(t("stockConfirm"))) { await loader.link.close(); return; }
-      const s2 = await up.write(loader, selected.image, step);
-      if (!s2.finished) { sayK("stopped"); return; }
-      step("reboot");
-      await sleep(3000);
-      const back = await up.waitFor(id => !IS_OTA(id), 45000);
-      if (!back) throw fail("noreturn", "The FM-1 did not return after resuming the write.");
-      await back.link.close();
-      step("done", back.id.text);
-      sayK("done");
+      await loader.link.close();
+      if (!confirm(t("stockConfirm"))) return;
+      await up.install(selected.image, selected.product, step);
     } else {
       const device = await up.find(id => !IS_OTA(id));
       if (!device) { sayK("notfound"); return; }
-      const input = device.link.input, output = device.link.output; await device.link.close();
-      link = new BackupConnection(input, output);
-      const info = archiveInfo(await link.request([1,[]]));
-      if (!info.supported) { sayK("stockUnsupported"); return; }
-      const archive = await captureBackup((r,o) => link.request(r,o), info.version,
-        (done,total) => sayK("backup", `${Math.round(done / Math.max(1,total) * 100)}%`));
-      saveArchive(archive); link.close(); link = null;
+      const input = device.link.input, output = device.link.output;
+      const isFm106 = device.id && (device.id.text.startsWith("FM-1_9") || device.id.text.includes("FM-106"));
+      await device.link.close();
+
+      // Only attempt legacy Felucca backup if running Felucca OS (not FM-106) and recovery not checked
+      if (!$("stock-recovery").checked && !isFm106) {
+        try {
+          link = new BackupConnection(input, output);
+          const rawInfo = await link.request([1,[]], { timeoutMs: 1200 });
+          const info = archiveInfo(rawInfo);
+          if (info && info.supported) {
+            const archive = await captureBackup((r,o) => link.request(r,o), info.version,
+              (done,total) => sayK("backup", `${Math.round(done / Math.max(1,total) * 100)}%`));
+            saveArchive(archive);
+          }
+        } catch (be) {
+          log("Legacy backup skipped or not available: " + (be?.message || be));
+        } finally {
+          if (link) { link.close(); link = null; }
+        }
+      }
+
       if (!confirm(t("stockConfirm"))) return;
       await up.install(selected.image, selected.product, step);
     }
