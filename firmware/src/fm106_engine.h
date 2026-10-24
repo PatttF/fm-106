@@ -15,6 +15,12 @@
 
 #define FM106_NUM_VOICES 6u
 
+enum {
+    FM106_MODE_MONO = 0,
+    FM106_MODE_POLY1 = 1,
+    FM106_MODE_POLY2 = 2,
+};
+
 typedef struct {
     uint8_t note;               /* MIDI note (0..127), 255 = unassigned */
     uint8_t gate;               /* 1 = held, 0 = released */
@@ -35,6 +41,15 @@ typedef struct {
     fm106_voice_t voice[FM106_NUM_VOICES];
     uint32_t age_counter;
     uint8_t round_robin_next;
+
+    /* Voice Mode & Allocation (Mono/Poly I/Poly II from KR-106) */
+    uint8_t voice_mode;         /* 0 = MONO (unison), 1 = POLY I, 2 = POLY II */
+    uint8_t mono_stack[16];     /* Mono note stack */
+    uint8_t mono_stack_len;
+    int16_t mono_note;          /* Sounding unison note, -1 = none */
+    uint8_t voice_tbl[FM106_NUM_VOICES]; /* Poly I priority table (bubble sort) */
+    uint8_t last_note[FM106_NUM_VOICES];
+    uint8_t ever_played[FM106_NUM_VOICES];
 
     /* Current Patch Parameters */
     uint8_t patch_idx;          /* 0..127 */
@@ -146,6 +161,48 @@ static inline uint32_t fm106_calc_inc(uint32_t note, int8_t oct_shift, uint8_t r
     return inc;
 }
 
+/* Unison detune spread in parts-per-million (~±3 cents spread across 6 voices, matching analog unison) */
+static const int32_t FM106_UNISON_DETUNE_PPM[FM106_NUM_VOICES] = {
+    -1731, -1040, -347, 347, 1040, 1731
+};
+
+static inline uint32_t fm106_calc_unison_inc(uint32_t note, int8_t oct_shift, uint8_t range, uint32_t voice_idx)
+{
+    uint32_t base = fm106_calc_inc(note, oct_shift, range);
+    if (voice_idx < FM106_NUM_VOICES) {
+        int64_t diff = ((int64_t)base * FM106_UNISON_DETUNE_PPM[voice_idx]) / 1000000LL;
+        return (uint32_t)((int64_t)base + diff);
+    }
+    return base;
+}
+
+/* Change Voice Mode (0 = MONO, 1 = POLY I, 2 = POLY II) cleanly without stuck notes */
+static void fm106_set_voice_mode(fm106_engine_t *e, uint8_t mode)
+{
+    if (mode > 2u) mode = FM106_MODE_POLY1;
+    if (e->voice_mode == mode) return;
+
+    uint8_t prev_mode = e->voice_mode;
+    e->voice_mode = mode;
+
+    /* If switching between Mono and Poly, cleanly release sounding voices */
+    if ((prev_mode == FM106_MODE_MONO) != (mode == FM106_MODE_MONO)) {
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            if (e->voice[i].gate || e->voice[i].adsr.stage != FM106_ENV_IDLE) {
+                e->voice[i].gate = 0;
+                fm106_adsr_gate_off(&e->voice[i].adsr);
+            }
+        }
+        e->mono_stack_len = 0;
+        e->mono_note = -1;
+    }
+
+    /* Reset priority table for Poly I */
+    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+        e->voice_tbl[i] = (uint8_t)i;
+    }
+}
+
 /* Load preset patch into engine */
 static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
 {
@@ -202,6 +259,13 @@ static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
     e->vcf_env_polarity = p->p[34];
     e->vca_mode         = p->p[35];
 
+    /* Voice allocation mode (0 = Mono, 1 = Poly I, 2 = Poly II) */
+    if (p->p[45] <= 2u && p->p[45] != 0u) {
+        fm106_set_voice_mode(e, p->p[45]);
+    } else {
+        fm106_set_voice_mode(e, FM106_MODE_POLY1);
+    }
+
     /* SEQ track params */
     e->seq.bpm    = p->p[40] < 40 ? 120 : (p->p[40] > 240 ? 240 : p->p[40]);
     e->seq.sdiv   = p->p[41] > 9 ? 3 : p->p[41];
@@ -222,7 +286,9 @@ static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
         e->voice[i].dco.sub_level = e->dco_sub_level;
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
-            e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            e->voice[i].base_inc = (e->voice_mode == FM106_MODE_MONO)
+                ? fm106_calc_unison_inc(e->voice[i].note, 0, e->dco_range, i)
+                : fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
         }
     }
     fm1_irq_on();
@@ -233,6 +299,14 @@ static void fm106_engine_init(fm106_engine_t *e)
 {
     e->age_counter = 0;
     e->round_robin_next = 0;
+    e->voice_mode = FM106_MODE_POLY1;
+    e->mono_stack_len = 0;
+    e->mono_note = -1;
+    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+        e->voice_tbl[i] = (uint8_t)i;
+        e->last_note[i] = 255u;
+        e->ever_played[i] = 0;
+    }
     e->octave_shift = 0;
     e->pitch_bend = 0;
     e->pitch_bend_val = 0;
@@ -275,105 +349,293 @@ static void fm106_engine_init(fm106_engine_t *e)
     fm106_load_preset(e, 0);
 }
 
-/* Voice allocation for Note On with Round-Robin (matches Juno-106 hardware assigner) */
+/* Voice allocation for Note On: supports MONO (unison), POLY I (bubble-sort), POLY II (voice 0 priority) */
 static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
 {
     if (vel == 0) {
         return;
     }
 
-    /* LFO delay re-arms per key: restart the delay ramp on every note-on
-     * (previously the timer froze at its last value, so the delay never
-     * waited again after the first note). */
     e->lfo_delay_timer = 0;
 
-    /* 1. If note already sounding on a voice, retrigger it */
-    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-        if (e->voice[i].note == note && (e->voice[i].gate || e->voice[i].adsr.stage != FM106_ENV_IDLE)) {
-            e->voice[i].gate = 1;
-            e->voice[i].vel = (uint8_t)vel;
-            e->voice[i].age = ++e->age_counter;
-            e->voice[i].base_inc = fm106_calc_inc(note, 0, e->dco_range);
-            /* Retrigger while sounding: preserve continuous DCO phase & analog filter */
-            fm106_adsr_gate_on(&e->voice[i].adsr);
-            return;
-        }
-    }
-
-    /* 2. Find idle voice using Round-Robin across both CPU cores */
-    uint32_t pick = FM106_NUM_VOICES;
-    for (uint32_t j = 0; j < FM106_NUM_VOICES; j++) {
-        uint32_t i = (e->round_robin_next + j) % FM106_NUM_VOICES;
-        if (e->voice[i].adsr.stage == FM106_ENV_IDLE && !e->voice[i].gate && e->voice[i].vca_slew <= 10) {
-            pick = i;
-            e->round_robin_next = (i + 1u) % FM106_NUM_VOICES;
-            break;
-        }
-    }
-
-    int is_retrigger = 0;
-    /* 3. If no completely idle voice, steal released voice using Round-Robin */
-    if (pick >= FM106_NUM_VOICES) {
-        uint32_t oldest_age = 0xFFFFFFFFu;
-        for (uint32_t j = 0; j < FM106_NUM_VOICES; j++) {
-            uint32_t i = (e->round_robin_next + j) % FM106_NUM_VOICES;
-            if (!e->voice[i].gate && e->voice[i].age < oldest_age) {
-                oldest_age = e->voice[i].age;
-                pick = i;
+    /* -------------------------------------------------------------
+     * Mode 0: MONO (Unison - all 6 voices stacked on one note)
+     * ------------------------------------------------------------- */
+    if (e->voice_mode == FM106_MODE_MONO) {
+        /* Add note to stack (remove existing instance first) */
+        for (uint32_t i = 0; i < e->mono_stack_len; i++) {
+            if (e->mono_stack[i] == (uint8_t)note) {
+                for (uint32_t j = i; j + 1 < e->mono_stack_len; j++) {
+                    e->mono_stack[j] = e->mono_stack[j + 1];
+                }
+                e->mono_stack_len--;
+                break;
             }
         }
-        if (pick < FM106_NUM_VOICES) {
-            e->round_robin_next = (pick + 1u) % FM106_NUM_VOICES;
+        if (e->mono_stack_len < 16u) {
+            e->mono_stack[e->mono_stack_len++] = (uint8_t)note;
+        }
+
+        int was_sounding = (e->mono_note >= 0);
+        e->mono_note = (int16_t)note;
+
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            fm106_voice_t *v = &e->voice[i];
+            v->note = (uint8_t)note;
+            v->gate = 1;
+            v->vel = (uint8_t)vel;
+            v->age = ++e->age_counter;
+            v->base_inc = fm106_calc_unison_inc(note, 0, e->dco_range, i);
+            if (!was_sounding) {
+                fm106_dco_reset(&v->dco);
+                v->vca_slew = 0;
+            }
+            if (!e->dco_saw_on && !e->dco_pulse_on && !e->dco_sub_on && e->dco_noise_level == 0 && e->vcf_resonance > 80) {
+                if (v->vcf.z[0] == 0 && v->vcf.z[1] == 0) {
+                    v->vcf.z[0] = 50 << 9;
+                }
+            }
+            fm106_adsr_gate_on(&v->adsr);
+        }
+        return;
+    }
+
+    /* -------------------------------------------------------------
+     * Mode 1: POLY I (Hardware bubble-sort allocator with restart candidate)
+     * Matches Roland Juno-106 IC20 ROM at $0AAF/$0AF8.
+     * ------------------------------------------------------------- */
+    if (e->voice_mode == FM106_MODE_POLY1) {
+        int restart_pos = -1;
+        int first_free_pos = -1;
+
+        /* Walk back-to-front */
+        for (int pos = (int)FM106_NUM_VOICES - 1; pos >= 0; pos--) {
+            uint8_t vi = e->voice_tbl[pos];
+            if (e->voice[vi].gate) {
+                first_free_pos = pos + 1;
+                break;
+            }
+            if (e->ever_played[vi] && e->last_note[vi] == (uint8_t)note) {
+                restart_pos = pos;
+                break; /* FIRST match from the back wins */
+            }
+        }
+        if (first_free_pos < 0) first_free_pos = 0;
+
+        uint32_t pick;
+        if (restart_pos >= 0) {
+            /* Bubble matched voice to slot 0 */
+            for (int pos = restart_pos; pos > 0; pos--) {
+                uint8_t tmp = e->voice_tbl[pos];
+                e->voice_tbl[pos] = e->voice_tbl[pos - 1];
+                e->voice_tbl[pos - 1] = tmp;
+            }
+            pick = e->voice_tbl[0];
+        } else if (first_free_pos < (int)FM106_NUM_VOICES) {
+            pick = e->voice_tbl[first_free_pos];
+        } else {
+            /* Capacity full: steal oldest voice */
+            uint32_t oldest_age = 0xFFFFFFFFu;
+            pick = e->voice_tbl[FM106_NUM_VOICES - 1];
+            for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                if (e->voice[i].age < oldest_age) {
+                    oldest_age = e->voice[i].age;
+                    pick = i;
+                }
+            }
+        }
+
+        fm106_voice_t *v = &e->voice[pick];
+        int is_retrigger = (v->gate || v->adsr.stage != FM106_ENV_IDLE);
+        v->note = (uint8_t)note;
+        v->gate = 1;
+        v->vel = (uint8_t)vel;
+        v->age = ++e->age_counter;
+        v->base_inc = fm106_calc_inc(note, 0, e->dco_range);
+        e->last_note[pick] = (uint8_t)note;
+        e->ever_played[pick] = 1;
+
+        if (!is_retrigger) {
+            fm106_dco_reset(&v->dco);
+            v->vca_slew = 0;
+        }
+        if (!e->dco_saw_on && !e->dco_pulse_on && !e->dco_sub_on && e->dco_noise_level == 0 && e->vcf_resonance > 80) {
+            if (v->vcf.z[0] == 0 && v->vcf.z[1] == 0) v->vcf.z[0] = 50 << 9;
+        }
+        fm106_adsr_gate_on(&v->adsr);
+        return;
+    }
+
+    /* -------------------------------------------------------------
+     * Mode 2: POLY II (Linear search, fixed priority. Voice 0 first)
+     * Matches Roland Juno-106 IC20 ROM at $0A76/$0B30.
+     * ------------------------------------------------------------- */
+    {
+        /* 1. If note already sounding on a voice, retrigger it */
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            if (e->voice[i].note == (uint8_t)note && (e->voice[i].gate || e->voice[i].adsr.stage != FM106_ENV_IDLE)) {
+                e->voice[i].gate = 1;
+                e->voice[i].vel = (uint8_t)vel;
+                e->voice[i].age = ++e->age_counter;
+                e->voice[i].base_inc = fm106_calc_inc(note, 0, e->dco_range);
+                fm106_adsr_gate_on(&e->voice[i].adsr);
+                return;
+            }
+        }
+
+        /* 2. Linear search from voice 0: find first completely idle voice */
+        uint32_t pick = FM106_NUM_VOICES;
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            if (e->voice[i].adsr.stage == FM106_ENV_IDLE && !e->voice[i].gate && e->voice[i].vca_slew <= 10) {
+                pick = i;
+                break;
+            }
+        }
+
+        int is_retrigger = 0;
+        /* 3. If none idle, linear search for first released voice */
+        if (pick >= FM106_NUM_VOICES) {
+            for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                if (!e->voice[i].gate) {
+                    pick = i;
+                    is_retrigger = 1;
+                    break;
+                }
+            }
+        }
+
+        /* 4. If all gated, steal voice with oldest age */
+        if (pick >= FM106_NUM_VOICES) {
+            uint32_t oldest_age = 0xFFFFFFFFu;
+            for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                if (e->voice[i].age < oldest_age) {
+                    oldest_age = e->voice[i].age;
+                    pick = i;
+                }
+            }
             is_retrigger = 1;
         }
-    }
 
-    /* 4. Voice stealing (oldest held note) */
-    if (pick >= FM106_NUM_VOICES) {
-        uint32_t oldest_age = 0xFFFFFFFFu;
-        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-            if (e->voice[i].age < oldest_age) {
-                oldest_age = e->voice[i].age;
-                pick = i;
-            }
+        fm106_voice_t *v = &e->voice[pick];
+        v->note = (uint8_t)note;
+        v->gate = 1;
+        v->vel = (uint8_t)vel;
+        v->age = ++e->age_counter;
+        v->base_inc = fm106_calc_inc(note, 0, e->dco_range);
+
+        if (!is_retrigger) {
+            fm106_dco_reset(&v->dco);
+            v->vca_slew = 0;
         }
-        e->round_robin_next = (pick + 1u) % FM106_NUM_VOICES;
-        is_retrigger = 1;
-    }
-
-    fm106_voice_t *v = &e->voice[pick];
-    v->note = (uint8_t)note;
-    v->gate = 1;
-    v->vel = (uint8_t)vel;
-    v->age = ++e->age_counter;
-    v->base_inc = fm106_calc_inc(note, 0, e->dco_range);
-
-    /* Reset DCO only if voice was completely idle; preserve phase on steal/retrigger */
-    if (!is_retrigger) {
-        fm106_dco_reset(&v->dco);
-        v->vca_slew = 0;
-    }
-
-    /* Seed pure-resonance patches (e.g. B66 Toy Rhodes) where all DCO waveforms are off */
-    if (!e->dco_saw_on && !e->dco_pulse_on && !e->dco_sub_on && e->dco_noise_level == 0 && e->vcf_resonance > 80) {
-        if (v->vcf.z[0] == 0 && v->vcf.z[1] == 0) {
-            v->vcf.z[0] = 50 << 9;
+        if (!e->dco_saw_on && !e->dco_pulse_on && !e->dco_sub_on && e->dco_noise_level == 0 && e->vcf_resonance > 80) {
+            if (v->vcf.z[0] == 0 && v->vcf.z[1] == 0) v->vcf.z[0] = 50 << 9;
         }
+        fm106_adsr_gate_on(&v->adsr);
     }
-
-    fm106_adsr_gate_on(&v->adsr);
 }
 
 /* Voice note off: advances ADSR release phase while silencing Gate-mode VCA */
 static void fm106_note_off(fm106_engine_t *e, uint32_t note)
 {
+    /* Mode 0: MONO */
+    if (e->voice_mode == FM106_MODE_MONO) {
+        for (uint32_t i = 0; i < e->mono_stack_len; i++) {
+            if (e->mono_stack[i] == (uint8_t)note) {
+                for (uint32_t j = i; j + 1 < e->mono_stack_len; j++) {
+                    e->mono_stack[j] = e->mono_stack[j + 1];
+                }
+                e->mono_stack_len--;
+                break;
+            }
+        }
+        if (e->mono_note == (int16_t)note) {
+            if (e->mono_stack_len > 0) {
+                uint8_t prev_note = e->mono_stack[e->mono_stack_len - 1];
+                e->mono_note = (int16_t)prev_note;
+                for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                    e->voice[i].note = prev_note;
+                    e->voice[i].base_inc = fm106_calc_unison_inc(prev_note, 0, e->dco_range, i);
+                }
+            } else {
+                e->mono_note = -1;
+                for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                    e->voice[i].gate = 0;
+                    if (!e->hold_pedal) {
+                        fm106_adsr_gate_off(&e->voice[i].adsr);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    /* Mode 1: POLY I (Bubble released voice to back of voice_tbl) */
+    if (e->voice_mode == FM106_MODE_POLY1) {
+        int found_pos = -1;
+        for (uint32_t pos = 0; pos < FM106_NUM_VOICES; pos++) {
+            uint8_t vi = e->voice_tbl[pos];
+            if (e->voice[vi].note == (uint8_t)note && e->voice[vi].gate) {
+                found_pos = (int)pos;
+                break;
+            }
+        }
+        if (found_pos >= 0) {
+            uint8_t vi = e->voice_tbl[found_pos];
+            e->voice[vi].gate = 0;
+            if (!e->hold_pedal) {
+                fm106_adsr_gate_off(&e->voice[vi].adsr);
+            }
+            /* Bubble to back */
+            for (uint32_t pos = (uint32_t)found_pos; pos + 1 < FM106_NUM_VOICES; pos++) {
+                uint8_t tmp = e->voice_tbl[pos];
+                e->voice_tbl[pos] = e->voice_tbl[pos + 1];
+                e->voice_tbl[pos + 1] = tmp;
+            }
+        }
+        return;
+    }
+
+    /* Mode 2: POLY II (Release first matching voice only, ROM $0B30) */
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-        if (e->voice[i].note == note && e->voice[i].gate) {
+        if (e->voice[i].note == (uint8_t)note && e->voice[i].gate) {
             e->voice[i].gate = 0;
             if (!e->hold_pedal) {
                 fm106_adsr_gate_off(&e->voice[i].adsr);
             }
+            break;
         }
+    }
+}
+
+/* All notes off: release all sounding voices (CC 123) */
+static void fm106_all_notes_off(fm106_engine_t *e)
+{
+    e->mono_stack_len = 0;
+    e->mono_note = -1;
+    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+        e->voice[i].gate = 0;
+        fm106_adsr_gate_off(&e->voice[i].adsr);
+    }
+    e->hold_pedal = 0;
+    e->keys_down[0] = e->keys_down[1] = e->keys_down[2] = e->keys_down[3] = 0;
+    e->arp_pool[0] = e->arp_pool[1] = e->arp_pool[2] = e->arp_pool[3] = 0;
+    if (e->seq.seq_n) {
+        for (uint8_t i = 0; i < e->seq.seq_n; i++) {
+            fm106_seq_msg_push(&e->seq, 0, e->seq.seq_notes[i], 0);
+        }
+        e->seq.seq_n = 0;
+        e->seq.seq_hold = 0;
+        e->seq.seq_off = 0;
+    }
+}
+
+/* All sound off: immediate mute of all voices and audio envelopes (CC 120) */
+static void fm106_all_sound_off(fm106_engine_t *e)
+{
+    fm106_all_notes_off(e);
+    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+        fm106_adsr_init(&e->voice[i].adsr);
+        e->voice[i].vca_slew = 0;
     }
 }
 
@@ -590,6 +852,7 @@ static uint8_t fm106_param_get(const fm106_engine_t *e, uint8_t idx)
     case 37: return (uint8_t)e->fx[0].mix;
     case 38: return (uint8_t)e->fx[0].rate;
     case 39: return (uint8_t)e->fx[0].character;
+    case 40: return e->voice_mode;
     default: return 0;
     }
 }
@@ -652,7 +915,9 @@ static void fm106_param_set(fm106_engine_t *e, uint8_t idx, uint8_t v)
     case 29: e->dco_range = v > 2 ? 1 : v;
              for (i = 0; i < FM106_NUM_VOICES; i++)
                  if (e->voice[i].note != 255u)
-                     e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+                     e->voice[i].base_inc = (e->voice_mode == FM106_MODE_MONO)
+                         ? fm106_calc_unison_inc(e->voice[i].note, 0, e->dco_range, i)
+                         : fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
              break;
     case 30: e->arp_mode = v > 2 ? 0 : v; break;
     case 31: e->arp_range = v ? v : 1; break;
@@ -663,6 +928,7 @@ static void fm106_param_set(fm106_engine_t *e, uint8_t idx, uint8_t v)
     case 37: e->fx[0].mix = v; break;
     case 38: e->fx[0].rate = v; break;
     case 39: e->fx[0].character = v; break;
+    case 40: fm106_set_voice_mode(e, v > 2u ? FM106_MODE_POLY1 : v); break;
     default: break; /* unused indices */
     }
 }
@@ -726,7 +992,18 @@ static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
             s->seq_off -= nadv;
         }
     }
-    if (!s->playing) return;
+    if (!s->playing) {
+        if (s->seq_n) {
+            for (uint8_t i = 0; i < s->seq_n; i++) {
+                fm106_note_off(e, s->seq_notes[i]);
+                fm106_seq_msg_push(s, 0, s->seq_notes[i], 0);
+            }
+            s->seq_n = 0;
+            s->seq_hold = 0;
+            s->seq_off = 0;
+        }
+        return;
+    }
 
     uint32_t period = fm106_seq_div_samples(s, s->sdiv);
     uint32_t len = s->slen ? (uint32_t)s->slen : 1u;
@@ -767,17 +1044,33 @@ static void fm106_seq_advance(fm106_engine_t *e, uint32_t n)
             s->seq_n = 0; s->seq_hold = 0;
             continue;
         }
+        uint8_t old_n = s->seq_n;
+        uint8_t old_notes[4];
+        for (uint8_t i = 0; i < old_n; i++) old_notes[i] = s->seq_notes[i];
+
         if (!slide_in) {
-            for (uint8_t i = 0; i < s->seq_n; i++) {
-                fm106_note_off(e, s->seq_notes[i]);
-                fm106_seq_msg_push(s, 0, s->seq_notes[i], 0); /* MIDI-out: note off */
+            for (uint8_t i = 0; i < old_n; i++) {
+                fm106_note_off(e, old_notes[i]);
+                fm106_seq_msg_push(s, 0, old_notes[i], 0); /* MIDI-out: note off */
             }
-            s->seq_n = 0;
         }
+        s->seq_n = 0;
         for (int i = 0; i < m; i++) {
             fm106_note_on(e, note[i], vel[i]);
             fm106_seq_msg_push(s, 1, note[i], vel[i]); /* MIDI-out: note on */
             if (s->seq_n < 4u) s->seq_notes[s->seq_n++] = note[i];
+        }
+        if (slide_in) {
+            for (uint8_t i = 0; i < old_n; i++) {
+                uint8_t restruck = 0;
+                for (int j = 0; j < m; j++) {
+                    if (note[j] == old_notes[i]) { restruck = 1; break; }
+                }
+                if (!restruck) {
+                    fm106_note_off(e, old_notes[i]);
+                    fm106_seq_msg_push(s, 0, old_notes[i], 0);
+                }
+            }
         }
         s->seq_off = gate;
         s->seq_hold = (st->flags & FM106_SF_SLIDE) || next_tie;
@@ -900,11 +1193,11 @@ static void fm106_render_voice(fm106_engine_t *e, uint32_t vi, int32_t *sum, uin
         return;   /* Voice silent */
     }
 
-    /* VCF base parameters for this voice */
-    uint16_t vcfCutoff = (uint16_t)(((uint32_t)e->vcf_cutoff * 0x3F80u) / 127u);
-    uint8_t lfoToVcf = (uint8_t)(((uint32_t)e->vcf_lfo_mod * 254u) / 127u);
-    uint8_t vcfEnvMod = (uint8_t)(((uint32_t)e->vcf_env_mod * 254u) / 127u);
-    uint8_t vcfKeyTrack = (uint8_t)(((uint32_t)e->vcf_kbd_track * 254u) / 127u);
+    /* VCF base parameters for this voice (0x3F80 / 127 = 128 (<< 7); 254 / 127 = 2 (<< 1)) */
+    uint16_t vcfCutoff = (uint16_t)((uint32_t)e->vcf_cutoff << 7);
+    uint8_t lfoToVcf = (uint8_t)(e->vcf_lfo_mod << 1);
+    uint8_t vcfEnvMod = (uint8_t)(e->vcf_env_mod << 1);
+    uint8_t vcfKeyTrack = (uint8_t)(e->vcf_kbd_track << 1);
     uint8_t envPol = (e->vcf_env_polarity == 0) ? 1u : 0u;
     uint16_t pitch88 = (uint16_t)((uint32_t)v->note << 8);
 

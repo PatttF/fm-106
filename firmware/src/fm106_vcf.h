@@ -39,13 +39,14 @@ static inline int32_t fm106_soft_limit(int32_t x)
 static inline int32_t fm106_ota_sat(int32_t x)
 {
     int32_t a = x < 0 ? -x : x;
-    int32_t i = a / 384;   /* 256 segments across 0..3.0 */
+    int32_t i = (int32_t)(((uint64_t)(uint32_t)a * 0xAAAAAAABULL) >> 40);   /* 256 segments across 0..3.0, reciprocal div / 384 */
     int32_t y;
     if (i >= 256) {
         y = 32767;
     } else {
-        int32_t rem = a - i * 384;
-        y = (int32_t)FM106_OTA_SAT[i] + (((int32_t)(FM106_OTA_SAT[i + 1] - FM106_OTA_SAT[i]) * rem) / 384);
+        int32_t rem = a - ((i * 3) << 7);
+        uint32_t num = (uint32_t)(FM106_OTA_SAT[i + 1] - FM106_OTA_SAT[i]) * (uint32_t)rem;
+        y = (int32_t)FM106_OTA_SAT[i] + (int32_t)(((uint64_t)num * 0xAAAAAAABULL) >> 40);
     }
     return x < 0 ? -y : y;
 }
@@ -178,7 +179,7 @@ static inline int32_t fm106_vcf_process(fm106_vcf_t *f, int32_t input, uint16_t 
     if (code > 3500u) {
         int32_t fade = 4095 - (int32_t)code;
         if (fade < 0) fade = 0;
-        k = (k * fade) / 595;
+        k = (int32_t)(((uint64_t)((uint32_t)k * (uint32_t)fade) * 7218433ULL) >> 32);
     }
 
     /* Peak-pull compensation: aligns resonant peak with hardware analog filter */
@@ -216,14 +217,41 @@ static inline int32_t fm106_vcf_process(fm106_vcf_t *f, int32_t input, uint16_t 
     int32_t u = (int32_t)(((int64_t)(direct + fb) * invDen) >> 12);
     int32_t u_q24 = u << 9;
 
-    /* 4 cascaded 1-pole TPT stages in Q24 with saturation guarding */
-    for (int j = 0; j < 4; j++) {
-        int32_t delta = (int32_t)(((int64_t)g1 * (u_q24 - f->z[j])) >> 15);
-        int32_t y = f->z[j] + delta;
+    /* 4 cascaded 1-pole TPT stages in Q24 with saturation guarding (unrolled) */
+    {
+        int32_t delta = (int32_t)(((int64_t)g1 * (u_q24 - f->z[0])) >> 15);
+        int32_t y = f->z[0] + delta;
         int32_t next_z = y + delta;
         if (next_z > 134217727) next_z = 134217727;
         else if (next_z < -134217728) next_z = -134217728;
-        f->z[j] = next_z;
+        f->z[0] = next_z;
+        u_q24 = y;
+    }
+    {
+        int32_t delta = (int32_t)(((int64_t)g1 * (u_q24 - f->z[1])) >> 15);
+        int32_t y = f->z[1] + delta;
+        int32_t next_z = y + delta;
+        if (next_z > 134217727) next_z = 134217727;
+        else if (next_z < -134217728) next_z = -134217728;
+        f->z[1] = next_z;
+        u_q24 = y;
+    }
+    {
+        int32_t delta = (int32_t)(((int64_t)g1 * (u_q24 - f->z[2])) >> 15);
+        int32_t y = f->z[2] + delta;
+        int32_t next_z = y + delta;
+        if (next_z > 134217727) next_z = 134217727;
+        else if (next_z < -134217728) next_z = -134217728;
+        f->z[2] = next_z;
+        u_q24 = y;
+    }
+    {
+        int32_t delta = (int32_t)(((int64_t)g1 * (u_q24 - f->z[3])) >> 15);
+        int32_t y = f->z[3] + delta;
+        int32_t next_z = y + delta;
+        if (next_z > 134217727) next_z = 134217727;
+        else if (next_z < -134217728) next_z = -134217728;
+        f->z[3] = next_z;
         u_q24 = y;
     }
 

@@ -147,8 +147,9 @@ static inline int32_t fm106_dco_process(
         pulse += fm106_poly_blep(pw_edge, eff_inc);
 
         /* AC coupling: remove theoretical DC offset of rectangular pulse
-         * (matches hardware C11 10µF coupling capacitor at steady state) */
-        int32_t pulse_dc = (int32_t)(((int64_t)mod_pw * 18407003LL) >> 16);
+         * (matches hardware C11 10µF coupling capacitor at steady state)
+         * Since mod_pw <= 105, 105 * 18407003 = 1932735315 < 2^31 - 1, safe in 32-bit */
+        int32_t pulse_dc = ((int32_t)mod_pw * 18407003) >> 16;
         pulse -= pulse_dc;
 
         total += (pulse * 16384) >> 15;

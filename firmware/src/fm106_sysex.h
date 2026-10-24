@@ -4,9 +4,10 @@
 #include <stdint.h>
 
 #define FM106_PRESETS_FLASH_ADDR 0x00098000u
-#define FM106_PRESETS_FLASH_SIZE 0x2000u    /* 8 KiB (2 x 4 KiB sectors) */
+#define FM106_PRESETS_FLASH_SIZE 0x4000u    /* 16 KiB (4 x 4 KiB sectors) */
 #define FM106_PRESETS_MAGIC      0x36303142u /* "J10B" v1 user banks (preset p[44], FX 1 only) */
 #define FM106_PRESETS_MAGIC2     0x36303143u /* "J10C" v2 user banks (preset p[60], FX 1..4) */
+#define FM106_PRESETS_MAGIC3     0x36303144u /* "J10D" v3 user banks (preset p[66], FX 1..4 + SEQ) */
 
 typedef struct {
     uint32_t magic;
@@ -15,7 +16,7 @@ typedef struct {
     uint32_t reserved;
 } fm106_flash_header_t;
 
-/* Global RAM user bank (128 presets = 7,680 bytes: 64 in User A, 64 in User B) */
+/* Global RAM user bank (128 presets = 10,496 bytes: 64 in User A, 64 in User B) */
 extern fm106_preset_t g_user_presets[FM106_NUM_USER_PRESETS];
 extern fm106_engine_t g_synth;
 extern uint32_t g_dirty_screen;
@@ -37,28 +38,43 @@ static void fm106_user_presets_restore_factory(void)
     memset(g_user_presets, 0, sizeof(g_user_presets));
 }
 
+static uint8_t g_presets_flash_buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
+
 /* Initialize user presets: load from SPI flash if valid, else initialize as completely blank.
- * v1 banks ("J10B", p[44]) still load: each record is widened in place, FX 2..4 default OFF. */
+ * v1 banks ("J10B", p[44]) and v2 banks ("J10C", p[60]) still load: widened in place. */
 static void fm106_user_presets_init(void)
 {
-    static uint8_t buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
     fm106_flash_header_t hdr;
 
     if (presets_flash_read(&hdr, sizeof(hdr)) == 0 &&
         hdr.count == FM106_NUM_USER_PRESETS &&
-        (hdr.magic == FM106_PRESETS_MAGIC2 || hdr.magic == FM106_PRESETS_MAGIC)) {
-        if (hdr.magic == FM106_PRESETS_MAGIC2) {
-            if (presets_flash_read(buf, sizeof(buf)) == 0 &&
-                fm106_crc32(buf + sizeof(hdr), sizeof(g_user_presets)) == hdr.crc) {
-                memcpy(g_user_presets, buf + sizeof(hdr), sizeof(g_user_presets));
+        (hdr.magic == FM106_PRESETS_MAGIC3 || hdr.magic == FM106_PRESETS_MAGIC2 || hdr.magic == FM106_PRESETS_MAGIC)) {
+        if (hdr.magic == FM106_PRESETS_MAGIC3) {
+            if (presets_flash_read(g_presets_flash_buf, sizeof(g_presets_flash_buf)) == 0 &&
+                fm106_crc32(g_presets_flash_buf + sizeof(hdr), sizeof(g_user_presets)) == hdr.crc) {
+                memcpy(g_user_presets, g_presets_flash_buf + sizeof(hdr), sizeof(g_user_presets));
+                return;
+            }
+        } else if (hdr.magic == FM106_PRESETS_MAGIC2) {
+            /* v2: 128 records of {name[16], p[60]} = 76 B each */
+            const uint32_t v2_size = FM106_NUM_USER_PRESETS * 76u;
+            if (presets_flash_read(g_presets_flash_buf, sizeof(fm106_flash_header_t) + v2_size) == 0 &&
+                fm106_crc32(g_presets_flash_buf + sizeof(hdr), v2_size) == hdr.crc) {
+                const uint8_t *src = g_presets_flash_buf + sizeof(hdr);
+                for (uint32_t i = FM106_NUM_USER_PRESETS; i-- > 0; ) {
+                    /* descending: each widened record sits above the old record it came from */
+                    memcpy(g_user_presets[i].name, src + i * 76u, 16);
+                    memset(g_user_presets[i].p, 0, sizeof(g_user_presets[i].p));
+                    memcpy(g_user_presets[i].p, src + i * 76u + 16, 60);
+                }
                 return;
             }
         } else {
             /* v1: 128 records of {name[16], p[44]} = 60 B each */
             const uint32_t oldn = FM106_NUM_USER_PRESETS * 60u;
-            if (presets_flash_read(buf, sizeof(fm106_flash_header_t) + oldn) == 0 &&
-                fm106_crc32(buf + sizeof(hdr), oldn) == hdr.crc) {
-                const uint8_t *src = buf + sizeof(hdr);
+            if (presets_flash_read(g_presets_flash_buf, sizeof(fm106_flash_header_t) + oldn) == 0 &&
+                fm106_crc32(g_presets_flash_buf + sizeof(hdr), oldn) == hdr.crc) {
+                const uint8_t *src = g_presets_flash_buf + sizeof(hdr);
                 for (uint32_t i = FM106_NUM_USER_PRESETS; i-- > 0; ) {
                     /* descending: each widened record sits above the old record it came from */
                     memcpy(g_user_presets[i].name, src + i * 60u, 16);
@@ -80,16 +96,15 @@ static int fm106_user_presets_save_flash(void)
 #if DINGHY_DUAL_CORE
     if (audio_worker_online) audio_worker_join();
 #endif
-    static uint8_t buf[sizeof(fm106_flash_header_t) + sizeof(g_user_presets)];
-    fm106_flash_header_t *hdr = (fm106_flash_header_t *)buf;
+    fm106_flash_header_t *hdr = (fm106_flash_header_t *)g_presets_flash_buf;
 
-    hdr->magic = FM106_PRESETS_MAGIC2;
+    hdr->magic = FM106_PRESETS_MAGIC3;
     hdr->count = FM106_NUM_USER_PRESETS;
     hdr->crc = fm106_crc32((const uint8_t *)g_user_presets, sizeof(g_user_presets));
     hdr->reserved = 0;
 
-    memcpy(buf + sizeof(fm106_flash_header_t), g_user_presets, sizeof(g_user_presets));
-    return presets_flash_save(buf, sizeof(buf));
+    memcpy(g_presets_flash_buf + sizeof(fm106_flash_header_t), g_user_presets, sizeof(g_user_presets));
+    return presets_flash_save(g_presets_flash_buf, sizeof(g_presets_flash_buf));
 }
 
 /* Load a preset from the 4 banks (Factory A, Factory B, User A, User B) into the synth engine */
@@ -178,6 +193,13 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     e->fx[0].rate      = p->p[38] > 127 ? 127 : p->p[38];
     e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
 
+    /* Voice allocation mode (0 = Mono, 1 = Poly I, 2 = Poly II) */
+    if (p->p[45] <= 2u && p->p[45] != 0u) {
+        fm106_set_voice_mode(e, p->p[45]);
+    } else {
+        fm106_set_voice_mode(e, FM106_MODE_POLY1);
+    }
+
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
         e->voice[i].dco.saw_on = e->dco_saw_on;
@@ -186,7 +208,9 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
         e->voice[i].dco.sub_level = e->dco_sub_level;
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
-            e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            e->voice[i].base_inc = (e->voice_mode == FM106_MODE_MONO)
+                ? fm106_calc_unison_inc(e->voice[i].note, 0, e->dco_range, i)
+                : fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
         }
     }
     fm106_param_snapshot(e); /* p-lock cache follows the loaded sound */
@@ -243,6 +267,8 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[37] = (uint8_t)e->fx[0].mix;
     p->p[38] = (uint8_t)e->fx[0].rate;
     p->p[39] = (uint8_t)e->fx[0].character;
+
+    p->p[45] = e->voice_mode;
 
     /* SEQ track params (bpm/sdiv/slen/sgate/swing) */
     p->p[40] = (uint8_t)e->seq.bpm;

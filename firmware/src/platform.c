@@ -81,7 +81,7 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 /* ---- flash: read anywhere; erase / program only the update's staging area and the settings sector */
 #define SETTINGS_AT 0x000FC000u                 /* one 4 KiB sector of Felucca's globals area */
 #define FM106_PRESETS_FLASH_ADDR 0x00098000u
-#define FM106_PRESETS_FLASH_SIZE 0x2000u        /* 8 KiB (2 x 4 KiB sectors) */
+#define FM106_PRESETS_FLASH_SIZE 0x4000u        /* 16 KiB (4 x 4 KiB sectors) */
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || \
                              FL_IN(off, n, SETTINGS_AT, SETTINGS_AT + 0x1000u) || \
                              FL_IN(off, n, FM106_PRESETS_FLASH_ADDR, FM106_PRESETS_FLASH_ADDR + FM106_PRESETS_FLASH_SIZE))
@@ -198,10 +198,10 @@ static int presets_flash_save(const void *p, uint32_t n)
     int rc;
     if (!flash_ok || n > FM106_PRESETS_FLASH_SIZE)
         return -1;
-    if ((rc = fl_erase4k(FM106_PRESETS_FLASH_ADDR, &took)) != 0)
-        return rc;
-    if ((rc = fl_erase4k(FM106_PRESETS_FLASH_ADDR + 0x1000u, &took)) != 0)
-        return rc;
+    for (uint32_t off = 0; off < n; off += 0x1000u) {
+        if ((rc = fl_erase4k(FM106_PRESETS_FLASH_ADDR + off, &took)) != 0)
+            return rc;
+    }
     return fl_write(FM106_PRESETS_FLASH_ADDR, p, n);
 }
 

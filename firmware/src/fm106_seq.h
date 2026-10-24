@@ -34,7 +34,8 @@
  * sound space (see fm106_param_get/set in fm106_engine.h). Sparse table:
  * 256 slots covers any realistic pattern; a full table drops silently. */
 #define FM106_PLOCK_SLOTS 1024u
-#define FM106_NPARAM      40u
+#define FM106_NPARAM      41u
+#define FM106_PARAM_VOICE_MODE 40u
 
 typedef struct {
     uint16_t step;             /* locked step index (0..slen-1) */
