@@ -130,7 +130,7 @@ static void lcd_blit(uint32_t x, uint32_t y, uint32_t w, uint32_t h, const uint1
 static void lcd_sync(void) {}
 
 #define CV_MAX (240u * 96u)
-#include "../../firmware/src/gfx.c"
+#include "../firmware/src/gfx.c"
 
 /* Flash Storage */
 #define SETTINGS_FLASH_OFFSET 0xFC000u
@@ -171,6 +171,41 @@ static int presets_flash_save(const void *src, uint32_t n)
     return 0;
 }
 
+#define SEQ_FLASH_OFFSET 0x9C000u
+static int seq_flash_read(void *dst, uint32_t n)
+{
+    if (n > 4096u) return -1;
+    uint8_t *s = nor + SEQ_FLASH_OFFSET;
+    if (s[0] == 0xFF && s[1] == 0xFF) return -1;
+    memcpy(dst, s, n);
+    return 0;
+}
+
+static int seq_flash_save(const void *src, uint32_t n)
+{
+    if (n > 4096u) return -1;
+    memset(nor + SEQ_FLASH_OFFSET, 0xFF, 4096u);
+    memcpy(nor + SEQ_FLASH_OFFSET, src, n);
+    web_flash_writes++;
+    return 0;
+}
+
+#define FM1_CRASH_MAGIC 0x43525348u
+#define FM1_CRASH_CTX_N 4u
+typedef struct {
+    uint32_t magic, count, vec, pc, rets, emu, dbg, sp, psr, icfg, uptime_ms;
+    uint32_t etm[4];
+    uint32_t early;
+} fm1_crash_t;
+typedef struct {
+    uint32_t count, pc, r[16], usp, ssp;
+} fm1_crash_ctx_t;
+static fm1_crash_t fm1_crash;
+static fm1_crash_ctx_t fm1_crash_ctx[FM1_CRASH_CTX_N];
+static struct { uint8_t p3_rst; } fm1_boot;
+static uint8_t g_where_boot;
+static volatile uint8_t g_where;
+
 /* MIDI ring queue */
 static uint8_t midi_q[256][3];
 static uint32_t midi_w, midi_r;
@@ -198,7 +233,7 @@ static void platform_poll(void) {}
 #define RING_PUBLISH() ((void)0)
 
 /* Include the synthesizer engine and UI */
-#include "../../firmware/src/fm106.c"
+#include "../firmware/src/fm106.c"
 
 /* ---------------- Audio & Time loop ---------------- */
 #define RING 4096u
@@ -255,7 +290,6 @@ EXPORT uint32_t web_flash_writes_count(void) { return web_flash_writes; }
 EXPORT void web_boot(void)
 {
     if (!web_booted) {
-        if (!web_flash_writes) memset(nor, 0xFF, sizeof nor);
         fm106_app_init();
         web_booted = 1;
         web_last_frame = fm1_ms;
@@ -358,9 +392,3 @@ EXPORT uint16_t *web_screen(void) { return web_fb; }
 EXPORT uint32_t web_screen_draws(void) { return web_draws; }
 EXPORT uint32_t web_now_ms(void) { return fm1_ms; }
 EXPORT uint32_t web_sample_rate(void) { return FS; }
-
-EXPORT uint8_t web_voice_mode(void) { return g_synth.voice_mode; }
-EXPORT uint8_t web_voice_note(uint32_t vi) { return vi < 6u ? g_synth.voice[vi].note : 255u; }
-EXPORT uint8_t web_voice_gate(uint32_t vi) { return vi < 6u ? g_synth.voice[vi].gate : 0u; }
-EXPORT uint32_t web_voice_inc(uint32_t vi) { return vi < 6u ? g_synth.voice[vi].base_inc : 0u; }
-EXPORT uint8_t web_current_page(void) { return g_current_page; }
