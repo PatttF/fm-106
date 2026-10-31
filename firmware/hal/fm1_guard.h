@@ -1,6 +1,9 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FM-1 hardware guards. Every violation raises the CPU exception (vector 1) and
+/* SPDX-License-Identifier: MPL-2.0
+ * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+ * Copyright (C) 2026 Charles Vestal (fm1_guard_stack_floor, fm1_sp_in_isr)
+ * Written against the public JieLi AC79 SDK (Apache-2.0); see NOTICE. */
+/* FM-1 hardware guards (after the SDK's
+ * cpu/wl82/debug.c). Every violation raises the CPU exception (vector 1) and
  * ends in the fault report of fm1_irq.h, so install that first.
  *
  *   EMU stack limit   sp outside [_ustack_lo, _sstack_top] -> EMU_MSG bit 3.
@@ -20,6 +23,7 @@
 #pragma once
 #include <stdint.h>
 #include "fm1_irq.h"
+#include "fm1_cc.h"
 
 #define FM1_X2(off) (*(volatile uint32_t *)(0x1EEE000u + (off)))
 #define FM1_WR_LIMIT_H(n) FM1_X2(0x280u + 4u * (n))
@@ -71,7 +75,11 @@ static void fm1_guard_enable(uint32_t which)
         FM1_C0_WR_LIMIT_EN |= 3u;
     }
     if (which & FM1_GUARD_BUS)
-        FM1_DBG_EN |= (0x3Fu << 16) | (0x3u << 4);
+#if FELUCCA_BLE
+        FM1_DBG_EN |= (0x30u << 16); /* bits 20, 21: CPU0 rd/wr guards only; CPU1 bits 16..18 off */
+#else
+        FM1_DBG_EN |= (0x3Fu << 16);
+#endif
     if (which & FM1_GUARD_PC) {
         FM1_PC_LIMIT0_L = 0x02000120u;
         FM1_PC_LIMIT0_H = (uint32_t)(uintptr_t)_etext;
@@ -96,10 +104,30 @@ static void fm1_guard_lock_top(void)
     fm1__dbg_lock();
 }
 
+/* let sp go down to lo (stacks of a radio's tasks, in the pool), up to the system stack's top as before */
+static void fm1_guard_stack_floor(uint32_t lo)
+{
+    fm1__dbg_unlock();
+    FM1_EMU_CON &= ~(1u << 3);
+    FM1_EMU_SSP_L = lo;
+    FM1_EMU_USP_L = lo;
+    FM1_EMU_CON |= 1u << 3;
+    fm1__dbg_lock();
+}
+
 /* reopen the reserved top of RAM (mailbox write before a UBOOT reset) */
 static void fm1_guard_unlock_top(void)
 {
     fm1__dbg_unlock();
     FM1_C0_WR_LIMIT_EN &= ~4u;
     fm1__dbg_lock();
+}
+
+/* the code runs on the system stack: an interrupt (crt0 points ssp there; the main loop and the tasks of a
+ * scheduler run elsewhere). fm1-radio's test, for a shim that must not wait inside an interrupt */
+FM1_INLINE int fm1_sp_in_isr(void)
+{
+    uint32_t sp;
+    __asm__ volatile("%0 = sp" : "=r"(sp));
+    return sp >= (uint32_t)(uintptr_t)_guard1 && sp <= (uint32_t)(uintptr_t)_sstack_top;
 }

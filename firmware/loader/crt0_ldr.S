@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Felucca update loader entry. The SPL decompresses the loader to its load
  * address (0x01C0A800) and calls its first byte. Interrupts off,

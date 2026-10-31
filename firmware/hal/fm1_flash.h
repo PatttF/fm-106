@@ -1,5 +1,6 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
+/* SPDX-License-Identifier: MPL-2.0
+ * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+ * Written against the public JieLi AC79 SDK (Apache-2.0); see NOTICE. */
 /* FM-1 SPI NOR at runtime: erase / program / read. Used only when
  * FELUCCA_FLASH is 1.
  *
@@ -7,7 +8,7 @@
  * .ram_text and touches only SFRs, the stack and RAM buffers: no .rodata, no
  * libcalls, no XIP-resident helpers. Call the fl_*_ram() entry points with
  * interrupts disabled. Same sequence as the AC79 SDK flash driver
- * (enter_spi_code, norflash_erase, norflash_wait_ok, exit_spi_code).
+ * (cpu.a/vm_sfc.c.o: enter_spi_code, norflash_erase, norflash_wait_ok, exit_spi_code).
  */
 #pragma once
 #include <stdint.h>
@@ -41,16 +42,28 @@ static inline void *fl_far(void *p) { void *volatile q = p; return q; }
 #define FL_GLOB_HI      0x000FF000u
 #define FL_OTA_LO       0x000E0000u                /* M-UPGRADE loader staging, ota.c */
 #define FL_OTA_HI       0x000E5000u
+#define FL_AUTO_LO      0x000E5000u                /* 1.2: the autosave (storage.c OBJ_AUTOSAVE), A/B, just above */
+#define FL_AUTO_HI      0x000E7000u                /* the OTA staging; 0xE7000 stays free */
 /* [off, off + n) inside [lo, hi), without wrapping: off + n can overflow, and
  * the 1 MiB part ignores the high address bits, so a wrapped range lands low. */
 #define FL_IN(off, n, lo, hi) ((uint32_t)(off) >= (lo) && (uint32_t)(off) <= (hi) && \
                                (uint32_t)(n) <= (hi) - (uint32_t)(off))
-/* Felucca's own store (projects, user samples; settings) */
-#define FL_STORE_OK(off, n) (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI))
+/* Felucca's own store (projects, user samples; settings; the autosave) */
+#define FL_STORE_OK(off, n) (FL_IN(off, n, FL_DATA_LO, FL_DATA_HI) || FL_IN(off, n, FL_GLOB_LO, FL_GLOB_HI) || \
+                             FL_IN(off, n, FL_AUTO_LO, FL_AUTO_HI))
+/* More flash for a firmware's own data, outside the store: between the app area (the loader writes only below
+ * 0x93000) and the store, and from above the autosave up to the globals. The update loader clears an update
+ * record it finds at a 4 KiB boundary - 256 here (ldr_core.c: "AT" at bytes 6..7 and a valid CRC), so a firmware
+ * keeps bytes 0xF00..0xF07 of each of these sectors erased (or anything but a record) */
+#define FL_XDATA0_LO    0x00093000u
+#define FL_XDATA0_HI    0x00097000u
+#define FL_XDATA1_LO    0x000E7000u
+#define FL_XDATA1_HI    0x000FC000u
+#define FL_XDATA_OK(off, n) (FL_IN(off, n, FL_XDATA0_LO, FL_XDATA0_HI) || FL_IN(off, n, FL_XDATA1_LO, FL_XDATA1_HI))
 /* Where the RAM driver may erase / program. The app build allows only its own
  * data regions; the update loader (firmware/loader) defines its own window. */
 #ifndef FL_RANGE_OK
-#define FL_RANGE_OK(off, n) (FL_STORE_OK(off, n) || FL_IN(off, n, FL_OTA_LO, FL_OTA_HI))
+#define FL_RANGE_OK(off, n) (FL_STORE_OK(off, n) || FL_XDATA_OK(off, n) || FL_IN(off, n, FL_OTA_LO, FL_OTA_HI))
 #endif
 
 typedef struct { uint32_t sfc_con, spi_con; } fl_saved_t;
@@ -154,6 +167,23 @@ static RAMFN uint32_t fl_jedec_ram(void)                 /* expect 0x856014 */
     return id;
 }
 
+/* the part's factory unique ID (0x4B, four dummy bytes; the stock Puya P25Q80 gives 16 bytes, a Winbond-style part
+ * 8): dst (RAM) gets 16 bytes; the same on every read of the same part. Only with FL_UID defined: RAM code costs
+ * every firmware that includes this */
+#ifdef FL_UID
+static RAMFN int fl_uid_ram(uint8_t *dst)
+{
+    fl_saved_t s; uint32_t i;
+    if (fl_enter(&s)) return -2;
+    fl_cs(0);
+    for (i = 0; i < 5u; i++) fl_tx(i ? 0 : 0x4B);
+    for (i = 0; i < 16u; i++) dst[i] = fl_rx();
+    fl_cs(1);
+    fl_exit(&s);
+    return 0;
+}
+#endif
+
 static RAMFN uint32_t fl_status_ram(void)                /* SR1 | SR2 << 8 */
 {
     fl_saved_t s; uint32_t v;
@@ -228,9 +258,16 @@ static void fl_plain_window_init(void)
 static inline uint32_t irq_save(void) { __asm__ volatile("cli" ::: "memory"); return 0; }
 static inline void irq_restore(uint32_t f) { (void)f; __asm__ volatile("csync\n\tsti" ::: "memory"); }
 
+/* with interrupts off, before the XIP goes away: a second core that runs code from the flash finishes first (the
+ * app defines it; an audio job submitted between a join and the irq_save would fetch from a switched-off XIP) */
+#ifndef FL_QUIESCE
+#define FL_QUIESCE() ((void)0)
+#endif
+
 static int fl_erase4k(uint32_t off, uint32_t *took_us)
 {
     uint32_t f = irq_save();
+    FL_QUIESCE();
     int rc = FL_FAR(fl_erase4k_ram)(off, took_us);
     irq_restore(f);
     return rc;
@@ -245,6 +282,7 @@ static int fl_write(uint32_t off, const uint8_t *src_ram, uint32_t n)
         uint32_t f;
         if (chunk > n) chunk = n;
         f = irq_save();
+        FL_QUIESCE();
         rc = FL_FAR(fl_prog_ram)(off, src_ram, chunk, &took);
         irq_restore(f);
         if (rc) return rc;

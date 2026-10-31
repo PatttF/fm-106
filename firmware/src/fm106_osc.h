@@ -16,33 +16,38 @@ static inline int32_t fm106_mulq15(int32_t a, int32_t b)
     return (a * b) >> 15;
 }
 
-/* PolyBLEP residual around 32-bit phase wrap.
- * ph: 32-bit unsigned [0..2^32-1], inc: 32-bit phase step per sample */
-static inline int32_t fm106_poly_blep(uint32_t ph, uint32_t inc)
+/* PolyBLEP residual around 32-bit phase wrap using precomputed float reciprocal
+ * inv_inc = 1.0f / (float)inc (pass blep_inc = 0 when inc < 2u).
+ * Eliminates up to 4 hardware 32-bit integer divisions per sample per voice. */
+static inline __attribute__((always_inline)) int32_t fm106_poly_blep_f(uint32_t ph, uint32_t inc, float inv_inc)
 {
-    if (inc < 2u) return 0;
-    uint32_t d = inc >> 15;
-    if (!d) d = 1;
-
     if (ph < inc) {
-        int32_t x = (int32_t)(ph / d);                       /* 0..32767 */
-        return (x << 1) - ((x * x) >> 15) - 32768;
+        float t = (float)ph * inv_inc;
+        return (int32_t)(((t + t) - t * t - 1.0f) * 32768.0f);
     }
     if (ph > (0xFFFFFFFFu - inc)) {
-        int32_t x = -(int32_t)((0xFFFFFFFFu - ph) / d);      /* -32767..0 */
-        return ((x * x) >> 15) + (x << 1) + 32768;
+        float om = 1.0f - (float)(0xFFFFFFFFu - ph) * inv_inc;
+        return (int32_t)((om * om) * 32768.0f);
     }
     return 0;
 }
 
-/* Bandlimited sawtooth: normalized Q15 (-32767..32767) */
-static inline int32_t fm106_osc_saw(uint32_t ph, uint32_t inc, int32_t blep_reset)
+/* Legacy wrapper when inv_inc is not precomputed */
+static inline int32_t fm106_poly_blep(uint32_t ph, uint32_t inc)
 {
+    if (inc < 2u) return 0;
+    return fm106_poly_blep_f(ph, inc, 1.0f / (float)inc);
+}
+
+/* Bandlimited sawtooth: normalized Q15 (-32767..32767) */
+static inline __attribute__((always_inline)) int32_t fm106_osc_saw(uint32_t ph, uint32_t inc, int32_t blep_reset)
+{
+    (void)inc;
     return ((int32_t)(ph >> 16) - 32768) - blep_reset;
 }
 
 /* Fast 32-bit PRNG for Juno-106 analog noise generator */
-static inline uint32_t fm106_noise32(uint32_t *seed)
+static inline __attribute__((always_inline)) uint32_t fm106_noise32(uint32_t *seed)
 {
     uint32_t s = *seed;
     s ^= s << 13;
@@ -88,20 +93,18 @@ static inline void fm106_dco_init(fm106_dco_t *d, uint32_t voice_idx)
     d->noise_level = 0;
 }
 
-/* Render one audio sample from the DCO (returns Q15)
- * eff_inc: 32-bit pitch phase step
- * pw_slider: 0..127 PWM fader position
- * pw_mode: 0 = manual, 1 = lfo
- * lfo_tri: current bipolar LFO (-32768..32767)
- * env_q15: current envelope (0..32767) */
-static inline int32_t fm106_dco_process(
+/* Render one audio sample from the DCO with precomputed 1/eff_inc (returns Q15) */
+static inline __attribute__((always_inline)) int32_t fm106_dco_process_fast(
     fm106_dco_t *d,
     uint32_t eff_inc,
+    uint32_t blep_inc,
+    float inv_inc,
     uint8_t pw_slider,
     uint8_t pw_mode,
     int32_t lfo_tri,
     int32_t env_q15)
 {
+    (void)env_q15;
     uint32_t prev_ph = d->ph;
     uint32_t next_ph = prev_ph + eff_inc;
     d->ph = next_ph;
@@ -112,7 +115,7 @@ static inline int32_t fm106_dco_process(
     }
 
     /* Shared PolyBLEP residual at phase reset */
-    int32_t blep_reset = fm106_poly_blep(next_ph, eff_inc);
+    int32_t blep_reset = fm106_poly_blep_f(next_ph, blep_inc, inv_inc);
 
     int32_t total = 0;
 
@@ -122,9 +125,9 @@ static inline int32_t fm106_dco_process(
         total += (saw * 19660) >> 15;
     }
 
-    /* 2. Pulse with Juno-106 inverted duty cycle: amp 0.5 (16384 in Q15) */
+    /* 2. Pulse with Juno-106 inverted duty cycle: amp 0.5 (16384 in Q15 = >> 1) */
     if (d->pulse_on) {
-        /* Compute pulse width duty (0.50..0.95) from fader / LFO / ENV */
+        /* Compute pulse width duty (0.50..0.95) from fader / LFO */
         int32_t mod_pw;
         if (pw_mode == 0) {   /* LFO PWM */
             mod_pw = ((int32_t)pw_slider * (32768 + lfo_tri)) >> 16;
@@ -134,36 +137,34 @@ static inline int32_t fm106_dco_process(
         if (mod_pw < 0) mod_pw = 0;
         if (mod_pw > 105) mod_pw = 105;
 
-        /* Range: 50% to 95% -> 0x80000000 to 0xF3333333 (Juno-106 hardware panel limit: byte 105 = 95%) */
-        uint32_t pw32 = 0x80000000u + ((uint32_t)mod_pw * 18407003u);
-
-        /* Juno-106 inverted comparator: narrow dip sits at end of ramp */
-        uint32_t eff_pw = 0xFFFFFFFFu - pw32;
+        /* Range: 50% to 95% -> 0x80000000 to 0xF3333333 (Juno-106 hardware panel limit: byte 105 = 95%).
+         * pw_off <= 105 * 18407003 = 1,932,735,315 (< 2^31), so both eff_pw and pulse_dc fit in 32-bit! */
+        uint32_t pw_off = (uint32_t)mod_pw * 18407003u;
+        uint32_t eff_pw = 0x7FFFFFFFu - pw_off;
 
         /* Comparator + dual PolyBLEP */
         int32_t pulse = (next_ph < eff_pw) ? -32767 : 32767;
         pulse -= blep_reset;
         uint32_t pw_edge = next_ph - eff_pw;
-        pulse += fm106_poly_blep(pw_edge, eff_inc);
+        pulse += fm106_poly_blep_f(pw_edge, blep_inc, inv_inc);
 
         /* AC coupling: remove theoretical DC offset of rectangular pulse
-         * (matches hardware C11 10µF coupling capacitor at steady state)
-         * Since mod_pw <= 105, 105 * 18407003 = 1932735315 < 2^31 - 1, safe in 32-bit */
-        int32_t pulse_dc = ((int32_t)mod_pw * 18407003) >> 16;
+         * (matches hardware C11 10µF coupling capacitor at steady state) */
+        int32_t pulse_dc = (int32_t)(pw_off >> 16);
         pulse -= pulse_dc;
 
-        total += (pulse * 16384) >> 15;
+        total += pulse >> 1;
     }
 
-    /* 3. Sub-oscillator: 1 octave down square, amp 0.75 * FM106_SUB_LEVEL_J106 (24576 in Q15) */
-    if ((d->sub_on || d->sub_level > 0) && d->sub_level > 0) {
+    /* 3. Sub-oscillator: 1 octave down square, amp 0.75 * FM106_SUB_LEVEL_J106 */
+    if (d->sub_on && d->sub_level > 0) {
         int32_t sub_sign = d->sub_state ? -32767 : 32767;
         int32_t abs_blep = blep_reset < 0 ? -blep_reset : blep_reset;
         if (abs_blep > 32768) abs_blep = 32768;
         int32_t sub = (sub_sign * (32768 - abs_blep)) >> 15;
         int32_t taper = FM106_SUB_LEVEL_J106[d->sub_level > 127u ? 127u : d->sub_level];
         int32_t sub_scaled = (sub * taper) >> 15;
-        total += (sub_scaled * 24576) >> 15;
+        total += (sub_scaled * 3) >> 2;
     }
 
     /* 4. Analog Noise Generator: 5.3 kHz 1-pole RC filtered (Roland 2SC945 noise path), calibrated to reference RMS */
@@ -174,9 +175,22 @@ static inline int32_t fm106_dco_process(
         d->noise_lpf += (9300 * (raw_n - d->noise_lpf)) >> 15;
         int32_t n_level = FM106_NOISE_LEVEL_J106[d->noise_level > 127u ? 127u : d->noise_level];
         int32_t noise_scaled = (d->noise_lpf * n_level) >> 15;
-        /* Gain 2.776x (91000 in Q15) matches PC reference CLT + flicker RMS (kNoiseAmpJ106 = 1.2) */
-        total += (int32_t)(((int64_t)noise_scaled * 91000LL) >> 15);
+        /* Gain 2.776x (91000 / 32768 == 11375 / 4096, exact in 32-bit) */
+        total += (noise_scaled * 11375) >> 12;
     }
 
     return total;
+}
+
+static inline int32_t fm106_dco_process(
+    fm106_dco_t *d,
+    uint32_t eff_inc,
+    uint8_t pw_slider,
+    uint8_t pw_mode,
+    int32_t lfo_tri,
+    int32_t env_q15)
+{
+    uint32_t blep_inc = (eff_inc < 2u) ? 0u : eff_inc;
+    float inv_inc = blep_inc ? (1.0f / (float)blep_inc) : 0.0f;
+    return fm106_dco_process_fast(d, eff_inc, blep_inc, inv_inc, pw_slider, pw_mode, lfo_tri, env_q15);
 }

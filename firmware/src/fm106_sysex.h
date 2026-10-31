@@ -21,6 +21,15 @@ extern fm106_preset_t g_user_presets[FM106_NUM_USER_PRESETS];
 extern fm106_engine_t g_synth;
 extern uint32_t g_dirty_screen;
 
+#if FELUCCA_BLE
+static void bt_page_on(void);
+static void bt_page_off(void);
+static void bt_host_scan_start(void);
+static void bt_add_close(void);
+void ble_ui_get_diag(uint32_t out[16]);
+static uint32_t bt_st_diag(void);
+#endif
+
 static inline uint32_t fm106_crc32(const uint8_t *p, uint32_t n)
 {
     uint32_t c = 0xFFFFFFFFu, k;
@@ -107,6 +116,78 @@ static int fm106_user_presets_save_flash(void)
     return presets_flash_save(g_presets_flash_buf, sizeof(g_presets_flash_buf));
 }
 
+/* ---- Persistent 128-Step Sequencer Pattern in SPI Flash (0x0009C000, 4 KiB) ----
+ * Reuses g_presets_flash_buf (~10.5 KiB) as staging buffer for 0 bytes extra SRAM. */
+#define FM106_SEQ_FLASH_MAGIC 0x53363031u /* "106S" */
+
+typedef struct {
+    uint32_t magic;
+    uint32_t crc;
+    uint16_t slen;
+    uint16_t nplock;
+    uint8_t  bpm;
+    uint8_t  sdiv;
+    uint8_t  sgate;
+    uint8_t  swing;
+    fm106_step_t  step[FM106_NSTEP];
+    fm106_plock_t plock[FM106_PLOCK_SLOTS];
+} fm106_seq_flash_t;
+
+typedef char fm106_seq_flash_fit_check[(sizeof(fm106_seq_flash_t) <= 0x1000u &&
+                                        sizeof(fm106_seq_flash_t) <= sizeof(g_presets_flash_buf)) ? 1 : -1];
+
+static int fm106_seq_load_flash(fm106_seq_t *s)
+{
+    fm106_seq_flash_t *img = (fm106_seq_flash_t *)g_presets_flash_buf;
+    if (seq_flash_read(img, 8u) != 0 || img->magic != FM106_SEQ_FLASH_MAGIC)
+        return -1;
+    if (seq_flash_read(img, sizeof(fm106_seq_flash_t)) != 0)
+        return -1;
+    uint32_t crc = fm106_crc32((const uint8_t *)img + 8u, (uint32_t)(sizeof(fm106_seq_flash_t) - 8u));
+    if (crc != img->crc)
+        return -1;
+
+    fm1_irq_off();
+    s->slen   = (img->slen < 1u) ? 16u : (img->slen > FM106_NSTEP ? FM106_NSTEP : img->slen);
+    s->bpm    = (img->bpm < 40u) ? 120u : (img->bpm > 240u ? 240u : img->bpm);
+    s->sdiv   = (img->sdiv > 9u) ? 3u : img->sdiv;
+    s->sgate  = (img->sgate < 1u) ? 128u : (img->sgate > 128u ? 128u : img->sgate);
+    s->swing  = (img->swing > 100u) ? 0u : img->swing;
+    memcpy(s->step, img->step, sizeof(s->step));
+    uint16_t np = img->nplock > FM106_PLOCK_SLOTS ? FM106_PLOCK_SLOTS : img->nplock;
+    uint16_t w = 0;
+    for (uint16_t i = 0; i < np; i++) {
+        if (img->plock[i].step < FM106_NSTEP && img->plock[i].param < FM106_NPARAM) {
+            s->plock[w++] = img->plock[i];
+        }
+    }
+    s->nplock = w;
+    fm1_irq_on();
+    return 0;
+}
+
+static int fm106_seq_save_flash(const fm106_seq_t *s)
+{
+#if DINGHY_DUAL_CORE
+    if (audio_worker_online) audio_worker_join();
+#endif
+    fm106_seq_flash_t *img = (fm106_seq_flash_t *)g_presets_flash_buf;
+    memset(img, 0, sizeof(fm106_seq_flash_t));
+    img->magic  = FM106_SEQ_FLASH_MAGIC;
+    img->slen   = s->slen ? s->slen : 16u;
+    img->nplock = s->nplock > FM106_PLOCK_SLOTS ? FM106_PLOCK_SLOTS : s->nplock;
+    img->bpm    = s->bpm;
+    img->sdiv   = s->sdiv;
+    img->sgate  = s->sgate;
+    img->swing  = s->swing;
+    memcpy(img->step, s->step, sizeof(img->step));
+    if (img->nplock > 0u) {
+        memcpy(img->plock, s->plock, (uint32_t)img->nplock * sizeof(fm106_plock_t));
+    }
+    img->crc = fm106_crc32((const uint8_t *)img + 8u, (uint32_t)(sizeof(fm106_seq_flash_t) - 8u));
+    return seq_flash_save(img, sizeof(fm106_seq_flash_t));
+}
+
 /* Load a preset from the 4 banks (Factory A, Factory B, User A, User B) into the synth engine */
 static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
 {
@@ -131,11 +212,16 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
         e->chorus.mode = FM106_CHORUS_OFF;
         e->dco_range = 1; e->arp_mode = 0; e->arp_range = 1;
         e->dco_pwm_mode = 0; e->vcf_env_polarity = 0; e->vca_mode = 0;
+        e->fx[0].type = FM106_FX_OFF; e->fx[0].mix = 0;
+        e->reverb.on = 0u; e->reverb.mix = 48u; e->reverb.decay = 84u; e->reverb.shimmer = 68u;
         for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
             fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
             e->voice[i].dco.saw_on = 1; e->voice[i].dco.pulse_on = 0; e->voice[i].dco.sub_on = 0;
             e->voice[i].dco.sub_level = 0; e->voice[i].dco.noise_level = 0;
-            if (e->voice[i].note != 255u) e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            if (e->voice[i].note != 255u) {
+                e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+                if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
+            }
         }
         fm106_param_snapshot(e);
         fm1_irq_on();
@@ -192,13 +278,7 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     e->fx[0].mix       = p->p[37] > 127 ? 127 : p->p[37];
     e->fx[0].rate      = p->p[38] > 127 ? 127 : p->p[38];
     e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
-
-    /* Voice allocation mode (0 = Mono, 1 = Poly I, 2 = Poly II) */
-    if (p->p[45] <= 2u && p->p[45] != 0u) {
-        fm106_set_voice_mode(e, p->p[45]);
-    } else {
-        fm106_set_voice_mode(e, FM106_MODE_POLY1);
-    }
+    fm106_reverb_apply_preset(&e->reverb, p);
 
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
@@ -208,9 +288,8 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
         e->voice[i].dco.sub_level = e->dco_sub_level;
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
-            e->voice[i].base_inc = (e->voice_mode == FM106_MODE_MONO)
-                ? fm106_calc_unison_inc(e->voice[i].note, 0, e->dco_range, i)
-                : fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
         }
     }
     fm106_param_snapshot(e); /* p-lock cache follows the loaded sound */
@@ -268,8 +347,6 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[38] = (uint8_t)e->fx[0].rate;
     p->p[39] = (uint8_t)e->fx[0].character;
 
-    p->p[45] = e->voice_mode;
-
     /* SEQ track params (bpm/sdiv/slen/sgate/swing) */
     p->p[40] = (uint8_t)e->seq.bpm;
     p->p[41] = (uint8_t)e->seq.sdiv;
@@ -277,6 +354,12 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[65] = (uint8_t)(e->seq.slen >> 8);
     p->p[43] = (uint8_t)e->seq.sgate;
     p->p[44] = (uint8_t)e->seq.swing;
+
+    /* 80s Shimmer Reverb params */
+    p->p[45] = e->reverb.on & 1u;
+    p->p[46] = e->reverb.mix;
+    p->p[47] = e->reverb.decay;
+    p->p[48] = e->reverb.shimmer;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */
@@ -371,6 +454,7 @@ static void fm106_apply_apr_to_engine(fm106_engine_t *e, const uint8_t *s, uint8
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
             e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
         }
     }
 }
@@ -572,8 +656,10 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
             for (uint32_t v=0; v<FM106_NUM_VOICES; v++) {
                 g_synth.voice[v].dco.pulse_on = pulse;
                 g_synth.voice[v].dco.saw_on   = saw;
-                if (g_synth.voice[v].note != 255u)
+                if (g_synth.voice[v].note != 255u) {
                     g_synth.voice[v].base_inc = fm106_calc_inc(g_synth.voice[v].note, 0, oct);
+                    if (!g_synth.voice[v].gliding) g_synth.voice[v].curr_inc = g_synth.voice[v].base_inc;
+                }
             }
         } else if (ctrl == 0x11) {
             /* SW2 */
@@ -713,6 +799,114 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
         if (bval < 0) bval = 0;
         uint8_t resp[7] = {0xF0, 0x41, 0x39, ch, (uint8_t)((bval >> 7) & 0x7Fu), (uint8_t)(bval & 0x7Fu), 0xF7};
         fm106_sysex_send(resp, 7);
+        return;
+    }
+
+    /* 10. Crash & Diag Query: 41 3A 0n */
+    if (cmd == 0x3A) {
+        uint8_t resp[310];
+        resp[0] = 0xF0;
+        resp[1] = 0x41;
+        resp[2] = 0x3A;
+        resp[3] = ch;
+        uint32_t pos = 4;
+
+        /* 16 words of fm1_crash */
+        const uint32_t *cw = (const uint32_t *)&fm1_crash;
+        for (uint32_t i = 0; i < 16u; i++) {
+            uint32_t w = cw[i];
+            resp[pos++] = (uint8_t)(w & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 7) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 14) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 21) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 28) & 0x0Fu);
+        }
+
+        /* 20 words of fm1_crash_ctx */
+        uint32_t cidx = (fm1_crash.magic == FM1_CRASH_MAGIC) ? (fm1_crash.count % FM1_CRASH_CTX_N) : 0u;
+        const uint32_t *xw = (const uint32_t *)&fm1_crash_ctx[cidx];
+        for (uint32_t i = 0; i < 20u; i++) {
+            uint32_t w = xw[i];
+            resp[pos++] = (uint8_t)(w & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 7) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 14) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 21) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 28) & 0x0Fu);
+        }
+
+        /* 16 words of BLE diag */
+        uint32_t bd[16];
+#if FELUCCA_BLE
+        ble_ui_get_diag(bd);
+#else
+        memset(bd, 0, sizeof(bd));
+#endif
+        for (uint32_t i = 0; i < 16u; i++) {
+            uint32_t w = bd[i];
+            resp[pos++] = (uint8_t)(w & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 7) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 14) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 21) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 28) & 0x0Fu);
+        }
+
+        /* 8 words of system diag: reset cause, where the last run was, BT store, CPU1 worker */
+        uint32_t sd[8];
+        sd[0] = fm1_boot.p3_rst;                /* bit2 watchdog, bit6 soft reset, bit0 power-on */
+        sd[1] = g_where_boot;                   /* the main loop's step when the last run ended */
+#if FELUCCA_BLE
+        sd[2] = bt_st_diag();
+#else
+        sd[2] = 0;
+#endif
+#if DINGHY_DUAL_CORE
+        sd[3] = audio_worker.timeouts;
+        sd[4] = audio_worker.max_wait_ticks;
+        sd[7] = audio_worker.jobs;
+#else
+        sd[3] = 0;
+        sd[4] = 0;
+        sd[7] = 0;
+#endif
+        sd[5] = audio_lates;
+        sd[6] = fm1_ms;
+        for (uint32_t i = 0; i < 8u; i++) {
+            uint32_t w = sd[i];
+            resp[pos++] = (uint8_t)(w & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 7) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 14) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 21) & 0x7Fu);
+            resp[pos++] = (uint8_t)((w >> 28) & 0x0Fu);
+        }
+
+        resp[pos++] = 0xF7;
+        fm106_sysex_send(resp, pos);
+        return;
+    }
+
+    /* 11. Bluetooth Control: 41 3B 0n act (1=ON, 2=OFF, 3=SCAN_START, 4=SCAN_CLOSE) */
+    if (cmd == 0x3B && n >= 4) {
+        uint8_t act = p[3];
+#if FELUCCA_BLE
+        if (act == 1) bt_page_on();
+        else if (act == 2) bt_page_off();
+        else if (act == 3) {
+            g_where = 0x81;
+            bt_page_on();
+            g_where = 0x82;
+            bt_host_scan_start();
+            g_where = 0x83;
+            g_ui_mode = UI_MODE_BT_SCAN;
+            g_bt_scan_sel = 0;
+        }
+        else if (act == 4) {
+            bt_add_close();
+            g_ui_mode = UI_MODE_BLUETOOTH;
+        }
+#endif
+        uint8_t ack[6] = {0xF0, 0x41, 0x3B, ch, act, 0xF7};
+        fm106_sysex_send(ack, sizeof(ack));
+        g_dirty_screen = 1;
         return;
     }
 }

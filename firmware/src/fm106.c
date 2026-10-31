@@ -8,7 +8,34 @@
 
 #include "platform.c"
 #include "fm106_engine.h"
+
+/* UI Modes */
+enum {
+    UI_MODE_NORMAL = 0,
+    UI_MODE_MENU,
+    UI_MODE_MIDI,
+#if FELUCCA_BLE
+    UI_MODE_BLUETOOTH,
+    UI_MODE_BT_SCAN,
+#endif
+    UI_MODE_ABOUT,
+    UI_MODE_SAVE,
+    UI_MODE_COUNT
+};
+
+static uint8_t g_ui_mode = UI_MODE_NORMAL;
+#if FELUCCA_BLE
+static uint32_t g_bt_scan_sel = 0;
+static uint8_t g_bt_device_menu_on = 0;
+static uint8_t g_bt_device_menu_sel = 0;
+#define BT_DEV_MENU_COUNT 4
+#endif
+
 #include "fm106_sysex.h"
+#if FELUCCA_BLE
+#include "bt_glue.h"
+#include "core_ble_api.c"
+#endif
 
 fm106_preset_t g_user_presets[FM106_NUM_USER_PRESETS];
 uint32_t g_dirty_screen = 1;
@@ -43,8 +70,9 @@ enum {
     PAGE_ARP,           /* ON MODE RATE RANGE */
     PAGE_FX,            /* CHO HPF VCA LEVEL */
     PAGE_TAPE,          /* TAPE: TYPE MIX RATE CHAR */
+    PAGE_REVERB,        /* SHIMMER: REV MIX DECAY SHIM */
     PAGE_SEQ,           /* SEQ: STEP PITCH GATE VEL (piano-roll edit) */
-    PAGE_COUNT = 10
+    PAGE_COUNT = 11
 };
 
 static uint8_t g_current_page = PAGE_VCF;
@@ -55,7 +83,6 @@ enum { SLOT_FADER = 0, SLOT_MODE, SLOT_EMPTY };
 static const char *const N_BOOL[2]   = {"OFF", "ON"};
 static const char *const N_RNG[3]    = {"16'", "8'", "4'"};
 static const char *const N_PWMD[2]   = {"LFO", "MAN"};
-static const char *const N_POLY[3]   = {"MONO", "POLY I", "POLY II"};
 static const char *const N_INV[2]    = {"NORM", "INV"};
 static const char *const N_ARMD[3]   = {"UP", "U&D", "DN"};
 static const char *const N_ARNG[3]   = {"1OC", "2OC", "3OC"};
@@ -91,7 +118,7 @@ static const fm1_slot_t FM1_SLOTS[PAGE_COUNT][4] = {
      {"SUS", SLOT_FADER, 0, 0}, {"REL", SLOT_FADER, 0, 0}},
     /* PAGE_LFO */
     {{"RATE", SLOT_FADER, 0, 0}, {"DELAY", SLOT_FADER, 0, 0},
-     {"PWM MD", SLOT_MODE, 2, N_PWMD}, {"ASSIGN", SLOT_MODE, 3, N_POLY}},
+     {"PWM MD", SLOT_MODE, 2, N_PWMD}, {"-", SLOT_EMPTY, 0, 0}},
     /* PAGE_ARP */
     {{"ARP", SLOT_MODE, 2, N_BOOL}, {"MODE", SLOT_MODE, 3, N_ARMD},
      {"ARAT", SLOT_FADER, 0, 0},    {"ARNG", SLOT_MODE, 3, N_ARNG}},
@@ -101,6 +128,9 @@ static const fm1_slot_t FM1_SLOTS[PAGE_COUNT][4] = {
     /* PAGE_TAPE: single tape insert */
     {{"TAPE", SLOT_MODE, FM106_FX_COUNT, N_FX},  {"MIX", SLOT_FADER, 0, 0},
      {"RATE", SLOT_FADER, 0, 0},  {"CHAR", SLOT_FADER, 0, 0}},
+    /* PAGE_REVERB: 1980s stereo shimmer reverb (post-chain) */
+    {{"REV", SLOT_MODE, 2, N_BOOL}, {"MIX", SLOT_FADER, 0, 0},
+     {"DECAY", SLOT_FADER, 0, 0},   {"SHIM", SLOT_FADER, 0, 0}},
     /* PAGE_SEQ */
     {{"SEQ", SLOT_MODE, 2, N_SEQ}, {"LEN", SLOT_FADER, 0, 0},
      {"DIV", SLOT_MODE, 10, N_SDIV}, {"GATE", SLOT_FADER, 0, 0}},
@@ -164,7 +194,6 @@ static int32_t fm1_slot_val(uint8_t page, int i)
         case 0: return g_synth.lfo_rate;
         case 1: return g_synth.lfo_delay;
         case 2: return g_synth.dco_pwm_mode & 1u;
-        case 3: return g_synth.voice_mode > 2 ? 1 : g_synth.voice_mode;
         }
         break;
     case PAGE_ARP:
@@ -193,6 +222,16 @@ static int32_t fm1_slot_val(uint8_t page, int i)
         }
         break;
     }
+    case PAGE_REVERB: {
+        const fm106_reverb_t *rv = &g_synth.reverb;
+        switch (i) {
+        case 0: return rv->on & 1u;
+        case 1: return rv->mix;
+        case 2: return rv->decay;
+        case 3: return rv->shimmer;
+        }
+        break;
+    }
     case PAGE_SEQ: {
         const fm106_seq_t *s = &g_synth.seq;
         switch (i) {
@@ -209,22 +248,11 @@ static int32_t fm1_slot_val(uint8_t page, int i)
     return 0;
 }
 
-/* UI Modes */
-enum {
-    UI_MODE_NORMAL = 0,
-    UI_MODE_MENU,
-    UI_MODE_MIDI,
-    UI_MODE_CC_MAP,
-    UI_MODE_ABOUT,
-    UI_MODE_SAVE,
-    UI_MODE_COUNT
-};
-
-static uint8_t g_ui_mode = UI_MODE_NORMAL;
 static uint8_t g_menu_sel = 0;
 static uint8_t g_midi_sel = 0;
-static uint8_t g_cc_map_sel = 0;
-static uint8_t g_cc_map_scroll = 0;
+#if FELUCCA_BLE
+static uint8_t g_ble_sel = 0;
+#endif
 
 static uint8_t g_save_slot = 0;          /* Target user slot (0..127 -> UA11..UB88) */
 static char g_save_name[16];             /* 15 chars + null */
@@ -234,6 +262,7 @@ static uint32_t t_save_down = 0;         /* Timestamp when BTN_SAVE was pressed 
 static uint8_t save_held_active = 0;     /* 1 if long press triggered UI_MODE_SAVE */
 static char g_banner_msg[32] = {0};      /* Screen notification banner */
 static uint32_t g_banner_until = 0;      /* Expiry timestamp for banner */
+static void fm106_set_banner(const char *prefix, const char *suffix);
 
 /* ---- SEQ piano-roll UI state (Melodee single-track port) ---- */
 static uint16_t g_seq_cursor   = 0;        /* edit cursor: step 0..slen-1 */
@@ -245,6 +274,17 @@ static uint8_t  g_seq_last_pitch = 60;      /* last entered pitch (for follow) *
 static uint8_t  g_seq_row      = 60;        /* K2: selected pitch row (scale cursor) */
 static uint8_t  g_seq_dirty    = 1;         /* redraw request */
 static uint32_t t_last_seq     = 0;         /* SEQ playhead refresh timer */
+static uint8_t  g_seq_flash_dirty = 0;      /* pattern edited; auto-saved when quiet */
+static uint32_t g_t_seq_edit   = 0;         /* ms timestamp of last pattern edit */
+static uint8_t  g_seq_step_held = 0;        /* keys held during stopped chord step-entry */
+static uint8_t  g_seq_step_active = 0;      /* 1 = actively building chord on cursor step */
+
+static inline void seq_mark_modified(void)
+{
+    g_seq_dirty = 1;
+    g_seq_flash_dirty = 1;
+    g_t_seq_edit = fm106_now_ms();
+}
 
 /* SEQ options menu (long-press EDIT on the roll) */
 static uint8_t  g_seq_menu_on   = 0;
@@ -253,12 +293,12 @@ static uint32_t t_edit_down    = 0;
 static uint8_t  edit_held_active= 0;
 static uint32_t t_sel_down     = 0;
 static uint8_t  sel_held_active= 0;
-#define SEQ_MENU_COUNT 6u
+#define SEQ_MENU_COUNT 8u
 
 /* note options menu (short-press EDIT on the roll) */
 static uint8_t  g_note_menu_on  = 0;
 static uint8_t  g_note_menu_sel = 0;
-#define NOTE_MENU_COUNT 4u
+#define NOTE_MENU_COUNT 6u
 
 /* live-record hold tracker: note-on stamps (pitch, step, ms), note-off
  * computes the hold length into the step's gate (acc) — playback length
@@ -309,96 +349,38 @@ static uint16_t seq_ui_edit_idx(void)
  * One CC per sound param (out: on panel/menu/knob change; in: controller
  * edits). Seq params get 102-106, transport 107, edit helpers 108-113. */
 
-/* Default MIDI CC assignments (FM106 param index -> default CC) */
-static const uint8_t g_param_cc_default[FM106_NPARAM] = {
+/* FM106 param index -> CC (out). 0xFF = no CC. */
+static const uint8_t g_param_cc[FM106_NPARAM] = {
     87, 88, 82, 80, 81,  1, 79,  9, 13, 12,  /* 0-9: bender dco/vcf, arp rate, lfo
                                                 rate/delay, dco lfo/pwm depth, sub
                                                 level, noise, hpf mode */
     74, 71, 76, 77, 78, 11, 73, 75, 70, 72,  /* 10-19: cutoff, reso, env mod, lfo
                                                 mod, kbd track, vca level, env A/D/S/R */
     0xFF, 0xFF, 0xFF,                        /* 20-22: preset-only gaps */
-    91, 92, 94, 0xFF, 93, 0xFF,               /* 23-28: pulse/saw/sub on, (gap),
-                                                chorus I -> CC 93, chorus II gap */
+    91, 92, 94, 0xFF, 93, 93,                /* 23-28: pulse/saw/sub on, (gap),
+                                                chorus I/II bits -> CC 93 */
     95, 89, 90, 0xFF,                        /* 29-32: dco range, arp mode, arp range */
     96, 97, 98,                              /* 33-35: pwm mode, env polarity, vca mode */
     83, 84, 85, 86,                          /* 36-39: fx type/mix/rate/character */
-    119,                                     /* 40: voice assign mode (Mono/Poly I/Poly II) */
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF,            /* 40-44: seq preset slots (separate CCs) */
+    20, 21, 22, 23,                          /* 45-48: shimmer reverb on/mix/decay/shim */
 };
 
-/* Default Sequencer CC assignments (0: tempo, 1: div, 2: len, 3: gate, 4: swing, 5: transport) */
-static const uint8_t g_seq_cc_default[6] = { 102, 103, 104, 105, 106, 107 };
-
-/* Active mutable CC mapping arrays (0xFF = disabled / OFF) */
-static uint8_t g_param_cc[FM106_NPARAM];
-static uint8_t g_seq_cc[6];
-
-/* Menu CC mapping entry definition */
-typedef struct {
-    const char *name;
-    uint8_t type; /* 0 = sound param, 1 = seq param, 2 = reset, 3 = back */
-    uint8_t idx;  /* index in g_param_cc or g_seq_cc */
-    uint8_t def_cc;
-} fm106_cc_entry_t;
-
-static const fm106_cc_entry_t g_cc_map_entries[] = {
-    {"CUTOFF",    0, 10, 74},
-    {"RESO",      0, 11, 71},
-    {"ENV MOD",   0, 12, 76},
-    {"LFO MOD",   0, 13, 77},
-    {"KBD TRK",   0, 14, 78},
-    {"HPF MODE",  0,  9, 12},
-    {"ATTACK",    0, 16, 73},
-    {"DECAY",     0, 17, 75},
-    {"SUSTAIN",   0, 18, 70},
-    {"RELEASE",   0, 19, 72},
-    {"DCO LFO",   0,  5,  1},
-    {"PWM DEPTH", 0,  6, 79},
-    {"PWM MODE",  0, 33, 96},
-    {"SUB LEVEL", 0,  7,  9},
-    {"SUB ON",    0, 25, 94},
-    {"NOISE",     0,  8, 13},
-    {"PULSE",     0, 23, 91},
-    {"SAW",       0, 24, 92},
-    {"DCO RANGE", 0, 29, 95},
-    {"VCA LEVEL", 0, 15, 11},
-    {"VCA MODE",  0, 35, 98},
-    {"ENV POLAR", 0, 34, 97},
-    {"LFO RATE",  0,  3, 80},
-    {"LFO DELAY", 0,  4, 81},
-    {"CHORUS",    0, 27, 93},
-    {"BND DCO",   0,  0, 87},
-    {"BND VCF",   0,  1, 88},
-    {"ARP RATE",  0,  2, 82},
-    {"ARP MODE",  0, 30, 89},
-    {"ARP RANGE", 0, 31, 90},
-    {"TAPE TYPE", 0, 36, 83},
-    {"TAPE MIX",  0, 37, 84},
-    {"TAPE RATE", 0, 38, 85},
-    {"TAPE CHAR", 0, 39, 86},
-    {"VOICE MODE",0, 40, 119},
-    {"SEQ BPM",   1,  0, 102},
-    {"SEQ DIV",   1,  1, 103},
-    {"SEQ LEN",   1,  2, 104},
-    {"SEQ GATE",  1,  3, 105},
-    {"SEQ SWING", 1,  4, 106},
-    {"SEQ PLAY",  1,  5, 107},
-    {"[RESET]",   2,  0,   0},
-    {"[< BACK]",  3,  0,   0},
+/* CC 87..98 -> param index (0xFF = handled specially). */
+static const uint8_t g_cc_param[12] = {
+    0, 1, 30, 31, 23, 24, 0xFF, 25, 29, 33, 34, 35,
+    /*      87  88  89  90  91  92  93  94  95  96  97  98 */
 };
-#define CC_MAP_COUNT (sizeof(g_cc_map_entries) / sizeof(g_cc_map_entries[0]))
-#define CC_MAP_VISIBLE 6
-#define CC_MAP_IDX_RESET (CC_MAP_COUNT - 2u)
-#define CC_MAP_IDX_BACK  (CC_MAP_COUNT - 1u)
 
-/* param raw value -> full-range CC out (modes/flags stretched for faders) */
+/* param raw value -> full-range CC out (modes/flags stretched bijectively for faders) */
 static uint8_t param_cc_value(uint8_t i, uint8_t v)
 {
     switch (i) {
-    case 9: case 29: case 30: case 31: case 40: return (uint8_t)(v * 42u);  /* small enums */
-    case 27: return (uint8_t)(g_synth.chorus.mode * 42u);           /* chorus mode */
-    case 36: return (uint8_t)((v * 128u) / (FM106_FX_COUNT ? FM106_FX_COUNT : 1u));
-    case 23: case 24: case 25: case 28:
-    case 33: case 34: case 35: return v ? 127u : 0u;                /* flags */
+    case 9: case 29: case 30: return (uint8_t)(v * 42u);            /* 0..3 / 0..2 enums */
+    case 31: return v <= 1u ? 0u : (v == 2u ? 64u : 127u);          /* arp range 1..3 */
+    case 36: return v ? 127u : 0u;                                  /* fx type */
+    case 23: case 24: case 25: case 27: case 28:
+    case 33: case 34: case 35: case 45: return v ? 127u : 0u;       /* flags */
     default: return v;
     }
 }
@@ -407,15 +389,56 @@ static uint8_t param_cc_value(uint8_t i, uint8_t v)
 static uint8_t cc_to_param_value(uint8_t idx, uint8_t v)
 {
     switch (idx) {
-    case 9:  return v / 32u > 3u ? 3u : v / 32u;      /* hpf mode zones */
+    case 9:  return v / 32u > 3u ? 3u : v / 32u;                    /* hpf mode zones */
     case 23: case 24: case 25: case 33: case 34: case 35:
         return (uint8_t)(v >= 64u);
-    case 29: return v / 42u > 2u ? 2u : v / 42u;       /* dco range 0-2 */
-    case 30: return v / 42u > 2u ? 2u : v / 42u;       /* arp mode 0-2 */
-    case 31: return v >= 85u ? 3u : v >= 42u ? 2u : 1u; /* arp range 1-3 */
-    case 40: return v / 42u > 2u ? 2u : v / 42u;       /* voice mode 0-2 */
+    case 29: return v / 42u > 2u ? 2u : v / 42u;                    /* dco range 0-2 */
+    case 30: return v >= 84u ? 2u : (v >= 42u ? 1u : 0u);           /* arp mode 0-2 */
+    case 31: return v >= 85u ? 3u : (v >= 42u ? 2u : 1u);           /* arp range 1-3 */
     default: return v;
     }
+}
+
+/* ---- Panel TX Self-Echo Guard ----
+ * Prevents DAW MIDI Thru from echoing panel-originated CC/PC bursts back into
+ * FM-106 while turning physical encoders/knobs (eliminating value ping-pong). */
+#define MIDI_ECHO_GUARD_MS 250u
+static uint32_t g_cc_tx_ms[128];
+static uint32_t g_cc_tx_armed[4];
+static uint32_t g_pc_tx_ms;
+static uint8_t  g_pc_tx_armed;
+
+static inline void panel_send_cc(uint8_t ch_st, uint8_t cc, uint8_t val)
+{
+    uint8_t c = cc & 0x7Fu;
+    g_cc_tx_ms[c] = fm106_now_ms();
+    g_cc_tx_armed[c >> 5] |= (1u << (c & 31u));
+    midi_send(ch_st, c, val);
+}
+
+static inline void panel_send_pc(uint8_t ch_st, uint8_t pc)
+{
+    g_pc_tx_ms = fm106_now_ms();
+    g_pc_tx_armed = 1u;
+    midi_send(ch_st, pc & 0x7Fu, 0u);
+}
+
+static inline int cc_is_self_echo(uint8_t cc)
+{
+    uint8_t c = cc & 0x7Fu;
+    uint32_t mask = 1u << (c & 31u);
+    if (!(g_cc_tx_armed[c >> 5] & mask)) return 0;
+    if ((uint32_t)(fm106_now_ms() - g_cc_tx_ms[c]) < MIDI_ECHO_GUARD_MS) return 1;
+    g_cc_tx_armed[c >> 5] &= ~mask;
+    return 0;
+}
+
+static inline int pc_is_self_echo(void)
+{
+    if (!g_pc_tx_armed) return 0;
+    if ((uint32_t)(fm106_now_ms() - g_pc_tx_ms) < MIDI_ECHO_GUARD_MS) return 1;
+    g_pc_tx_armed = 0u;
+    return 0;
 }
 
 /* master clock out: F8/FA/FB/FC only when SYNC=MASTER */
@@ -434,12 +457,14 @@ static uint32_t g_click_off_ms;
 static void count_in_start(void);
 static void count_in_cancel(void);
 
-/* transport: 0=stop, 1=start, 2=continue, 3=toggle (BTN_PLAY / CC 107 / CC out) */
-static void seq_transport_cmd(uint8_t cmd)
+/* transport: 0=stop, 1=start, 2=continue, 3=toggle (BTN_PLAY / CC 107) */
+static void seq_transport_cmd(uint8_t cmd, int send_midi_out)
 {
     fm106_seq_t *s = &g_synth.seq;
     uint8_t was = s->playing;
     count_in_cancel();             /* any transport command aborts a pending count-in */
+    g_seq_step_active = 0;
+    g_seq_step_held = 0;
     if (cmd == 0u || (cmd == 3u && was)) {
         if (was) {
             uint8_t nflush = s->seq_n;
@@ -449,38 +474,49 @@ static void seq_transport_cmd(uint8_t cmd)
             fm1_irq_off();
             for (uint8_t i = 0; i < s->seq_n; i++) fm106_note_off(&g_synth, s->seq_notes[i]);
             s->seq_n = 0;
+            s->seq_hold = 0;
             s->playing = 0;
             s->msg_tail = s->msg_head;  /* drop queued seq MIDI events */
             fm1_irq_on();
             /* release any externally-sounding seq notes (main loop → midi_send ok) */
             for (uint8_t i = 0; i < nflush; i++) midi_send(0x80u | och, flushed[i], 0u);
-            seq_clock_out(0xFCu);
-            if (g_seq_cc[5] != 0xFFu) midi_send(0xB0u | och, g_seq_cc[5], 0u);
+            if (send_midi_out) {
+                seq_clock_out(0xFCu);
+                panel_send_cc(0xB0u | och, 107u, 0u);
+            }
         }
     } else if (cmd == 2u) {         /* continue: resume in place */
         if (!was) {
             s->playing = 1;
-            seq_clock_out(0xFBu);
-            if (g_seq_cc[5] != 0xFFu) midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), g_seq_cc[5], 1u);
+            if (send_midi_out) {
+                seq_clock_out(0xFBu);
+                panel_send_cc(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 107u, 1u);
+            }
         }
     } else if (cmd == 1u || (cmd == 3u && !was)) {
         fm1_irq_off();
         fm106_param_snapshot(&g_synth); /* p-lock diff starts from the live sound */
         fm106_seq_start(s);
         fm1_irq_on();
-        seq_clock_out(0xFAu);
-        if (g_seq_cc[5] != 0xFFu) midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), g_seq_cc[5], 1u);
+        if (send_midi_out) {
+            seq_clock_out(0xFAu);
+            panel_send_cc(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 107u, 1u);
+        }
     }
+    g_seq_dirty = 1;
+    g_dirty_screen = 1;
 }
 
 static void count_in_start(void)
 {
     g_count_in = 4;
     g_count_next_ms = fm106_now_ms();  /* first click on the next loop pass */
+    g_dirty_screen = 1;
 }
 
 static void count_in_cancel(void)
 {
+    if (g_count_in) g_dirty_screen = 1;
     g_count_in = 0;
     if (g_click_note) {
         fm1_irq_off();
@@ -504,7 +540,7 @@ static void count_in_tick(void)
     if (!g_count_in || (int32_t)(now - g_count_next_ms) < 0) return;
     if (g_count_in == 0xFFu) {         /* final gap elapsed: the downbeat */
         g_count_in = 0;
-        seq_transport_cmd(1u);
+        seq_transport_cmd(1u, 1);
         return;
     }
     uint32_t bpm = g_synth.seq.bpm ? g_synth.seq.bpm : 120u;
@@ -534,75 +570,81 @@ static void seq_sync_apply(void)
 }
 
 /* ---- Elektron-style p-lock record + CC out ----
- * Called once per main-loop pass: diff every sound param against the
- * snapshot. REC armed + playing locks each changed param into the playing
- * step; CC out reports any change (panel, menu or incoming CC) to a
- * controller; otherwise the cache just tracks the live sound, so arming
- * mid-play only locks what the user touches from then on. */
-static void plock_scan(void)
+ * send_cc_out == 1 after panel knobs/menus: transmits MIDI CCs (with self-echo
+ * guard) and records p-locks when REC+PLAY is active.
+ * send_cc_out == 0 after midi_get(): updates plock_cache (and records external
+ * CC automation as p-locks if REC+PLAY) WITHOUT echoing CCs back to the DAW! */
+static void plock_scan(int send_cc_out)
 {
     fm106_seq_t *s = &g_synth.seq;
     uint8_t rec = (uint8_t)(g_seq_rec_arm && s->playing);
     uint8_t ch = (uint8_t)(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu));
     static uint8_t primed = 0;
     static uint8_t seq_cache[5]; /* bpm sdiv slen sgate swing (CC 102-106 out) */
+    static const uint8_t chorus_cc[4] = { 0u, 48u, 80u, 127u };
+    uint8_t chorus_sent = 0;
+
     for (uint8_t i = 0; i < FM106_NPARAM; i++) {
         uint8_t v = fm106_param_get(&g_synth, i);
         if (!primed) { s->plock_cache[i] = v; continue; } /* boot: prime silently, no CC dump */
         if (v == s->plock_cache[i]) continue;
         s->plock_cache[i] = v;
-        if (g_param_cc[i] != 0xFFu)
-            midi_send(ch, g_param_cc[i], param_cc_value(i, v));
+        if (send_cc_out && g_param_cc[i] != 0xFFu) {
+            if (i == 27u || i == 28u) {
+                if (!chorus_sent) {
+                    panel_send_cc(ch, 93u, chorus_cc[g_synth.chorus.mode & 3u]);
+                    chorus_sent = 1u;
+                }
+            } else {
+                panel_send_cc(ch, g_param_cc[i], param_cc_value(i, v));
+            }
+        }
         if (rec) {
             uint16_t idx = (uint16_t)(seq_ph_idx(s) % (s->slen ? s->slen : 1u)); /* fresh per lock */
             fm1_irq_off();
             fm106_plock_set(s, idx, i, v);
             fm1_irq_on();
+            seq_mark_modified();
             g_dirty_screen = 1;
         }
     }
     /* seq track params -> CC 102-106 out (scaled to match CC in) */
     uint8_t now[5];
-    now[0] = (uint8_t)((s->bpm > 40u ? s->bpm - 40u : 0u) / 2u);           /* 102 tempo */
-    now[1] = s->sdiv;                                                      /* 103 division */
+    now[0] = (uint8_t)((s->bpm > 40u ? s->bpm - 40u : 0u) / 2u);               /* 102 tempo */
+    now[1] = s->sdiv;                                                          /* 103 division */
     now[2] = (uint8_t)(s->slen > 128u ? 127u : (s->slen ? s->slen - 1u : 0u)); /* 104 length */
-    now[3] = s->sgate;                                                     /* 105 gate */
-    now[4] = s->swing;                                                     /* 106 swing */
+    now[3] = s->sgate > 127u ? 127u : s->sgate;                                /* 105 gate */
+    now[4] = s->swing;                                                         /* 106 swing */
+    static const uint8_t base[5] = { 102, 103, 104, 105, 106 };
     for (uint8_t j = 0; j < 5u; j++) {
         if (now[j] != seq_cache[j]) {
-            if (primed && g_seq_cc[j] != 0xFFu) midi_send(ch, g_seq_cc[j], now[j]);
+            if (primed && send_cc_out) panel_send_cc(ch, base[j], now[j]);
             seq_cache[j] = now[j];
         }
     }
     primed = 1;
 }
 
-/* toggle a pitch in the cursor step (add if absent, remove if present) */
-static void seq_ui_toggle_pitch(uint8_t pitch)
+/* wipe the entire sequence pattern + p-locks (shared by SEL hold and SEQ menu) */
+static void seq_ui_clear_all(void)
 {
     fm1_irq_off();
-    fm106_step_t *st = &g_synth.seq.step[g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)];
-    for (uint8_t i = 0; i < st->n; i++) {
-        if (st->note[i] == pitch) {
-            for (uint8_t j = i; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
-            st->n--;
-            g_seq_dirty = 1;
-            fm1_irq_on();
-            return;
-        }
+    for (uint32_t i = 0; i < FM106_NSTEP; i++) {
+        g_synth.seq.step[i].n = 0;
+        g_synth.seq.step[i].time = FM106_ST_NOTE;
+        g_synth.seq.step[i].flags = 0;
+        g_synth.seq.step[i].acc = 0;
+        g_synth.seq.step[i].vel = 0;
+        g_synth.seq.step[i].probability = 0;
+        g_synth.seq.step[i].ratchet = 0;
     }
-    if (st->n < 4u) {
-        st->note[st->n++] = pitch;
-        st->time = FM106_ST_NOTE;
-        if (!st->vel) st->vel = 100;
-        g_seq_last_pitch = pitch;
-        /* follow: keep pitch in view */
-        if (pitch < g_seq_view_lo) g_seq_view_lo = pitch;
-        if (pitch > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = pitch - SEQ_ROWS + 1u;
-        if (g_seq_view_lo > 114u) g_seq_view_lo = 114u; /* 127-13 */
-        g_seq_dirty = 1;
-    }
+    fm106_plock_clear(&g_synth.seq);
     fm1_irq_on();
+    g_seq_step_active = 0;
+    g_seq_step_held = 0;
+    seq_mark_modified();
+    fm106_set_banner("SEQ ", "CLEARED");
+    g_dirty_screen = 1;
 }
 
 /* SEL short: remove the note at the cursor cell (step x row); none there = wipe the step */
@@ -624,7 +666,9 @@ static void seq_ui_clear_step(void)
         st->acc = 0; st->vel = 0; st->probability = 0; st->ratchet = 0;
         fm106_plock_clear_step(&g_synth.seq, (uint16_t)(g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)));
     }
-    g_seq_dirty = 1;
+    g_seq_step_active = 0;
+    g_seq_step_held = 0;
+    seq_mark_modified();
     fm1_irq_on();
 }
 
@@ -651,7 +695,7 @@ static void seq_ui_adjust_gate(int32_t d)
     if (g < 1) g = 1;
     if (g > 255) g = 255;
     st->acc = (uint8_t)(g > 255 ? 255 : g);
-    g_seq_dirty = 1;
+    seq_mark_modified();
     fm1_irq_on();
 }
 
@@ -675,13 +719,13 @@ static void seq_ui_adjust_vel(int32_t d)
         for (uint8_t j = (uint8_t)idx; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
         st->n--;
         if (!st->n) { st->time = FM106_ST_NOTE; st->flags = 0; st->acc = 0; st->vel = 0; }
-        g_seq_dirty = 1;
+        seq_mark_modified();
         fm1_irq_on();
         return;
     }
     if (v > 127) v = 127;
     st->vel = (uint8_t)v;
-    g_seq_dirty = 1;
+    seq_mark_modified();
     fm1_irq_on();
 }
 
@@ -690,23 +734,37 @@ static void seq_ui_toggle_flag(uint8_t flag)
     fm1_irq_off();
     fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
     st->flags ^= flag;
-    g_seq_dirty = 1;
+    seq_mark_modified();
     fm1_irq_on();
 }
 
-/* note options (short-press EDIT): ratchet / tie / clear on the edited step */
+/* note options (short-press EDIT): ratchet / tie / accent / slide / prob / p-locks */
 static void seq_ui_note_adjust(int32_t d)
 {
     if (!d) return;
     fm1_irq_off();
-    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    fm106_seq_t *s = &g_synth.seq;
+    uint16_t len = s->slen ? s->slen : 1u;
+    uint16_t eidx = seq_ui_edit_idx();
+    fm106_step_t *st = &s->step[eidx];
     switch (g_note_menu_sel) {
     case 0: /* RATCHET 1..8 */
         if (d > 0) { if (st->ratchet < 8u) st->ratchet++; }
         else       { if (st->ratchet > 0u) st->ratchet--; }
         break;
-    case 1: /* TIE */
-        st->time = (st->time == FM106_ST_TIE) ? FM106_ST_NOTE : FM106_ST_TIE;
+    case 1: /* TIE (copy preceding notes if empty so tie bar renders visibly) */
+        if (st->time == FM106_ST_TIE) {
+            st->time = FM106_ST_NOTE;
+        } else {
+            st->time = FM106_ST_TIE;
+            if (!st->n) {
+                fm106_step_t *prev = &s->step[(eidx + len - 1u) % len];
+                if (prev->n) {
+                    st->n = prev->n > 4u ? 4u : prev->n;
+                    for (uint8_t i = 0; i < st->n; i++) st->note[i] = prev->note[i];
+                }
+            }
+        }
         break;
     case 2: /* ACCENT */
         st->flags ^= FM106_SF_ACCENT;
@@ -714,8 +772,22 @@ static void seq_ui_note_adjust(int32_t d)
     case 3: /* SLIDE */
         st->flags ^= FM106_SF_SLIDE;
         break;
+    case 4: { /* PROB: MUTE (101), 10%..90%, 100% (0) */
+        int32_t pct = (st->probability == 0u) ? 100
+                    : (st->probability > 100u ? 0 : (int32_t)st->probability);
+        pct = ((pct + 5) / 10) * 10 + (d > 0 ? 10 : -10);
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        st->probability = (pct == 100) ? 0u : (pct == 0 ? 101u : (uint8_t)pct);
+        break;
     }
-    g_seq_dirty = 1;
+    case 5: /* P-LOCKS: clear locks on this step */
+        if (d < 0 || fm106_plock_count_step(s, eidx) > 0u) {
+            fm106_plock_clear_step(s, eidx);
+        }
+        break;
+    }
+    seq_mark_modified();
     fm1_irq_on();
 }
 
@@ -727,6 +799,8 @@ static void seq_ui_move_cursor(int32_t d)
     while (c < 0) c += len;
     while (c >= len) c -= len;
     g_seq_cursor = (uint16_t)c;
+    g_seq_step_active = 0;
+    g_seq_step_held = 0;
     /* follow cursor into view */
     int32_t vs = (int32_t)g_seq_cursor - 8;
     if (vs < 0) vs = 0;
@@ -745,32 +819,35 @@ static void seq_ui_move_cursor(int32_t d)
     g_dirty_screen = 1;
 }
 
-/* a key (panel keybed or MIDI note-on) contributes to the sequence: live
- * record into the playing (or cursor) step when REC is armed, acid-style
- * step entry on the SEQ page when stopped */
+/* Key / MIDI note-on entry into the sequencer:
+ * - Playing + REC armed: quantized live overdub on ANY page (without flooding
+ *   all 39 params into plock[], so live filter/FX knobs stay unlocked!).
+ * - Stopped on PAGE_SEQ (without menus): polyphonic chord-aware step entry
+ *   (hold 1..4 keys to build a chord on the cursor step; cursor advances +1
+ *   when the last held key is released). */
 static void seq_note_entry(uint8_t pitch, uint8_t vel)
 {
     fm106_seq_t *s = &g_synth.seq;
-    if (g_seq_rec_arm) {
+    if (s->playing && g_seq_rec_arm) {
         uint16_t len = s->slen ? s->slen : 1u;
         uint16_t idx;
         fm1_irq_off();
-        if (s->playing) {
-            if (s->seq_pos >= 0x7FFFFFFFu) { /* pre-first-advance: step 0 */
-                idx = 0;
-            } else {
-                /* a keypress in the last quarter of the step means the upcoming
-                 * one — land it there, not in the dying step */
-                idx = s->seq_idx;
-                uint32_t base = fm106_seq_div_samples(s, s->sdiv);
-                uint32_t step_len = fm106_seq_step_samples(s, base, s->seq_idx);
-                if (step_len && s->seq_pos > step_len - (step_len >> 2))
-                    idx = (uint16_t)((idx + 1u) % len);
-            }
+        if (s->seq_pos >= 0x7FFFFFFFu) { /* pre-first-advance: step 0 */
+            idx = 0;
         } else {
-            idx = (uint16_t)(g_seq_cursor % len);
+            /* a keypress in the last quarter of the step means the upcoming
+             * one — land it there, not in the dying step */
+            idx = s->seq_idx;
+            uint32_t base = fm106_seq_div_samples(s, s->sdiv);
+            uint32_t step_len = fm106_seq_step_samples(s, base, s->seq_idx);
+            if (step_len && s->seq_pos > step_len - (step_len >> 2))
+                idx = (uint16_t)((idx + 1u) % len);
         }
         fm106_step_t *st = &s->step[idx % len];
+        if (st->time == FM106_ST_TIE) {
+            st->n = 0;
+            st->time = FM106_ST_NOTE;
+        }
         uint8_t found = 0;
         for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == pitch) { found = 1; break; }
         if (!found && st->n < 4u) {
@@ -778,9 +855,6 @@ static void seq_note_entry(uint8_t pitch, uint8_t vel)
             st->time = FM106_ST_NOTE;
             if (!st->vel) st->vel = vel ? vel : 100u;
             g_seq_last_pitch = pitch;
-            /* arm the hold tracker: remember which step took this pitch so
-             * note-off can write the held length into that step's gate.
-             * Retrigger of a still-held pitch updates the slot in place. */
             uint8_t slot = SEQ_HOLD_SLOTS;
             for (uint8_t h = 0; h < SEQ_HOLD_SLOTS; h++) {
                 if (g_seq_hold[h].used && g_seq_hold[h].pitch == pitch) { slot = h; break; }
@@ -794,23 +868,59 @@ static void seq_note_entry(uint8_t pitch, uint8_t vel)
             }
         }
         fm1_irq_on();
-        if (!s->playing) seq_ui_move_cursor(1);
-        g_seq_dirty = 1;
+        if (pitch < g_seq_view_lo) g_seq_view_lo = pitch;
+        if (pitch > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = pitch - SEQ_ROWS + 1u;
+        if (g_seq_view_lo > 114u) g_seq_view_lo = 114u;
+        seq_mark_modified();
         g_dirty_screen = 1;
-    } else if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && !s->playing) {
-        seq_ui_toggle_pitch(pitch);
-        seq_ui_move_cursor(1);
+    } else if (!s->playing && g_ui_mode == UI_MODE_NORMAL &&
+               g_current_page == PAGE_SEQ && !g_seq_menu_on && !g_note_menu_on) {
+        uint16_t len = s->slen ? s->slen : 1u;
+        fm1_irq_off();
+        fm106_step_t *st = &s->step[g_seq_cursor % len];
+        if (!g_seq_step_active || g_seq_step_held == 0u) {
+            /* First key of a new step gesture: overwrite step cleanly */
+            st->n = 1u;
+            st->note[0] = pitch;
+            st->time = FM106_ST_NOTE;
+            st->vel = vel ? vel : 100u;
+            st->acc = 0u;
+            g_seq_step_active = 1u;
+            g_seq_step_held = 1u;
+        } else {
+            /* Additional key held simultaneously: build polyphonic chord (up to 4) */
+            if (g_seq_step_held < 32u) g_seq_step_held++;
+            uint8_t found = 0;
+            for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == pitch) { found = 1; break; }
+            if (!found && st->n < 4u) {
+                st->note[st->n++] = pitch;
+            }
+        }
+        fm1_irq_on();
+        g_seq_row = pitch;
+        g_seq_last_pitch = pitch;
+        if (pitch < g_seq_view_lo) g_seq_view_lo = pitch;
+        if (pitch > g_seq_view_lo + SEQ_ROWS - 1u) g_seq_view_lo = pitch - SEQ_ROWS + 1u;
+        if (g_seq_view_lo > 114u) g_seq_view_lo = 114u;
+        seq_mark_modified();
+        g_dirty_screen = 1;
     }
 }
 
-/* note-off while live-recording: convert the held length into the recorded
- * step's gate (acc 1..255 = 0..100% of the step period). Holds longer than
- * one step extend into following EMPTY steps as TIEs (sustain, no retrigger),
- * so playback length matches what was held. The chain stops at the first
- * step that already has notes — we never overwrite existing material. */
+/* Note-off handler for both stopped chord step-entry and live-record gate/TIEs */
 static void seq_note_release(uint8_t pitch)
 {
     fm106_seq_t *s = &g_synth.seq;
+    if (g_seq_step_active && g_seq_step_held > 0u) {
+        g_seq_step_held--;
+        if (g_seq_step_held == 0u) {
+            g_seq_step_active = 0u;
+            if (!s->playing && g_ui_mode == UI_MODE_NORMAL &&
+                g_current_page == PAGE_SEQ && !g_seq_menu_on && !g_note_menu_on) {
+                seq_ui_move_cursor(1);
+            }
+        }
+    }
     if (!g_seq_rec_arm) return;
     uint32_t now = fm106_now_ms();
     for (uint8_t h = 0; h < SEQ_HOLD_SLOTS; h++) {
@@ -821,48 +931,46 @@ static void seq_note_release(uint8_t pitch)
             uint16_t len = s->slen ? s->slen : 1u;
             idx %= len;
             uint32_t base = fm106_seq_div_samples(s, s->sdiv);
-            uint32_t period_ms = base ? (base * 1000u) / 44100u : 0u; /* base < ~1M samples; *1000 fits u32 */
+            uint32_t period_ms = base ? (base * 1000u) / 44100u : 0u;
             fm1_irq_off();
             if (!period_ms || held_ms < period_ms) {
-                /* under one step: plain gate fraction on the first step */
                 uint8_t acc = 255u;
                 if (period_ms) {
                     acc = (uint8_t)((held_ms * 255u) / period_ms);
-                    if (!acc) acc = 1u;               /* never a zero-length note */
+                    if (!acc) acc = 1u;
                 }
                 s->step[idx].acc = acc;
             } else {
-                /* one step or more: full gate, then TIE the held span. Ties
-                 * must exist before the playhead reaches those steps — they
-                 * land now and sustain from the next loop pass onward. */
-                uint32_t full = held_ms / period_ms;  /* whole steps held */
-                uint32_t rem   = held_ms % period_ms; /* tail fraction */
-                if (full > len) full = len;           /* never longer than the loop */
-                s->step[idx].acc = 255u;
+                uint32_t full = held_ms / period_ms;
+                uint32_t rem  = held_ms % period_ms;
+                if (full >= len) full = (uint32_t)(len - 1u);
+                fm106_step_t *orig = &s->step[idx];
+                orig->acc = 255u;
                 for (uint32_t k = 1u; k <= full; k++) {
                     fm106_step_t *st = &s->step[(idx + (uint16_t)k) % len];
-                    if (st->n) break;                 /* occupied: stop, don't clobber */
+                    if (st->n && st->time != FM106_ST_TIE) break; /* occupied note: don't clobber */
                     st->time = FM106_ST_TIE;
                     st->acc  = 255u;
+                    st->n    = orig->n > 4u ? 4u : orig->n;
+                    for (uint8_t ni = 0; ni < st->n; ni++) st->note[ni] = orig->note[ni];
                 }
-                if (rem && full < len) {              /* partial tail: last tie carries it */
+                if (rem && full > 0u && full < len) {
                     fm106_step_t *st = &s->step[(idx + (uint16_t)full) % len];
-                    if (!st->n) {
+                    if (st->time == FM106_ST_TIE) {
                         uint8_t acc = (uint8_t)((rem * 255u) / period_ms);
                         if (acc) st->acc = acc;
                     }
                 }
             }
             fm1_irq_on();
-            g_seq_dirty = 1;
+            seq_mark_modified();
             g_dirty_screen = 1;
             return;
         }
     }
 }
 
-/* MIDI CC 99/100/101: accent / slide / ratchet on the edit step (playing
- * step while REC armed + playing, else the cursor step) */
+/* MIDI CC 99/100/101: accent / slide / ratchet on the edit step */
 static void seq_ui_cc_flag(uint8_t which, uint8_t v)
 {
     fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
@@ -877,15 +985,20 @@ static void seq_ui_cc_flag(uint8_t which, uint8_t v)
         st->ratchet = v > 8u ? 8u : v;
     }
     fm1_irq_on();
-    g_seq_dirty = 1;
+    seq_mark_modified();
     g_dirty_screen = 1;
 }
 
 static const char CHAR_SET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789*-_./#+!";
 #define CHAR_SET_LEN ((int32_t)(sizeof(CHAR_SET) - 1))
 
+#if FELUCCA_BLE
 #define MENU_MAIN_COUNT 3
-#define MENU_MIDI_COUNT 6
+#define MENU_BLE_COUNT  5
+#else
+#define MENU_MAIN_COUNT 2
+#endif
+#define MENU_MIDI_COUNT 5
 
 #ifndef RING_PUBLISH
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
@@ -922,6 +1035,8 @@ static void cv_text_plate(int32_t x, int32_t y, uint32_t w, const char *s,
         tx = x + ((int32_t)w - tw) / 2;
     else if (align == 2)
         tx = x + (int32_t)w - tw;
+    if (tx < 0)
+        tx = 0;
     cv_rect(x, y, w, 16, bg);
     cv_text(tx, y, &FONT_S, s, c);
 }
@@ -984,6 +1099,7 @@ static void draw_battery_indicator(int32_t x, int32_t y)
 /* 1. Header + Voice LEDs + Page Title (y=0..75, single blit) */
 static void draw_top_section(uint8_t patch_idx, const char *patch_name)
 {
+    g_where = 0xB0;
     /* 4 Banks x 64 Presets:
      * Bank 0: Factory A (A11..A88,    0..63)
      * Bank 1: Factory B (B11..B88,   64..127)
@@ -1066,10 +1182,11 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     case PAGE_ENVELOPE: title = "ENV (ADSR)"; break;
     case PAGE_LFO:      title = "LFO";        break;
     case PAGE_ARP:      title = "ARPEGGIATOR"; break;
-    case PAGE_FX:      title = "FX (CHORUS)"; break;
-    case PAGE_TAPE:    title = "FX (TAPE)";        break;
-    case PAGE_SEQ:     title = "SEQUENCER"; break;
-    default:            title = "FX (TAPE)";        break;
+    case PAGE_FX:       title = "FX (CHORUS)";  break;
+    case PAGE_TAPE:     title = "FX (TAPE)";    break;
+    case PAGE_REVERB:   title = "FX (SHIMMER)"; break;
+    case PAGE_SEQ:      title = "SEQUENCER";    break;
+    default:            title = "FX (SHIMMER)"; break;
     }
 
     cv_begin(240, 76, C_BG);
@@ -1077,6 +1194,13 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
     /* --- Header (y=0..43, 1980s Roland badge directly on chassis grey) --- */
     cv_rect(6, 4, 4, 12, C_ROLAND_RED);
     cv_text(16, 2, &FONT_S, "FM-106", C_STRIPE_CYAN);
+#if FELUCCA_BLE
+    if (btp.on) {
+        uint32_t bst = ble_ui_state();
+        int linked = (bst == BLE_ST_SUBSCRIBED || bst == BLE_ST_RECEIVING);
+        cv_text(96, 2, &FONT_S, "BT", linked ? C_STRIPE_CYAN : C_TEXT_DIM);
+    }
+#endif
     cv_text(138, 2, &FONT_S, badge_str, badge_color);
     draw_battery_indicator(210, 5);
     cv_rect(6, 18, 228, 2, C_STRIPE_CYAN);
@@ -1261,39 +1385,92 @@ static void draw_waveform_section(void)
     cv_blit(0, 150);
 }
 
+static void fmt_u32_compact(uint32_t v, char *out)
+{
+    if (v >= 100u) {
+        out[0] = (char)('0' + (v / 100u) % 10u);
+        out[1] = (char)('0' + (v / 10u) % 10u);
+        out[2] = (char)('0' + (v % 10u));
+        out[3] = '\0';
+    } else if (v >= 10u) {
+        out[0] = (char)('0' + (v / 10u));
+        out[1] = (char)('0' + (v % 10u));
+        out[2] = '\0';
+    } else {
+        out[0] = (char)('0' + v);
+        out[1] = '\0';
+    }
+}
+
 /* ---- SEQ options menu (long-press EDIT) ---- */
 static void seq_ui_menu_adjust(int32_t d)
 {
     if (!d) return;
-    fm1_irq_off();
     fm106_seq_t *s = &g_synth.seq;
+    if (g_seq_menu_sel == 7u) { /* CLR ALL */
+        if (d > 0) {
+            seq_ui_clear_all();
+            g_seq_menu_on = 0u;
+        }
+        return;
+    }
+    fm1_irq_off();
     switch (g_seq_menu_sel) {
-    case 0: /* STEPS */
-        if (d > 0) { if (s->slen < FM106_NSTEP) s->slen = (uint16_t)(s->slen + 1u); }
-        else       { if (s->slen > 1u) s->slen = (uint16_t)(s->slen - 1u); }
+    case 0: { /* STEPS (1..128, accelerates smoothly with encoder d) */
+        int32_t nl = (int32_t)s->slen + d;
+        if (nl < 1) nl = 1;
+        if (nl > (int32_t)FM106_NSTEP) nl = (int32_t)FM106_NSTEP;
+        s->slen = (uint16_t)nl;
         if (g_seq_cursor >= s->slen) g_seq_cursor = (uint16_t)(s->slen - 1u);
+        seq_mark_modified();
         break;
-    case 1: /* BPM */
-        if (d > 0) { if (s->bpm < 240u) s->bpm++; }
-        else       { if (s->bpm > 40u)  s->bpm--; }
+    }
+    case 1: { /* BPM (40..240) */
+        int32_t nb = (int32_t)s->bpm + d;
+        if (nb < 40) nb = 40;
+        if (nb > 240) nb = 240;
+        s->bpm = (uint8_t)nb;
+        seq_mark_modified();
         break;
+    }
     case 2: /* DIV */
         if (d > 0) { if (s->sdiv < 9u) s->sdiv++; else s->sdiv = 0u; }
         else       { if (s->sdiv > 0u) s->sdiv--; else s->sdiv = 9u; }
+        seq_mark_modified();
         break;
-    case 3: /* GATE */
-        if (d > 0) { if (s->sgate < 127u) s->sgate = (uint8_t)(s->sgate + 4u > 127u ? 127u : s->sgate + 4u); }
-        else       { if (s->sgate > 8u)   s->sgate = (uint8_t)(s->sgate - 4u < 8u ? 8u : s->sgate - 4u); }
-        break;
-    case 4: /* SWING */
-        if (d > 0) { if (s->swing < 100u) s->swing = (uint8_t)(s->swing + 4u > 100u ? 100u : s->swing + 4u); }
-        else       { if (s->swing >= 4u) s->swing = (uint8_t)(s->swing - 4u); else s->swing = 0u; }
-        break;
-    case 5: /* REC arm */
-        g_seq_rec_arm ^= 1u;
+    case 3: { /* GATE (8..128) */
+        int32_t ng = (int32_t)s->sgate + (d > 0 ? 4 : -4);
+        if (ng < 8) ng = 8;
+        if (ng > 128) ng = 128;
+        s->sgate = (uint8_t)ng;
+        seq_mark_modified();
         break;
     }
-    g_seq_dirty = 1;
+    case 4: { /* SWING (0..100) */
+        int32_t ns = (int32_t)s->swing + (d > 0 ? 4 : -4);
+        if (ns < 0) ns = 0;
+        if (ns > 100) ns = 100;
+        s->swing = (uint8_t)ns;
+        seq_mark_modified();
+        break;
+    }
+    case 5: /* REC arm */
+        g_seq_rec_arm = (d > 0) ? 1u : 0u;
+        if (!g_seq_rec_arm) count_in_cancel();
+        g_seq_dirty = 1;
+        break;
+    case 6: /* DUP BARS (16->32->64->128, copying steps + p-locks) */
+        if (d > 0) {
+            uint16_t nl = fm106_seq_duplicate(s);
+            if (nl > 0u) {
+                char nb[8];
+                fmt_u32_compact(nl, nb);
+                seq_mark_modified();
+                fm106_set_banner("DUP TO ", nb);
+            }
+        }
+        break;
+    }
     fm1_irq_on();
 }
 
@@ -1302,44 +1479,24 @@ static void seq_menu_value(uint32_t i, char *val)
 {
     fm106_seq_t *s = &g_synth.seq;
     switch (i) {
-    case 0: {                                   /* STEPS (1..1024, 3 digits) */
-        uint32_t v = s->slen;
-        val[0] = (char)('0' + v / 100);
-        val[1] = (char)('0' + (v / 10) % 10);
-        val[2] = (char)('0' + v % 10);
-        val[3] = '\0';
+    case 0:                                     /* STEPS (1..128) */
+        fmt_u32_compact(s->slen, val);
         break;
-    }
-    case 1: {                                   /* BPM */
-        uint32_t v = s->bpm;
-        val[0] = (char)('0' + v / 100);
-        val[1] = (char)('0' + (v / 10) % 10);
-        val[2] = (char)('0' + v % 10);
-        val[3] = '\0';
+    case 1:                                     /* BPM */
+        fmt_u32_compact(s->bpm, val);
         break;
-    }
     case 2: {                                   /* DIV */
         uint32_t j = 0;
         while (N_SDIV[s->sdiv][j] && j < 7u) { val[j] = N_SDIV[s->sdiv][j]; j++; }
         val[j] = '\0';
         break;
     }
-    case 3: {                                   /* GATE */
-        uint32_t v = s->sgate;
-        val[0] = (char)('0' + v / 100);
-        val[1] = (char)('0' + (v / 10) % 10);
-        val[2] = (char)('0' + v % 10);
-        val[3] = '\0';
+    case 3:                                     /* GATE */
+        fmt_u32_compact(s->sgate, val);
         break;
-    }
-    case 4: {                                   /* SWING */
-        uint32_t v = s->swing;
-        val[0] = (char)('0' + v / 100);
-        val[1] = (char)('0' + (v / 10) % 10);
-        val[2] = (char)('0' + v % 10);
-        val[3] = '\0';
+    case 4:                                     /* SWING */
+        fmt_u32_compact(s->swing, val);
         break;
-    }
     case 5: {                                   /* REC */
         const char *v = g_seq_rec_arm ? "ON" : "OFF";
         uint32_t j = 0;
@@ -1347,6 +1504,27 @@ static void seq_menu_value(uint32_t i, char *val)
         val[j] = '\0';
         break;
     }
+    case 6: {                                   /* DUP BARS */
+        uint32_t cur = s->slen ? s->slen : 16u;
+        if (cur >= FM106_NSTEP) {
+            str_cpy(val, "MAX", 8);
+        } else {
+            uint32_t nxt = cur * 2u > FM106_NSTEP ? FM106_NSTEP : cur * 2u;
+            char a[4], b[4];
+            fmt_u32_compact(cur, a);
+            fmt_u32_compact(nxt, b);
+            uint32_t k = 0, j = 0;
+            while (a[j] && k < 7u) val[k++] = a[j++];
+            if (k < 7u) val[k++] = '>';
+            j = 0;
+            while (b[j] && k < 7u) val[k++] = b[j++];
+            val[k] = '\0';
+        }
+        break;
+    }
+    default:                                    /* CLR ALL */
+        str_cpy(val, "TURN>", 8);
+        break;
     }
 }
 
@@ -1364,74 +1542,154 @@ static void menu_row_draw(uint32_t x, uint32_t y, uint32_t sel, const char *labe
     cv_text_plate(x + 150, y, 80, val, c, C_BLACK, 1);
 }
 
+static void draw_seq_fader_guide(void);
+
+static void draw_seq_header(void)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    cv_begin(240, 22, C_BG);
+    cv_text(6, 4, &FONT_S, "SEQ", C_ROLAND_AMBER);
+    if (g_banner_until > fm1_ms && g_banner_msg[0] != '\0') {
+        cv_text(44, 4, &FONT_S, g_banner_msg, C_ROLAND_AMBER);
+    } else {
+        if (g_count_in)       cv_text(38, 4, &FONT_S, "CNT", C_ROLAND_RED);
+        else if (s->playing)  cv_text(38, 4, &FONT_S, "PLAY", C_STRIPE_CYAN);
+        else                  cv_text(38, 4, &FONT_S, "STOP", C_TEXT_DIM);
+
+        if (g_seq_rec_arm) {
+            cv_rect(76, 3, 28, 15, C_ROLAND_RED);
+            cv_text(78, 3, &FONT_S, "REC", C_TEXT_WHITE);
+        }
+
+        char buf[16];
+        buf[0] = (char)('0' + s->bpm / 100);
+        buf[1] = (char)('0' + (s->bpm / 10) % 10);
+        buf[2] = (char)('0' + s->bpm % 10);
+        buf[3] = '\0';
+        cv_text(114, 4, &FONT_S, buf, C_TEXT_WHITE);
+        cv_text(142, 4, &FONT_S, "BPM", C_TEXT_DIM);
+
+        buf[0] = (char)('0' + s->swing / 100);
+        buf[1] = (char)('0' + (s->swing / 10) % 10);
+        buf[2] = (char)('0' + s->swing % 10);
+        buf[3] = '\0';
+        cv_text(176, 4, &FONT_S, buf, C_TEXT_WHITE);
+        cv_text(204, 4, &FONT_S, "SWG", C_TEXT_DIM);
+    }
+    cv_blit(0, 0);
+}
+
 static void draw_seq_menu(void)
 {
-    static const char *const opts[SEQ_MENU_COUNT] = {"STEPS", "BPM", "DIV", "GATE", "SWING", "REC"};
+    static const char *const opts[SEQ_MENU_COUNT] = {
+        "STEPS", "BPM", "DIV", "GATE", "SWING", "REC", "DUP BARS", "CLR ALL"
+    };
 
+    draw_seq_header();
     cv_begin(240, 96, C_BG);
     cv_text_plate(0, 0, 240, "SEQ OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
     for (uint32_t i = 0; i < 4u; i++) {
         char val[8];
         seq_menu_value(i, val);
-        menu_row_draw(10, 20u + i * 20u, i == g_seq_menu_sel, opts[i], val);
+        menu_row_draw(10, 20u + i * 18u, i == g_seq_menu_sel, opts[i], val);
     }
     cv_blit(0, 22);
-    cv_begin(240, 68, C_BG);
+    cv_begin(240, 72, C_BG);
     for (uint32_t i = 4u; i < SEQ_MENU_COUNT; i++) {
         char val[8];
         seq_menu_value(i, val);
-        menu_row_draw(10, (i - 4u) * 20u, i == g_seq_menu_sel, opts[i], val);
+        menu_row_draw(10, (i - 4u) * 18u, i == g_seq_menu_sel, opts[i], val);
     }
     cv_blit(0, 118);
+    draw_seq_fader_guide();
 }
 
 /* ---- note options menu (short-press EDIT): glo-menu style ---- */
+static void note_menu_value(uint32_t i, const fm106_step_t *st, uint16_t eidx, char *val)
+{
+    switch (i) {
+    case 0: {
+        uint32_t v = st->ratchet ? st->ratchet : 1u;
+        val[0] = (char)('0' + v); val[1] = '\0';
+        break;
+    }
+    case 1: {
+        uint8_t tie = st->time == FM106_ST_TIE;
+        str_cpy(val, tie ? "ON" : "OFF", 8);
+        break;
+    }
+    case 2: {
+        uint8_t on = (st->flags & FM106_SF_ACCENT) != 0u;
+        str_cpy(val, on ? "ON" : "OFF", 8);
+        break;
+    }
+    case 3: {
+        uint8_t on = (st->flags & FM106_SF_SLIDE) != 0u;
+        str_cpy(val, on ? "ON" : "OFF", 8);
+        break;
+    }
+    case 4: { /* PROB */
+        if (st->probability == 0u || st->probability == 100u) {
+            str_cpy(val, "100%", 8);
+        } else if (st->probability > 100u) {
+            str_cpy(val, "MUTE", 8);
+        } else {
+            fmt_u32_compact(st->probability, val);
+            uint32_t k = 0;
+            while (val[k]) k++;
+            val[k] = '%'; val[k + 1u] = '\0';
+        }
+        break;
+    }
+    default: { /* P-LOCKS count on this step */
+        uint32_t c = fm106_plock_count_step(&g_synth.seq, eidx);
+        if (c == 0u) str_cpy(val, "NONE", 8);
+        else         fmt_u32_compact(c, val);
+        break;
+    }
+    }
+}
+
 static void draw_note_menu(void)
 {
-    static const char *const opts[NOTE_MENU_COUNT] = {"RATCHET", "TIE", "ACCENT", "SLIDE"};
-    fm106_step_t *st = &g_synth.seq.step[seq_ui_edit_idx()];
+    static const char *const opts[NOTE_MENU_COUNT] = {
+        "RATCHET", "TIE", "ACCENT", "SLIDE", "PROB", "P-LOCKS"
+    };
+    uint16_t eidx = seq_ui_edit_idx();
+    fm106_step_t *st = &g_synth.seq.step[eidx];
 
+    draw_seq_header();
     cv_begin(240, 96, C_BG);
     cv_text_plate(0, 0, 240, "NOTE OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
     for (uint32_t i = 0; i < 4u; i++) {
         char val[8];
-        switch (i) {
-        case 0: {
-            uint32_t v = st->ratchet ? st->ratchet : 1u;
-            val[0] = (char)('0' + v); val[1] = '\0';
-            break;
-        }
-        case 1: {
-            uint8_t tie = st->time == FM106_ST_TIE;
-            val[0] = tie ? 'O' : '-'; val[1] = tie ? 'N' : 'F'; val[2] = '\0';
-            break;
-        }
-        case 2: {
-            uint8_t on = st->flags & FM106_SF_ACCENT;
-            val[0] = on ? 'O' : '-'; val[1] = on ? 'N' : 'F'; val[2] = '\0';
-            break;
-        }
-        default: {
-            uint8_t on = st->flags & FM106_SF_SLIDE;
-            val[0] = on ? 'O' : '-'; val[1] = on ? 'N' : 'F'; val[2] = '\0';
-            break;
-        }
-        }
-        menu_row_draw(10, 20u + i * 20u, i == g_note_menu_sel, opts[i], val);
+        note_menu_value(i, st, eidx, val);
+        menu_row_draw(10, 20u + i * 18u, i == g_note_menu_sel, opts[i], val);
     }
     cv_blit(0, 22);
+    cv_begin(240, 72, C_BG);
+    for (uint32_t i = 4u; i < NOTE_MENU_COUNT; i++) {
+        char val[8];
+        note_menu_value(i, st, eidx, val);
+        menu_row_draw(10, (i - 4u) * 18u, i == g_note_menu_sel, opts[i], val);
+    }
+    cv_blit(0, 118);
+    draw_seq_fader_guide();
 }
 
 /* fader-style knob guide for the SEQ page bottom (matches draw_faders_section) */
 static void draw_seq_fader_guide(void)
 {
     fm106_seq_t *s = &g_synth.seq;
-    fm106_step_t *st = &s->step[g_seq_cursor % (s->slen ? s->slen : 1u)];
+    uint16_t len = s->slen ? s->slen : 1u;
+    uint16_t cur = (uint16_t)(g_seq_cursor % len);
+    fm106_step_t *st = &s->step[cur];
     static const char *const lbl[4] = {"STEP", "NOTE", "GATE", "VEL"};
     int32_t val[4];
+    int32_t minv[4] = {1, 0, 0, 0};
     int32_t max[4];
 
-    val[0] = (int32_t)g_seq_cursor;                 max[0] = FM106_NSTEP - 1; /* 1023 */
+    val[0] = (int32_t)cur + 1;                      max[0] = (int32_t)len;
     val[1] = (int32_t)g_seq_row;                    max[1] = 127;
     val[2] = st->acc ? (int32_t)st->acc : (int32_t)s->sgate;           max[2] = 255;
     val[3] = (int32_t)st->vel;                      max[3] = 127;
@@ -1440,7 +1698,7 @@ static void draw_seq_fader_guide(void)
     for (int i = 0; i < 4; i++) {
         int32_t fx = 12 + i * 58;
         int32_t v = val[i];
-        if (v < 0) v = 0;
+        if (v < minv[i]) v = minv[i];
         if (v > max[i]) v = max[i];
 
         /* fader track + center line (same geometry as draw_faders_section) */
@@ -1448,7 +1706,8 @@ static void draw_seq_fader_guide(void)
         cv_line(fx + 21, 11, fx + 21, 29, C_FADER_LINE);
 
         int32_t travel = 14;
-        int32_t cap_y = 10 + (travel - (v * travel) / (max[i] ? max[i] : 1));
+        int32_t span = max[i] - minv[i];
+        int32_t cap_y = 10 + (travel - ((v - minv[i]) * travel) / (span > 0 ? span : 1));
         if (cap_y < 10) cap_y = 10;
         if (cap_y > 24) cap_y = 24;
         cv_rect(fx + 13, cap_y, 18, 8, C_FADER_CAP);
@@ -1461,24 +1720,11 @@ static void draw_seq_fader_guide(void)
         if (i == 1) {
             seq_note_name((uint8_t)v, num_str);
         } else {
-            if (v >= 100) {
-                num_str[0] = (char)('0' + v / 100);
-                num_str[1] = (char)('0' + (v / 10) % 10);
-                num_str[2] = (char)('0' + v % 10);
-                num_str[3] = '\0';
-            } else if (v >= 10) {
-                num_str[0] = (char)('0' + v / 10);
-                num_str[1] = (char)('0' + v % 10);
-                num_str[2] = '\0';
-            } else {
-                num_str[0] = (char)('0' + v);
-                num_str[1] = '\0';
-            }
+            fmt_u32_compact((uint32_t)v, num_str);
         }
         int32_t nw = text_w(&FONT_S, num_str);
         cv_text(fx + (44 - nw) / 2, 38, &FONT_S, num_str, C_TEXT_WHITE);
     }
-    if (g_seq_rec_arm) cv_text(200, 38, &FONT_S, "REC", C_ROLAND_RED);
     cv_blit(0, 190);
 }
 
@@ -1486,6 +1732,17 @@ static void draw_seq_fader_guide(void)
 static void draw_seq_roll_band(uint8_t row_lo, uint8_t row_hi, uint32_t y, int32_t play_idx)
 {
     uint8_t rows = row_hi - row_lo;
+    uint16_t plock_cols = 0;
+    if (row_lo == 0u) {
+        const fm106_seq_t *sq = &g_synth.seq;
+        for (uint16_t li = 0; li < sq->nplock; li++) {
+            uint16_t stp = sq->plock[li].step;
+            if (stp >= g_seq_view_step && stp < (uint16_t)(g_seq_view_step + 16u)) {
+                plock_cols |= (uint16_t)(1u << (stp - g_seq_view_step));
+            }
+        }
+    }
+
     cv_begin(240, rows * SEQ_ROW_H, C_BG);
 
     for (uint8_t r = row_lo; r < row_hi; r++) {
@@ -1510,11 +1767,19 @@ static void draw_seq_roll_band(uint8_t row_lo, uint8_t row_hi, uint32_t y, int32
             for (uint8_t i = 0; i < st->n; i++) if (st->note[i] == pitch) { has = 1; break; }
             if (has) {
                 if (st->time == FM106_ST_TIE) {
-                    cv_rect(x + 1, yb + SEQ_ROW_H / 2 - 1, SEQ_STEP_W - 2, 3, C_TEXT_DIM);
+                    cv_rect(x, yb + SEQ_ROW_H / 2 - 2, SEQ_STEP_W - 1, 4, C_STRIPE_CYAN);
                 } else {
                     uint16_t bc = (st->flags & FM106_SF_ACCENT) ? C_TEXT_WHITE : C_ROLAND_AMBER;
                     cv_rect(x + 1, yb + 1, SEQ_STEP_W - 2, SEQ_ROW_H - 2, bc);
+                    if (st->flags & FM106_SF_SLIDE) {
+                        cv_rect(x + SEQ_STEP_W - 3, yb + 2, 2, SEQ_ROW_H - 4, C_STRIPE_CYAN);
+                    }
                 }
+            }
+
+            /* P-lock indicator pip along top margin of locked steps */
+            if (r == 0u && (plock_cols & (1u << c))) {
+                cv_rect(x + 4, 0, 4, 2, C_STRIPE_CYAN);
             }
 
             if (play_idx >= 0 && step_idx == (uint16_t)play_idx) {
@@ -1544,25 +1809,7 @@ static void draw_seq_page(void)
 {
     fm106_seq_t *s = &g_synth.seq;
 
-    /* header */
-    cv_begin(240, 22, C_BG);
-    cv_text(6, 4, &FONT_S, "SEQ", C_ROLAND_AMBER);
-    if (s->playing) cv_text(60, 4, &FONT_S, "PLAY", C_STRIPE_CYAN);
-    else           cv_text(60, 4, &FONT_S, "STOP", C_TEXT_DIM);
-    char buf[16];
-    buf[0] = (char)('0' + s->bpm / 100);
-    buf[1] = (char)('0' + (s->bpm / 10) % 10);
-    buf[2] = (char)('0' + s->bpm % 10);
-    buf[3] = '\0';
-    cv_text(110, 4, &FONT_S, buf, C_TEXT_WHITE);
-    cv_text(140, 4, &FONT_S, "BPM", C_TEXT_DIM);
-    buf[0] = (char)('0' + s->swing / 100);
-    buf[1] = (char)('0' + (s->swing / 10) % 10);
-    buf[2] = (char)('0' + s->swing % 10);
-    buf[3] = '\0';
-    cv_text(180, 4, &FONT_S, buf, C_TEXT_WHITE);
-    cv_text(210, 4, &FONT_S, "SWG", C_TEXT_DIM);
-    cv_blit(0, 0);
+    draw_seq_header();
 
     /* roll bands: one playhead snapshot so both halves always agree */
     int32_t ph = s->playing ? (int32_t)seq_ph_idx(s) : -1;
@@ -1573,44 +1820,526 @@ static void draw_seq_page(void)
     draw_seq_fader_guide();
 }
 
-/* 4. OPT Menu (y=76..171, single blit) */
+static void fmt_cpu_pct(uint32_t pct, char *out)
+{
+    if (pct > 99u) pct = 99u;
+    out[0] = (pct >= 10u) ? (char)('0' + (pct / 10u)) : ' ';
+    out[1] = (char)('0' + (pct % 10u));
+    out[2] = '%';
+    out[3] = '\0';
+}
+
+/* Live per-core CPU load footer at bottom of OPT menu (y=172..239) */
+static void draw_opt_cpu_footer(void)
+{
+    uint32_t c0 = g_cpu0_load_pct;
+    uint32_t c1 = g_cpu1_load_pct;
+    if (c0 > 99u) c0 = 99u;
+    if (c1 > 99u) c1 = 99u;
+
+    char p0[4];
+    fmt_cpu_pct(c0, p0);
+    uint16_t col0 = (c0 >= 85u) ? C_ROLAND_RED : (c0 >= 65u) ? C_ROLAND_AMBER : C_STRIPE_CYAN;
+    int32_t w0 = (int32_t)((c0 * 124u) / 100u);
+#if DINGHY_DUAL_CORE
+    char p1[4];
+    fmt_cpu_pct(c1, p1);
+    uint16_t col1 = (c1 >= 85u) ? C_ROLAND_RED : (c1 >= 65u) ? C_ROLAND_AMBER : C_STRIPE_CYAN;
+    int32_t w1 = (int32_t)((c1 * 124u) / 100u);
+#else
+    (void)c1;
+#endif
+
+    cv_begin(240, 80, C_BG);
+    cv_rect(6, 4, 228, 72, C_FADER_BG);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 75, 228, 1, C_LINE_DIV);
+
+    cv_text(14, 8, &FONT_S, "CPU LOAD MONITOR", C_STRIPE_CYAN);
+    cv_rect(14, 22, 212, 1, C_LINE_DIV);
+
+    /* Core 0 row */
+    cv_text(14, 28, &FONT_S, "CPU0 (SYNTH)", C_TEXT_DIM);
+    cv_rect(106, 31, 80, 8, C_BLACK);
+    cv_rect(106, 31, 80, 1, C_LINE_DIV);
+    if (w0 > 0) {
+        int32_t b0 = (w0 * 76) / 124;
+        if (b0 > 76) b0 = 76;
+        cv_rect(108, 33, b0, 4, col0);
+    }
+    cv_text(194, 28, &FONT_S, p0, C_TEXT_WHITE);
+
+    /* Core 1 row */
+#if DINGHY_DUAL_CORE
+    cv_text(14, 50, &FONT_S, "CPU1 (WORKER)", C_TEXT_DIM);
+    cv_rect(106, 53, 80, 8, C_BLACK);
+    cv_rect(106, 53, 80, 1, C_LINE_DIV);
+    if (w1 > 0) {
+        int32_t b1 = (w1 * 76) / 124;
+        if (b1 > 76) b1 = 76;
+        cv_rect(108, 55, b1, 4, col1);
+    }
+    cv_text(194, 50, &FONT_S, p1, C_TEXT_WHITE);
+#else
+    cv_text(14, 50, &FONT_S, "CPU1 (STANDBY)", C_TEXT_DIM);
+    cv_rect(106, 53, 80, 8, C_BLACK);
+    cv_rect(106, 53, 80, 1, C_LINE_DIV);
+    cv_text(114, 50, &FONT_S, "BLE STABILITY", C_TEXT_DIM);
+    cv_text(194, 50, &FONT_S, "OFF", C_TEXT_DIM);
+#endif
+
+    cv_blit(0, 160);
+}
+
+/* 4. OPT Menu (Covering full screen y=0..239 in three 80px bands) */
 static void draw_menu_main(void)
 {
-    const char *items[MENU_MAIN_COUNT] = {"MIDI SETUP", "CC MAPPING", "ABOUT"};
-    cv_begin(240, 96, C_BG);
-    cv_text_plate(0, 0, 240, "OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
-    for (uint32_t i = 0; i < MENU_MAIN_COUNT; i++) {
+#if FELUCCA_BLE
+    const char *items[MENU_MAIN_COUNT] = {"MIDI SETUP", "BLUETOOTH", "ABOUT"};
+#else
+    const char *items[MENU_MAIN_COUNT] = {"MIDI SETUP", "ABOUT"};
+#endif
+
+    /* Band 1: y=0..79 */
+    cv_begin(240, 80, C_BG);
+    cv_text_plate(0, 0, 240, "GLOBAL OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
+    cv_rect(0, 16, 240, 1, C_LINE_DIV);
+
+    cv_text(12, 22, &FONT_S, "SYSTEM SETTINGS", C_STRIPE_CYAN);
+    cv_text(160, 22, &FONT_S, "[GLO] EXIT", C_TEXT_DIM);
+    cv_rect(6, 36, 228, 1, C_LINE_DIV);
+
+    /* Item 0 */
+    uint16_t c0 = (g_menu_sel == 0) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 44, 228, 26, (g_menu_sel == 0) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 44, 228, 1, (g_menu_sel == 0) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 69, 228, 1, (g_menu_sel == 0) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_text((g_menu_sel == 0) ? 14 : 18, 50, &FONT_S, (g_menu_sel == 0) ? "> MIDI SETUP" : "  MIDI SETUP", c0);
+    cv_blit(0, 0);
+
+    /* Band 2: y=80..159 */
+    cv_begin(240, 80, C_BG);
+    for (uint32_t i = 1; i < MENU_MAIN_COUNT; i++) {
         uint16_t c = (i == g_menu_sel) ? C_ROLAND_AMBER : C_TEXT_DIM;
+        uint16_t ry = 2 + (i - 1u) * 26;
+        cv_rect(6, ry, 228, 24, (i == g_menu_sel) ? C_LINE_DIV : C_BLACK);
+        cv_rect(6, ry, 228, 1, (i == g_menu_sel) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_rect(6, ry + 23, 228, 1, (i == g_menu_sel) ? C_ROLAND_AMBER : C_LINE_DIV);
         char buf[24];
         buf[0] = (i == g_menu_sel) ? '>' : ' ';
         buf[1] = ' ';
         uint32_t j = 2;
         while (items[i][j-2] && j < sizeof(buf)-1) { buf[j] = items[i][j-2]; j++; }
         buf[j] = '\0';
-        cv_text_plate(20, 22 + i*22, 200, buf, c, C_BLACK, 0);
+        cv_text((i == g_menu_sel) ? 14 : 18, ry + 6, &FONT_S, buf, c);
     }
-    cv_blit(0, 76);
-    cv_begin(240, 68, C_BG);
-    cv_blit(0, 172);
+
+    cv_rect(6, 56, 228, 20, C_BLACK);
+    cv_rect(6, 56, 228, 1, C_LINE_DIV);
+    cv_rect(6, 75, 228, 1, C_LINE_DIV);
+    cv_text(14, 60, &FONT_S, "[SELECT] Move   [OCT+] Enter", C_TEXT_DIM);
+    cv_blit(0, 80);
+
+    /* Band 3: y=160..239 (CPU meter) */
+    draw_opt_cpu_footer();
 }
+
+#if FELUCCA_BLE
+static void draw_menu_bluetooth(void)
+{
+    g_where = 0x25;
+    bt_set_t s;
+    bt_set_get(&s);
+    char st_str[24];
+    bt_get_status_str(st_str, sizeof(st_str));
+
+    const char *on_str = btp.on ? "ON" : "OFF";
+    const char *auto_str = s.autostart ? "ON" : "OFF";
+    const char *role_str = (s.role == BT_ROLE_DEVICE) ? "DEVICE" : "HOST";
+    const char *rate_names[3] = {"AUTO", "FAST", "SLOW"};
+    const char *rate_str = (s.rate < 3u) ? rate_names[s.rate] : "AUTO";
+
+    const char *labels[4] = {"BLUETOOTH", "AUTOSTART", "ROLE", "RECONNECT"};
+    const char *vals[4]   = {on_str, auto_str, role_str, rate_str};
+
+    /* Band 1: y=0..79 (Header + Status + Row 0) */
+    cv_begin(240, 80, C_BG);
+    cv_text_plate(0, 0, 240, "BLUETOOTH", C_ROLAND_AMBER, C_BLACK, 1);
+    cv_rect(0, 16, 240, 1, C_LINE_DIV);
+
+    /* Recessed Status Bar */
+    cv_rect(6, 20, 228, 18, C_BLACK);
+    cv_rect(6, 20, 228, 1, C_LINE_DIV);
+    cv_rect(6, 37, 228, 1, C_LINE_DIV);
+    cv_text(12, 22, &FONT_S, "STATUS:", C_TEXT_DIM);
+    cv_text(74, 22, &FONT_S, st_str, btp.on ? C_STRIPE_CYAN : C_TEXT_DIM);
+
+    /* Row 0 */
+    uint16_t c0 = (g_ble_sel == 0u) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 44, 228, 26, (g_ble_sel == 0u) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 44, 228, 1, (g_ble_sel == 0u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 69, 228, 1, (g_ble_sel == 0u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_text(14, 50, &FONT_S, labels[0], C_TEXT_DIM);
+    cv_text_plate(140, 48, 80, vals[0], c0, C_BLACK, 1);
+    cv_blit(0, 0);
+
+    /* Band 2: y=80..159 (Rows 1, 2, 3) */
+    cv_begin(240, 80, C_BG);
+    for (uint32_t i = 1u; i < 4u; i++) {
+        uint16_t c = (g_ble_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
+        uint16_t ry = 2 + (i - 1u) * 26;
+        cv_rect(6, ry, 228, 24, (g_ble_sel == i) ? C_LINE_DIV : C_BLACK);
+        cv_rect(6, ry, 228, 1, (g_ble_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_rect(6, ry + 23, 228, 1, (g_ble_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_text(14, ry + 6, &FONT_S, labels[i], C_TEXT_DIM);
+        cv_text_plate(140, ry + 4, 80, vals[i], c, C_BLACK, 1);
+    }
+    cv_blit(0, 80);
+
+    /* Band 3: y=160..239 (Row 4 + Guide Footer) */
+    cv_begin(240, 80, C_BG);
+    uint16_t c4 = (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 4, 228, 26, (g_ble_sel == 4u) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 4, 228, 1, (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 29, 228, 1, (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    if (s.role == BT_ROLE_HOST) {
+        cv_text_plate(10, 8, 220, "[OCT+] SCAN DEVICES", c4, C_BLACK, 1);
+    } else {
+        cv_text_plate(10, 8, 220, "ADVERTISING: FM-106", C_TEXT_DIM, C_BLACK, 1);
+    }
+
+    cv_rect(6, 36, 228, 36, C_BLACK);
+    cv_rect(6, 36, 228, 1, C_LINE_DIV);
+    cv_rect(6, 71, 228, 1, C_LINE_DIV);
+    cv_text(14, 40, &FONT_S, "[SELECT] Select   [ALGO] Edit", C_TEXT_DIM);
+    cv_text(14, 54, &FONT_S, "[HOME] Back to Menu", C_ROLAND_AMBER);
+    cv_blit(0, 160);
+}
+
+static void bt_device_menu_action(void)
+{
+    if (btp.an == 0 || g_bt_scan_sel >= btp.an) {
+        g_bt_device_menu_on = 0;
+        return;
+    }
+    const ble_ui_dev_t *d = &btp.adev[g_bt_scan_sel];
+    int s_idx = bt_dev_find(d->addr);
+
+    bt_dev_t dev;
+    memset(&dev, 0, sizeof(dev));
+    memcpy(dev.addr, d->addr, 6);
+    dev.type = d->type & 1u;
+    dev.kind = (uint8_t)bt_dev_kind(d->name);
+    bt_name(dev.name, d->name, sizeof(dev.name));
+
+    switch (g_bt_device_menu_sel) {
+    case 0: /* CONNECT NOW */
+        bt_devs_add(&dev);
+        bt_add_close();
+        bt_devs_page(1);
+        ble_ui_slot_target(dev.kind, dev.addr, dev.type);
+        g_bt_device_menu_on = 0;
+        g_ui_mode = UI_MODE_BLUETOOTH;
+        break;
+
+    case 1: /* AUTO CONNECT TOGGLE */
+        if (s_idx < 0) {
+            bt_devs_add(&dev);
+        } else if (s_idx == 0) {
+            bt_devs_forget(0);
+        } else {
+            bt_devs_use((uint32_t)s_idx);
+        }
+        g_bt_device_menu_on = 0;
+        break;
+
+    case 2: /* FORGET DEVICE */
+        if (s_idx >= 0) {
+            bt_devs_forget((uint32_t)s_idx);
+        }
+        g_bt_device_menu_on = 0;
+        break;
+
+    case 3: /* CANCEL */
+    default:
+        g_bt_device_menu_on = 0;
+        break;
+    }
+}
+
+static void bt_connect_to_device(uint32_t sel_idx)
+{
+    if (btp.an == 0 || sel_idx >= btp.an) return;
+    g_bt_scan_sel = sel_idx;
+    g_bt_device_menu_on = 1;
+    g_bt_device_menu_sel = 0;
+}
+
+static void draw_bt_device_row(const ble_ui_dev_t *dev_p, int is_sel, uint16_t row_y)
+{
+    cv_rect(6, row_y, 228, 24, is_sel ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, row_y, 228, 1, is_sel ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, row_y + 23, 228, 1, is_sel ? C_ROLAND_AMBER : C_LINE_DIV);
+
+    char name_str[17];
+    memset(name_str, 0, sizeof(name_str));
+    if (dev_p->name[0]) {
+        bt_name(name_str, dev_p->name, sizeof(name_str));
+    } else {
+        static const char H[] = "0123456789ABCDEF";
+        name_str[0] = H[dev_p->addr[0] >> 4]; name_str[1] = H[dev_p->addr[0] & 15]; name_str[2] = ':';
+        name_str[3] = H[dev_p->addr[1] >> 4]; name_str[4] = H[dev_p->addr[1] & 15]; name_str[5] = ':';
+        name_str[6] = H[dev_p->addr[2] >> 4]; name_str[7] = H[dev_p->addr[2] & 15]; name_str[8] = ':';
+        name_str[9] = H[dev_p->addr[3] >> 4]; name_str[10] = H[dev_p->addr[3] & 15]; name_str[11] = '\0';
+    }
+    cv_text(14, row_y + 5, &FONT_S, name_str, is_sel ? C_ROLAND_AMBER : C_TEXT_WHITE);
+
+    if (dev_p->midi) {
+        if (bt_saved(dev_p->addr)) {
+            cv_text(142, row_y + 5, &FONT_S, "[SAVED]", C_ROLAND_AMBER);
+        } else {
+            cv_text(148, row_y + 5, &FONT_S, "[MIDI]", C_STRIPE_CYAN);
+        }
+    } else {
+        cv_text(148, row_y + 5, &FONT_S, "[BLE]", C_TEXT_DIM);
+    }
+
+    char rssi_str[8];
+    memset(rssi_str, 0, sizeof(rssi_str));
+    int8_t rs = dev_p->rssi;
+    if (rs < 0) {
+        rssi_str[0] = '-';
+        uint8_t pos = (uint8_t)(-rs);
+        if (pos > 99) pos = 99;
+        rssi_str[1] = (char)('0' + pos / 10);
+        rssi_str[2] = (char)('0' + pos % 10);
+        rssi_str[3] = '\0';
+    }
+    cv_text(198, row_y + 5, &FONT_S, rssi_str, C_TEXT_DIM);
+}
+
+static void draw_menu_bt_scan(void)
+{
+    g_where = 0xA0;
+    static char status_buf[32];
+
+    g_where = 0xA1;
+    if (!g_bt_device_menu_on) {
+        bt_add_list();
+    }
+    g_where = 0xA2;
+
+    uint32_t n = btp.an;
+    if (n > 0 && g_bt_scan_sel >= n) g_bt_scan_sel = n - 1;
+
+    if (g_bt_device_menu_on && n > 0 && g_bt_scan_sel < n) {
+        const ble_ui_dev_t *d = &btp.adev[g_bt_scan_sel];
+        int s_idx = bt_dev_find(d->addr);
+
+        /* Band 1: y=0..79 (Header + Selected Device Details) */
+        cv_begin(240, 80, C_BG);
+        cv_text_plate(0, 0, 240, "DEVICE OPTIONS", C_ROLAND_AMBER, C_BLACK, 1);
+        cv_rect(0, 16, 240, 1, C_LINE_DIV);
+
+        /* Recessed Device Box */
+        cv_rect(6, 20, 228, 54, C_BLACK);
+        cv_rect(6, 20, 228, 1, C_LINE_DIV);
+        cv_rect(6, 73, 228, 1, C_LINE_DIV);
+
+        char name_str[17];
+        memset(name_str, 0, sizeof(name_str));
+        if (d->name[0]) {
+            bt_name(name_str, d->name, sizeof(name_str));
+        } else {
+            static const char H[] = "0123456789ABCDEF";
+            name_str[0] = H[d->addr[0] >> 4]; name_str[1] = H[d->addr[0] & 15]; name_str[2] = ':';
+            name_str[3] = H[d->addr[1] >> 4]; name_str[4] = H[d->addr[1] & 15]; name_str[5] = ':';
+            name_str[6] = H[d->addr[2] >> 4]; name_str[7] = H[d->addr[2] & 15]; name_str[8] = ':';
+            name_str[9] = H[d->addr[3] >> 4]; name_str[10] = H[d->addr[3] & 15]; name_str[11] = '\0';
+        }
+        cv_text(16, 26, &FONT_S, name_str, C_ROLAND_AMBER);
+
+        if (d->midi) {
+            cv_text(16, 46, &FONT_S, "TYPE: BLE MIDI CONTROLLER", C_STRIPE_CYAN);
+        } else {
+            cv_text(16, 46, &FONT_S, "TYPE: BLE PERIPHERAL", C_TEXT_DIM);
+        }
+
+        if (s_idx >= 0) {
+            cv_text(164, 26, &FONT_S, "[SAVED]", C_STRIPE_CYAN);
+        } else {
+            cv_text(164, 26, &FONT_S, "[NEW]", C_TEXT_DIM);
+        }
+        cv_blit(0, 0);
+
+        /* Band 2: y=80..159 (Actions 0, 1, 2) */
+        cv_begin(240, 80, C_BG);
+        const char *opt_labels[3];
+        opt_labels[0] = "CONNECT NOW";
+        if (s_idx < 0) {
+            opt_labels[1] = "AUTO CONNECT: OFF";
+        } else if (s_idx == 0) {
+            opt_labels[1] = "AUTO CONNECT: ON (#1)";
+        } else {
+            opt_labels[1] = "AUTO CONNECT: ON (MAKE #1)";
+        }
+        opt_labels[2] = (s_idx >= 0) ? "FORGET DEVICE" : "FORGET (NOT SAVED)";
+
+        for (uint32_t opt = 0; opt < 3; opt++) {
+            uint16_t ry = 2 + opt * 26;
+            int is_sel = (g_bt_device_menu_sel == opt);
+            cv_rect(6, ry, 228, 24, is_sel ? C_LINE_DIV : C_BLACK);
+            cv_rect(6, ry, 228, 1, is_sel ? C_ROLAND_AMBER : C_LINE_DIV);
+            cv_rect(6, ry + 23, 228, 1, is_sel ? C_ROLAND_AMBER : C_LINE_DIV);
+            cv_text(16, ry + 6, &FONT_S, opt_labels[opt], is_sel ? C_ROLAND_AMBER : C_TEXT_WHITE);
+        }
+        cv_blit(0, 80);
+
+        /* Band 3: y=160..239 (Action 3 + Footer) */
+        cv_begin(240, 80, C_BG);
+        int is_sel3 = (g_bt_device_menu_sel == 3);
+        cv_rect(6, 2, 228, 24, is_sel3 ? C_LINE_DIV : C_BLACK);
+        cv_rect(6, 2, 228, 1, is_sel3 ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_rect(6, 25, 228, 1, is_sel3 ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_text(16, 8, &FONT_S, "CANCEL", is_sel3 ? C_ROLAND_AMBER : C_TEXT_WHITE);
+
+        cv_rect(6, 34, 228, 38, C_BLACK);
+        cv_rect(6, 34, 228, 1, C_LINE_DIV);
+        cv_rect(6, 71, 228, 1, C_LINE_DIV);
+        cv_text(14, 38, &FONT_S, "[OCT+/SEL] Confirm   [OCT-] Back", C_ROLAND_AMBER);
+        cv_text(14, 54, &FONT_S, "[SELECT] Move Cursor", C_TEXT_DIM);
+        cv_blit(0, 160);
+        return;
+    }
+
+    if (n == 0) {
+        if (fm1_ms - btp.add_t0 < BT_ADD_MS) {
+            str_cpy(status_buf, "SCANNING...", sizeof(status_buf));
+        } else {
+            str_cpy(status_buf, "DONE (NONE)", sizeof(status_buf));
+        }
+    } else {
+        status_buf[0] = 'F'; status_buf[1] = 'O'; status_buf[2] = 'U'; status_buf[3] = 'N'; status_buf[4] = 'D';
+        status_buf[5] = ':'; status_buf[6] = ' ';
+        uint32_t k = 7;
+        if (n > 9) { status_buf[k++] = (char)('0' + (n / 10)); }
+        status_buf[k++] = (char)('0' + (n % 10));
+        status_buf[k++] = ' '; status_buf[k++] = 'D'; status_buf[k++] = 'E'; status_buf[k++] = 'V'; status_buf[k++] = '\0';
+    }
+
+    uint32_t top = 0;
+    if (n > 5 && g_bt_scan_sel >= 5) {
+        top = g_bt_scan_sel - 4;
+    }
+
+    /* Band 1: y=0..79 (Header + Status + Slot 0) */
+    g_where = 0xA3;
+    cv_begin(240, 80, C_BG);
+    cv_text_plate(0, 0, 240, "BLE MIDI SCAN", C_ROLAND_AMBER, C_BLACK, 1);
+    cv_rect(0, 16, 240, 1, C_LINE_DIV);
+
+    /* Recessed Status Bar */
+    cv_rect(6, 20, 228, 18, C_BLACK);
+    cv_rect(6, 20, 228, 1, C_LINE_DIV);
+    cv_rect(6, 37, 228, 1, C_LINE_DIV);
+    cv_text(12, 22, &FONT_S, "STATUS:", C_TEXT_DIM);
+    cv_text(74, 22, &FONT_S, status_buf, C_STRIPE_CYAN);
+
+    if (n == 0) {
+        if (fm1_ms - btp.add_t0 < BT_ADD_MS) {
+            cv_text(16, 48, &FONT_S, "SEARCHING FOR BLE DEVICES...", C_TEXT_DIM);
+            cv_text(16, 64, &FONT_S, "SET KEYBOARD TO PAIRING", C_TEXT_DIM);
+        } else {
+            cv_text(16, 48, &FONT_S, "NO DEVICES FOUND", C_ROLAND_AMBER);
+            cv_text(16, 64, &FONT_S, "[OCT+] TO SCAN AGAIN", C_TEXT_DIM);
+        }
+    } else {
+        if (top < n) {
+            draw_bt_device_row(&btp.adev[top], (top == g_bt_scan_sel), 46);
+        }
+    }
+    g_where = 0xA4;
+    cv_blit(0, 0);
+    g_where = 0xA5;
+
+    /* Band 2: y=80..159 (Slots 1, 2, 3) */
+    cv_begin(240, 80, C_BG);
+    if (n == 0) {
+        if (fm1_ms - btp.add_t0 < BT_ADD_MS) {
+            cv_text(16, 16, &FONT_S, "KEEP DEVICE CLOSE", C_TEXT_DIM);
+            cv_text(16, 36, &FONT_S, "[OCT-] CANCEL", C_TEXT_DIM);
+        } else {
+            cv_text(16, 16, &FONT_S, "[OCT-] RETURN TO MENU", C_TEXT_DIM);
+        }
+    } else {
+        for (uint32_t s = 1; s <= 3; s++) {
+            uint32_t idx = top + s;
+            if (idx < n) {
+                draw_bt_device_row(&btp.adev[idx], (idx == g_bt_scan_sel), 2 + (s - 1u) * 26);
+            }
+        }
+    }
+    cv_blit(0, 80);
+
+    /* Band 3: y=160..239 (Slot 4 + Footer) */
+    cv_begin(240, 80, C_BG);
+    if (n > 0 && (top + 4 < n)) {
+        draw_bt_device_row(&btp.adev[top + 4], (top + 4 == g_bt_scan_sel), 2);
+    }
+
+    cv_rect(6, 34, 228, 38, C_BLACK);
+    cv_rect(6, 34, 228, 1, C_LINE_DIV);
+    cv_rect(6, 71, 228, 1, C_LINE_DIV);
+    if (n > 0) {
+        cv_text(14, 38, &FONT_S, "[OCT+/SEL] DEVICE OPTIONS", C_ROLAND_AMBER);
+        cv_text(14, 54, &FONT_S, "[SELECT] Scroll   [OCT-] Back", C_TEXT_DIM);
+    } else {
+        cv_text(14, 38, &FONT_S, "[OCT+] SCAN AGAIN", C_ROLAND_AMBER);
+        cv_text(14, 54, &FONT_S, "[OCT-] RETURN TO MENU", C_TEXT_DIM);
+    }
+    g_where = 0xA6;
+    cv_blit(0, 160);
+    g_where = 0xA7;
+}
+#endif
 
 static void draw_menu_about(void)
 {
-    /* Canvas 1 (y=76..171, height 96): Header + System Info */
-    cv_begin(240, 96, C_BG);
-    cv_text_plate(0, 0, 240, "ABOUT FM-106", C_ROLAND_AMBER, C_BLACK, 1);
-    cv_text_plate(20, 24, 200, "FIRMWARE:  Beta 5", C_TEXT_WHITE, C_BLACK, 0);
-    cv_text_plate(20, 46, 200, "SYNTH:     6-Voice Polyphonic", C_TEXT_DIM, C_BLACK, 0);
-    cv_text_plate(20, 68, 200, "DSP ARCH:  Dual-Core 240MHz", C_TEXT_DIM, C_BLACK, 0);
-    cv_blit(0, 76);
+    /* Band 1: y=0..79 */
+    cv_begin(240, 80, C_BG);
+    cv_text_plate(0, 0, 240, "ABOUT", C_ROLAND_AMBER, C_BLACK, 1);
+    cv_rect(0, 16, 240, 1, C_LINE_DIV);
 
-    /* Canvas 2 (y=172..239, height 68): Audio + Back prompt */
-    cv_begin(240, 68, C_BG);
-    cv_text_plate(20, 4, 200, "AUDIO:     44.1kHz 16-bit USB", C_TEXT_DIM, C_BLACK, 0);
-    cv_text_plate(20, 24, 200, "BUILD:     2026-10", C_TEXT_DIM, C_BLACK, 0);
-    cv_rect(6, 44, 228, 1, C_LINE_DIV);
-    cv_text_plate(0, 48, 240, "[SEL] / [HOME] Back", C_TEXT_DIM, C_BLACK, 1);
-    cv_blit(0, 172);
+    cv_rect(6, 22, 228, 52, C_BLACK);
+    cv_rect(6, 22, 228, 1, C_LINE_DIV);
+    cv_rect(6, 73, 228, 1, C_LINE_DIV);
+    cv_text(48, 28, &FONT_S, "FM-106 SYNTHESIZER", C_STRIPE_CYAN);
+    cv_rect(24, 46, 192, 1, C_LINE_DIV);
+    cv_text(60, 54, &FONT_S, "Firmware: ", C_TEXT_DIM);
+    cv_text(136, 54, &FONT_S, "Beta7", C_ROLAND_AMBER);
+    cv_blit(0, 0);
+
+    /* Band 2: y=80..159 */
+    cv_begin(240, 80, C_BG);
+    cv_rect(6, 4, 228, 70, C_BLACK);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 73, 228, 1, C_LINE_DIV);
+    cv_text(16, 10, &FONT_S, "ENGINE : 6-Voice Poly DCO", C_TEXT_WHITE);
+    cv_text(16, 25, &FONT_S, "FILTER : 4-Pole 24dB IR3109", C_TEXT_WHITE);
+    cv_text(16, 40, &FONT_S, "AUDIO  : 44.1kHz / USB UAC", C_TEXT_WHITE);
+    cv_text(16, 55, &FONT_S, "BLE    : Apple BLE-MIDI", C_TEXT_WHITE);
+    cv_blit(0, 80);
+
+    /* Band 3: y=160..239 */
+    cv_begin(240, 80, C_BG);
+    cv_rect(6, 4, 228, 46, C_BLACK);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 49, 228, 1, C_LINE_DIV);
+    cv_text(96, 9, &FONT_S, "GITHUB", C_ROLAND_AMBER);
+    cv_text(24, 28, &FONT_S, "github.com/PatttF/fm-106", C_TEXT_WHITE);
+
+    cv_text(76, 58, &FONT_S, "[HOME] Back to Menu", C_TEXT_DIM);
+    cv_blit(0, 160);
 }
 
 static void draw_menu_midi(void)
@@ -1631,129 +2360,56 @@ static void draw_menu_midi(void)
     uint32_t j = 0; while (yes[j] && j < 7) { yn1[j] = yes[j]; j++; } yn1[j] = '\0';
     j = 0; while (no[j] && j < 7) { yn2[j] = no[j]; j++; } yn2[j] = '\0';
 
-    /* rows 0-2 in the 96px band, rows 3-5 in the 68px band below */
-    const char *labels[6] = {"MIDI IN", "MIDI OUT", "SYNC", "LOCAL", "PC IN", "CC MAP"};
-    const char *vals[6]   = {in_str, out_str, sync_str,
+    const char *labels[5] = {"MIDI IN", "MIDI OUT", "SYNC", "LOCAL", "PC IN"};
+    const char *vals[5]   = {in_str, out_str, sync_str,
                              g_synth.midi_local ? yes : no,
-                             g_synth.pc_in ? yes : no,
-                             (g_midi_sel == 5) ? "[SEL] OPEN" : "EDIT >"};
-    cv_begin(240, 96, C_BG);
+                             g_synth.pc_in ? yes : no};
+
+    /* Band 1: y=0..79 (Header + Row 0) */
+    cv_begin(240, 80, C_BG);
     cv_text_plate(0, 0, 240, "MIDI SETUP", C_ROLAND_AMBER, C_BLACK, 1);
-    for (uint32_t i = 0; i < 3u; i++) {
+    cv_rect(0, 16, 240, 1, C_LINE_DIV);
+
+    cv_text(12, 22, &FONT_S, "COMMUNICATIONS", C_STRIPE_CYAN);
+    cv_text(160, 22, &FONT_S, "[HOME] BACK", C_TEXT_DIM);
+    cv_rect(6, 36, 228, 1, C_LINE_DIV);
+
+    uint16_t c0 = (g_midi_sel == 0u) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 44, 228, 26, (g_midi_sel == 0u) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 44, 228, 1, (g_midi_sel == 0u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 69, 228, 1, (g_midi_sel == 0u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_text(14, 50, &FONT_S, labels[0], C_TEXT_DIM);
+    cv_text_plate(140, 48, 80, vals[0], c0, C_BLACK, 1);
+    cv_blit(0, 0);
+
+    /* Band 2: y=80..159 (Rows 1, 2, 3) */
+    cv_begin(240, 80, C_BG);
+    for (uint32_t i = 1u; i < 4u; i++) {
         uint16_t c = (g_midi_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
-        cv_text_plate(20, 24 + i*24, 90, labels[i], C_TEXT_DIM, C_BLACK, 0);
-        cv_text_plate(140, 24 + i*24, 80, vals[i], c, C_BLACK, 1);
+        uint16_t ry = 2 + (i - 1u) * 26;
+        cv_rect(6, ry, 228, 24, (g_midi_sel == i) ? C_LINE_DIV : C_BLACK);
+        cv_rect(6, ry, 228, 1, (g_midi_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_rect(6, ry + 23, 228, 1, (g_midi_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_text(14, ry + 6, &FONT_S, labels[i], C_TEXT_DIM);
+        cv_text_plate(140, ry + 4, 80, vals[i], c, C_BLACK, 1);
     }
-    cv_blit(0, 76);
-    cv_begin(240, 68, C_BG);
-    for (uint32_t i = 3u; i < 6u; i++) {
-        uint16_t c = (g_midi_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
-        cv_text_plate(20, 4 + (i-3u)*20, 90, labels[i], C_TEXT_DIM, C_BLACK, 0);
-        cv_text_plate(140, 4 + (i-3u)*20, 80, vals[i], c, C_BLACK, 1);
-    }
-    cv_blit(0, 172);
-}
+    cv_blit(0, 80);
 
-/* 5. MIDI CC Mapping Sub-Menu */
-static void draw_menu_cc_map(void)
-{
-    char title[24];
-    uint32_t cur = (uint32_t)g_cc_map_sel + 1u;
-    uint32_t tot = (uint32_t)CC_MAP_COUNT;
-    uint32_t ti = 0;
-    const char *pfx = "CC MAP (";
-    while (pfx[ti]) { title[ti] = pfx[ti]; ti++; }
-    if (cur >= 10) title[ti++] = (char)('0' + cur / 10);
-    title[ti++] = (char)('0' + cur % 10);
-    title[ti++] = '/';
-    if (tot >= 10) title[ti++] = (char)('0' + tot / 10);
-    title[ti++] = (char)('0' + tot % 10);
-    title[ti++] = ')';
-    title[ti] = '\0';
+    /* Band 3: y=160..239 (Row 4 + Guide Footer) */
+    cv_begin(240, 80, C_BG);
+    uint16_t c4 = (g_midi_sel == 4u) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 4, 228, 26, (g_midi_sel == 4u) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 4, 228, 1, (g_midi_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 29, 228, 1, (g_midi_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_text(14, 10, &FONT_S, labels[4], C_TEXT_DIM);
+    cv_text_plate(140, 8, 80, vals[4], c4, C_BLACK, 1);
 
-    /* Canvas 1 (y=76..171, height 96): Header + 4 visible rows */
-    cv_begin(240, 96, C_BG);
-    cv_text_plate(0, 0, 240, title, C_ROLAND_AMBER, C_BLACK, 1);
-
-    for (uint32_t v = 0; v < 4u; v++) {
-        uint32_t idx = g_cc_map_scroll + v;
-        if (idx >= CC_MAP_COUNT) break;
-        const fm106_cc_entry_t *e = &g_cc_map_entries[idx];
-        char val_buf[12];
-        if (e->type == 0) {
-            uint8_t c = g_param_cc[e->idx];
-            if (c == 0xFFu) {
-                val_buf[0] = 'O'; val_buf[1] = 'F'; val_buf[2] = 'F'; val_buf[3] = '\0';
-            } else {
-                val_buf[0] = 'C'; val_buf[1] = 'C'; val_buf[2] = ' ';
-                uint32_t vi = 3;
-                if (c >= 100) { val_buf[vi++] = (char)('0' + c / 100); val_buf[vi++] = (char)('0' + (c / 10) % 10); }
-                else if (c >= 10) { val_buf[vi++] = (char)('0' + c / 10); }
-                val_buf[vi++] = (char)('0' + c % 10);
-                val_buf[vi] = '\0';
-            }
-        } else if (e->type == 1) {
-            uint8_t c = g_seq_cc[e->idx];
-            if (c == 0xFFu) {
-                val_buf[0] = 'O'; val_buf[1] = 'F'; val_buf[2] = 'F'; val_buf[3] = '\0';
-            } else {
-                val_buf[0] = 'C'; val_buf[1] = 'C'; val_buf[2] = ' ';
-                uint32_t vi = 3;
-                if (c >= 100) { val_buf[vi++] = (char)('0' + c / 100); val_buf[vi++] = (char)('0' + (c / 10) % 10); }
-                else if (c >= 10) { val_buf[vi++] = (char)('0' + c / 10); }
-                val_buf[vi++] = (char)('0' + c % 10);
-                val_buf[vi] = '\0';
-            }
-        } else if (e->type == 2) {
-            val_buf[0] = 'D'; val_buf[1] = 'E'; val_buf[2] = 'F'; val_buf[3] = 'A'; val_buf[4] = 'U'; val_buf[5] = 'L'; val_buf[6] = 'T'; val_buf[7] = '\0';
-        } else {
-            val_buf[0] = 'E'; val_buf[1] = 'X'; val_buf[2] = 'I'; val_buf[3] = 'T'; val_buf[4] = '\0';
-        }
-        menu_row_draw(10, 22u + v * 18u, idx == g_cc_map_sel, e->name, val_buf);
-    }
-    cv_blit(0, 76);
-
-    /* Canvas 2 (y=172..239, height 68): 2 visible rows + Guide */
-    cv_begin(240, 68, C_BG);
-    for (uint32_t v = 4u; v < 6u; v++) {
-        uint32_t idx = g_cc_map_scroll + v;
-        if (idx >= CC_MAP_COUNT) break;
-        const fm106_cc_entry_t *e = &g_cc_map_entries[idx];
-        char val_buf[12];
-        if (e->type == 0) {
-            uint8_t c = g_param_cc[e->idx];
-            if (c == 0xFFu) {
-                val_buf[0] = 'O'; val_buf[1] = 'F'; val_buf[2] = 'F'; val_buf[3] = '\0';
-            } else {
-                val_buf[0] = 'C'; val_buf[1] = 'C'; val_buf[2] = ' ';
-                uint32_t vi = 3;
-                if (c >= 100) { val_buf[vi++] = (char)('0' + c / 100); val_buf[vi++] = (char)('0' + (c / 10) % 10); }
-                else if (c >= 10) { val_buf[vi++] = (char)('0' + c / 10); }
-                val_buf[vi++] = (char)('0' + c % 10);
-                val_buf[vi] = '\0';
-            }
-        } else if (e->type == 1) {
-            uint8_t c = g_seq_cc[e->idx];
-            if (c == 0xFFu) {
-                val_buf[0] = 'O'; val_buf[1] = 'F'; val_buf[2] = 'F'; val_buf[3] = '\0';
-            } else {
-                val_buf[0] = 'C'; val_buf[1] = 'C'; val_buf[2] = ' ';
-                uint32_t vi = 3;
-                if (c >= 100) { val_buf[vi++] = (char)('0' + c / 100); val_buf[vi++] = (char)('0' + (c / 10) % 10); }
-                else if (c >= 10) { val_buf[vi++] = (char)('0' + c / 10); }
-                val_buf[vi++] = (char)('0' + c % 10);
-                val_buf[vi] = '\0';
-            }
-        } else if (e->type == 2) {
-            val_buf[0] = 'D'; val_buf[1] = 'E'; val_buf[2] = 'F'; val_buf[3] = 'A'; val_buf[4] = 'U'; val_buf[5] = 'L'; val_buf[6] = 'T'; val_buf[7] = '\0';
-        } else {
-            val_buf[0] = 'E'; val_buf[1] = 'X'; val_buf[2] = 'I'; val_buf[3] = 'T'; val_buf[4] = '\0';
-        }
-        menu_row_draw(10, 4u + (v - 4u) * 18u, idx == g_cc_map_sel, e->name, val_buf);
-    }
-    cv_rect(6, 44, 228, 1, C_LINE_DIV);
-    cv_text_plate(0, 48, 240, "[SEL] Exit   [ALGO] Value", C_TEXT_DIM, C_BLACK, 1);
-    cv_blit(0, 172);
+    cv_rect(6, 36, 228, 36, C_BLACK);
+    cv_rect(6, 36, 228, 1, C_LINE_DIV);
+    cv_rect(6, 71, 228, 1, C_LINE_DIV);
+    cv_text(14, 40, &FONT_S, "[SELECT] Select   [ALGO] Edit", C_TEXT_DIM);
+    cv_text(14, 54, &FONT_S, "[HOME] Back to Menu", C_ROLAND_AMBER);
+    cv_blit(0, 160);
 }
 
 /* Save / load settings */
@@ -1765,10 +2421,6 @@ typedef struct {
     uint8_t midi_local;     /* 1 = panel keys play engine, 0 = send-only */
     uint8_t pc_in;          /* 1 = accept program change */
     uint8_t sync_mode;      /* 0 = off, 1 = master, 2 = slave */
-    uint8_t cc_custom;      /* 0 = use defaults, 1 = user customized */
-    uint8_t voice_mode;     /* 0 = Mono, 1 = Poly I, 2 = Poly II */
-    uint8_t param_cc[FM106_NPARAM];
-    uint8_t seq_cc[6];
 } fm106_settings_t;
 
 static void fm106_format_slot_code(uint8_t patch_idx, char *out)
@@ -1890,31 +2542,41 @@ static void fm106_do_short_save(fm106_settings_t *set)
         }
         target_name[ti] = '\0';
         fm106_save_engine_to_preset(&g_user_presets[first_blank], &g_synth, target_name);
-        if (fm106_user_presets_save_flash() != 0) {
+        int rc = fm106_user_presets_save_flash();
+        if (rc != 0) {
             fm106_set_banner("SAVE FAILED!", "FLASH ERR");
-            return;
+        } else {
+            g_synth.patch_idx = (uint8_t)(128u + (uint32_t)first_blank);
+            str_cpy(g_synth.patch_name, target_name, sizeof(g_synth.patch_name));
+            set->patch = g_synth.patch_idx;
+            set->octave = (int8_t)g_synth.octave_shift;
+            settings_save(set, sizeof(*set));
+            if (g_seq_flash_dirty) {
+                fm106_seq_save_flash(&g_synth.seq);
+                g_seq_flash_dirty = 0;
+            }
+            fm106_format_slot_code(g_synth.patch_idx, code_buf);
+            fm106_set_banner("SAVED TO ", code_buf);
         }
-        g_synth.patch_idx = (uint8_t)(128u + (uint32_t)first_blank);
-        str_cpy(g_synth.patch_name, target_name, sizeof(g_synth.patch_name));
-        set->patch = g_synth.patch_idx;
-        set->octave = (int8_t)g_synth.octave_shift;
-        settings_save(set, sizeof(*set));
-        fm106_format_slot_code(g_synth.patch_idx, code_buf);
-        fm106_set_banner("SAVED TO ", code_buf);
     } else {
         uint32_t uidx = g_synth.patch_idx - 128u;
         const char *name_to_use = g_synth.patch_name[0] ? g_synth.patch_name : "User Patch";
         fm106_save_engine_to_preset(&g_user_presets[uidx], &g_synth, name_to_use);
-        if (fm106_user_presets_save_flash() != 0) {
+        int rc = fm106_user_presets_save_flash();
+        if (rc != 0) {
             fm106_set_banner("SAVE FAILED!", "FLASH ERR");
-            return;
+        } else {
+            str_cpy(g_synth.patch_name, name_to_use, sizeof(g_synth.patch_name));
+            set->patch = g_synth.patch_idx;
+            set->octave = (int8_t)g_synth.octave_shift;
+            settings_save(set, sizeof(*set));
+            if (g_seq_flash_dirty) {
+                fm106_seq_save_flash(&g_synth.seq);
+                g_seq_flash_dirty = 0;
+            }
+            fm106_format_slot_code(g_synth.patch_idx, code_buf);
+            fm106_set_banner("SAVED TO ", code_buf);
         }
-        str_cpy(g_synth.patch_name, name_to_use, sizeof(g_synth.patch_name));
-        set->patch = g_synth.patch_idx;
-        set->octave = (int8_t)g_synth.octave_shift;
-        settings_save(set, sizeof(*set));
-        fm106_format_slot_code(g_synth.patch_idx, code_buf);
-        fm106_set_banner("SAVED TO ", code_buf);
     }
 }
 
@@ -2051,10 +2713,11 @@ static int synth_quiet(void)
         if (g_synth.voice[v].gate || g_synth.voice[v].adsr.stage != FM106_ENV_IDLE)
             return 0;
     }
+    if (g_synth.reverb.tail_active) return 0;
     return 1;
 }
 
-static fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0, 0, FM106_MODE_POLY1, {0}, {0}};
+static fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0};
 
 /* Initialize application and synth state */
 static void fm106_app_init(void)
@@ -2062,42 +2725,24 @@ static void fm106_app_init(void)
     fm106_engine_init(&g_synth);
     fm106_user_presets_init();
 
-    if (settings_load(&set, sizeof(set)) != 0) {
-        set.octave = 0;
-        set.patch = 0;
-        set.midi_channel = 0;
-        set.midi_out_ch = 1;
-        set.midi_local = 1;
-        set.pc_in = 1;
-        set.sync_mode = 0;
-        set.cc_custom = 0;
-        set.voice_mode = FM106_MODE_POLY1;
-    }
+    settings_load(&set, sizeof(set));
     if (set.octave < -2 || set.octave > 2) set.octave = 0;
     if (set.midi_channel > 16) set.midi_channel = 0;    /* 0 = All (omni) */
     if (set.midi_out_ch < 1 || set.midi_out_ch > 16) set.midi_out_ch = 1;
     if (set.midi_local > 1) set.midi_local = 1;
     if (set.pc_in > 1) set.pc_in = 1;
     if (set.sync_mode > 2) set.sync_mode = 0;
-    if (set.voice_mode > 2) set.voice_mode = FM106_MODE_POLY1;
     g_synth.octave_shift = set.octave;
     g_synth.midi_channel = set.midi_channel;
     g_synth.midi_out_ch = set.midi_out_ch;
     g_synth.midi_local = set.midi_local;
     g_synth.pc_in = set.pc_in;
     g_synth.sync_mode = set.sync_mode;
-    if (set.cc_custom == 1u) {
-        memcpy(g_param_cc, set.param_cc, sizeof(g_param_cc));
-        memcpy(g_seq_cc, set.seq_cc, sizeof(g_seq_cc));
-    } else {
-        memcpy(g_param_cc, g_param_cc_default, sizeof(g_param_cc));
-        memcpy(g_seq_cc, g_seq_cc_default, sizeof(g_seq_cc));
-    }
     seq_sync_apply();
     fm106_load_user_preset(&g_synth, set.patch);
-    if (set.voice_mode <= 2u) {
-        fm106_set_voice_mode(&g_synth, set.voice_mode);
-    }
+    fm106_seq_load_flash(&g_synth.seq);
+    if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = 0;
+    fm106_param_snapshot(&g_synth);
 
     lcd_fill(0, 0, 240, 240, C_BG);
 
@@ -2107,11 +2752,15 @@ static void fm106_app_init(void)
             if (FM1_KEYMAP[row][col] >= 0 && FM1_KEYMAP[row][col] < 14)
                 fm1_led_bg[col] |= (uint8_t)(1u << row);
     fm1_led_bg_ns = 10000u;  /* dim pulse: ~1/6 of a fully lit LED */
+#if FELUCCA_BLE
+    bt_init();
+#endif
 }
 
 /* One frame / poll iteration of the application */
 static void fm106_app_frame(void)
 {
+    g_where = 0x02;
     static uint32_t prev_notes = 0;
     static uint32_t dirty_screen = 1;
     static uint32_t prev_voice_active = 0;
@@ -2125,8 +2774,16 @@ static void fm106_app_frame(void)
         uint32_t base = (uint32_t)(KEY0 + 12 * g_synth.octave_shift);
         uint8_t st, d1, d2;
 
+        g_where = 0x03;
         platform_poll();
-        plock_scan();
+        g_where = 0x04;
+#if FELUCCA_BLE
+        g_where = 0x05;
+        bt_service();
+        g_where = 0x06;
+        bt_autostart_tick();
+        g_where = 0x07;
+#endif
 
         /* drain seq MIDI-out events queued by the audio worker (SPSC) */
         {
@@ -2156,6 +2813,7 @@ static void fm106_app_frame(void)
             g_clk_next = 0;
         }
 
+        g_where = 0x20;
         /* 1. Panel Keys (27 note keyboard) */
         keys = fm1_in.notes;
         down = keys & ~prev_notes;
@@ -2167,9 +2825,9 @@ static void fm106_app_frame(void)
                 held[k] = (uint8_t)(base + k);
                 if (g_synth.midi_local) fm106_key_on(&g_synth, held[k], 100);
                 midi_send(0x90u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), held[k], 100);
-                if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
-                    seq_note_entry(held[k], 100); /* rec arm -> live record; else acid entry */
-                    dirty_screen = 1;
+                if (g_ui_mode == UI_MODE_NORMAL) {
+                    seq_note_entry(held[k], 100); /* rec+play -> live record anywhere; else chord/acid entry on PAGE_SEQ */
+                    if (g_current_page == PAGE_SEQ) dirty_screen = 1;
                 }
             }
             if (up >> k & 1u) {
@@ -2179,40 +2837,84 @@ static void fm106_app_frame(void)
             }
         }
 
+        g_where = 0x21;
         /* 2. Panel Buttons */
         b = fm1_input_edges(&rel);
 
-        /* Octave shift */
-        if ((b & (1u << BTN_OCT_DOWN)) && g_synth.octave_shift > -2) {
-            g_synth.octave_shift--;
-            set.octave = g_synth.octave_shift;
-            dirty_screen = 1;
+        /* Octave shift / Bluetooth Scan */
+        if (g_ui_mode == UI_MODE_NORMAL) {
+            if ((b & (1u << BTN_OCT_DOWN)) && g_synth.octave_shift > -2) {
+                g_synth.octave_shift--;
+                set.octave = g_synth.octave_shift;
+                dirty_screen = 1;
+            }
+            if ((b & (1u << BTN_OCT_UP)) && g_synth.octave_shift < 2) {
+                g_synth.octave_shift++;
+                set.octave = g_synth.octave_shift;
+                dirty_screen = 1;
+            }
         }
-        if ((b & (1u << BTN_OCT_UP)) && g_synth.octave_shift < 2) {
-            g_synth.octave_shift++;
-            set.octave = g_synth.octave_shift;
-            dirty_screen = 1;
+#if FELUCCA_BLE
+        else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+            if (b & (1u << BTN_OCT_UP)) {
+                bt_set_t bs;
+                bt_set_get(&bs);
+                if (bs.role == BT_ROLE_HOST) {
+                    bt_page_on();
+                    bt_host_scan_start();
+                    g_ui_mode = UI_MODE_BT_SCAN;
+                    g_bt_scan_sel = 0;
+                    g_bt_device_menu_on = 0;
+                    g_bt_device_menu_sel = 0;
+                    dirty_screen = 1;
+                }
+            }
         }
+        else if (g_ui_mode == UI_MODE_BT_SCAN) {
+            if (b & (1u << BTN_OCT_UP)) {
+                if (g_bt_device_menu_on) {
+                    bt_device_menu_action();
+                } else if (btp.an == 0) {
+                    bt_host_scan_start();
+                } else {
+                    g_bt_device_menu_on = 1;
+                    g_bt_device_menu_sel = 0;
+                }
+                dirty_screen = 1;
+            } else if (b & (1u << BTN_OCT_DOWN)) {
+                if (g_bt_device_menu_on) {
+                    g_bt_device_menu_on = 0;
+                } else {
+                    bt_add_close();
+                    g_ui_mode = UI_MODE_BLUETOOTH;
+                }
+                dirty_screen = 1;
+            }
+        }
+#endif
 
         /* OPT/GLO button: toggle menu */
         if (b & (1u << BTN_GLO)) {
             if (g_ui_mode == UI_MODE_NORMAL) {
                 g_ui_mode = UI_MODE_MENU;
                 g_menu_sel = 0;
-            } else if (g_ui_mode == UI_MODE_CC_MAP) {
-                g_ui_mode = (g_menu_sel == 1) ? UI_MODE_MENU : UI_MODE_MIDI;
-            } else if (g_ui_mode == UI_MODE_ABOUT) {
-                g_ui_mode = UI_MODE_MENU;
             } else {
+#if FELUCCA_BLE
+                if (g_ui_mode == UI_MODE_BLUETOOTH || g_ui_mode == UI_MODE_BT_SCAN) {
+                    bt_page_close();
+                }
+#endif
                 g_ui_mode = UI_MODE_NORMAL;
             }
             dirty_screen = 1;
         }
 
         if (g_ui_mode == UI_MODE_NORMAL) {
-            /* FX button: toggle chorus <-> tape page (jumps to chorus from anywhere) */
+            /* FX button: cycle Chorus -> Tape -> Shimmer Reverb (jumps to Chorus from outside FX) */
             if (b & (1u << BTN_FX)) {
-                g_current_page = (g_current_page == PAGE_FX) ? PAGE_TAPE : PAGE_FX;
+                if (g_current_page == PAGE_FX)          g_current_page = PAGE_TAPE;
+                else if (g_current_page == PAGE_TAPE)   g_current_page = PAGE_REVERB;
+                else                                    g_current_page = PAGE_FX;
                 dirty_screen = 1;
             }
         }
@@ -2232,10 +2934,28 @@ static void fm106_app_frame(void)
                     dirty_screen = 1;
                 }
             } else if (g_ui_mode != UI_MODE_NORMAL) {
-                if (g_ui_mode == UI_MODE_CC_MAP) g_ui_mode = (g_menu_sel == 1) ? UI_MODE_MENU : UI_MODE_MIDI;
-                else if (g_ui_mode == UI_MODE_MIDI) g_ui_mode = UI_MODE_MENU;
-                else if (g_ui_mode == UI_MODE_ABOUT) g_ui_mode = UI_MODE_MENU;
-                else g_ui_mode = UI_MODE_NORMAL;
+                if (g_ui_mode == UI_MODE_MIDI
+#if FELUCCA_BLE
+                    || g_ui_mode == UI_MODE_BLUETOOTH
+                    || g_ui_mode == UI_MODE_BT_SCAN
+#endif
+                    || g_ui_mode == UI_MODE_ABOUT) {
+#if FELUCCA_BLE
+                    if (g_ui_mode == UI_MODE_BT_SCAN) {
+                        if (g_bt_device_menu_on) {
+                            g_bt_device_menu_on = 0;
+                        } else {
+                            bt_add_close();
+                            g_ui_mode = UI_MODE_BLUETOOTH;
+                        }
+                    } else {
+                        if (g_ui_mode == UI_MODE_BLUETOOTH) bt_page_close();
+                        g_ui_mode = UI_MODE_MENU;
+                    }
+#else
+                    g_ui_mode = UI_MODE_MENU;
+#endif
+                } else g_ui_mode = UI_MODE_NORMAL;
                 dirty_screen = 1;
             } else {
                 g_current_page = PAGE_VCF;
@@ -2313,20 +3033,7 @@ static void fm106_app_frame(void)
                 && (fm1_in.buttons & (1u << BTN_SEL))) {
                 if (fm1_ms - t_sel_down >= 500u) {
                     sel_held_active = 1u;
-                    fm1_irq_off();
-                    for (uint32_t i = 0; i < FM106_NSTEP; i++) {
-                        g_synth.seq.step[i].n = 0;
-                        g_synth.seq.step[i].time = FM106_ST_NOTE;
-                        g_synth.seq.step[i].flags = 0;
-                        g_synth.seq.step[i].acc = 0;
-                        g_synth.seq.step[i].vel = 0;
-                        g_synth.seq.step[i].probability = 0;
-                        g_synth.seq.step[i].ratchet = 0;
-                    }
-                    fm106_plock_clear(&g_synth.seq); /* wipes go with the pattern */
-                    fm1_irq_on();
-                    g_seq_dirty = 1;
-                    fm106_set_banner("SEQ ", "CLEARED");
+                    seq_ui_clear_all();
                     dirty_screen = 1;
                 }
             }
@@ -2354,8 +3061,9 @@ static void fm106_app_frame(void)
                         char code_buf[8];
                         fm106_format_slot_code(128u + (uint32_t)g_save_slot, code_buf);
                         memset(&g_user_presets[uidx], 0, sizeof(fm106_preset_t));
-                        if (fm106_user_presets_save_flash() != 0) {
-                            fm106_set_banner("DEL FAILED!", "FLASH ERR");
+                        int rc = fm106_user_presets_save_flash();
+                        if (rc != 0) {
+                            fm106_set_banner("DELETE ERR", "FLASH ERR");
                         } else {
                             if (g_synth.patch_idx == (uint8_t)(128u + (uint32_t)g_save_slot)) {
                                 fm106_load_user_preset(&g_synth, g_synth.patch_idx);
@@ -2372,37 +3080,60 @@ static void fm106_app_frame(void)
                 if (g_menu_sel == 0) {
                     g_ui_mode = UI_MODE_MIDI;
                     g_midi_sel = 0;
+#if FELUCCA_BLE
                 } else if (g_menu_sel == 1) {
-                    g_ui_mode = UI_MODE_CC_MAP;
-                    g_cc_map_sel = 0;
-                    g_cc_map_scroll = 0;
+                    g_ui_mode = UI_MODE_BLUETOOTH;
+                    g_ble_sel = 0;
+                    bt_page_open();
                 } else if (g_menu_sel == 2) {
                     g_ui_mode = UI_MODE_ABOUT;
                 }
+#else
+                } else if (g_menu_sel == 1) {
+                    g_ui_mode = UI_MODE_ABOUT;
+                }
+#endif
                 dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_ABOUT) {
+#if FELUCCA_BLE
+            } else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+                bt_set_t bs;
+                bt_set_get(&bs);
+                if (g_ble_sel == 0) {
+                    if (btp.on) bt_page_off();
+                    else bt_page_on();
+                } else if (g_ble_sel == 1) {
+                    bs.autostart ^= 1u;
+                    bt_set_put(&bs);
+                } else if (g_ble_sel == 2) {
+                    bs.role ^= 1u;
+                    bt_set_put(&bs);
+                    ble_ui_role(bs.role);
+                    bt_devs_page(!bs.role);
+                } else if (g_ble_sel == 3) {
+                    bs.rate = (bs.rate + 1u) % 3u;
+                    bt_set_put(&bs);
+                } else if (g_ble_sel == 4 && bs.role == BT_ROLE_HOST) {
+                    bt_page_on();
+                    bt_host_scan_start();
+                    g_ui_mode = UI_MODE_BT_SCAN;
+                    g_bt_scan_sel = 0;
+                    g_bt_device_menu_on = 0;
+                    g_bt_device_menu_sel = 0;
+                }
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_BT_SCAN) {
+                if (g_bt_device_menu_on) {
+                    bt_device_menu_action();
+                } else if (btp.an == 0) {
+                    bt_host_scan_start();
+                } else {
+                    g_bt_device_menu_on = 1;
+                    g_bt_device_menu_sel = 0;
+                }
+                dirty_screen = 1;
+#endif
+            } else if (g_ui_mode == UI_MODE_MIDI || g_ui_mode == UI_MODE_ABOUT) {
                 g_ui_mode = UI_MODE_MENU;
-                dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_MIDI) {
-                if (g_midi_sel == 5) {
-                    g_ui_mode = UI_MODE_CC_MAP;
-                    g_cc_map_sel = 0;
-                    g_cc_map_scroll = 0;
-                } else {
-                    g_ui_mode = UI_MODE_MENU;
-                }
-                dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_CC_MAP) {
-                if (g_cc_map_sel == CC_MAP_IDX_RESET) {
-                    memcpy(g_param_cc, g_param_cc_default, sizeof(g_param_cc));
-                    memcpy(g_seq_cc, g_seq_cc_default, sizeof(g_seq_cc));
-                    set.cc_custom = 0;
-                    fm106_set_banner("CC MAP ", "RESET");
-                    dirty_save = 1;
-                    t_change = fm1_ms;
-                } else {
-                    g_ui_mode = (g_menu_sel == 1) ? UI_MODE_MENU : UI_MODE_MIDI;
-                }
                 dirty_screen = 1;
             } else {
                 g_synth.vca_mode ^= 1u;
@@ -2427,8 +3158,9 @@ static void fm106_app_frame(void)
             } else if (!g_synth.seq.playing && g_seq_rec_arm) {
                 count_in_start();     /* REC armed: click in four beats first */
             } else {
-                seq_transport_cmd(3);
+                seq_transport_cmd(3u, 1);
             }
+            dirty_screen = 1;
         }
         if (b & (1u << BTN_SAVE)) {
             if (g_ui_mode == UI_MODE_SAVE) {
@@ -2445,24 +3177,26 @@ static void fm106_app_frame(void)
                     str_cpy(clean_name, "Untitled", sizeof(clean_name));
                 }
                 fm106_save_engine_to_preset(&g_user_presets[g_save_slot], &g_synth, clean_name);
-                if (fm106_user_presets_save_flash() != 0) {
+                int rc = fm106_user_presets_save_flash();
+                if (rc != 0) {
                     fm106_set_banner("SAVE FAILED!", "FLASH ERR");
-                    g_ui_mode = UI_MODE_NORMAL;
-                    save_held_active = 1;
-                    dirty_screen = 1;
                 } else {
                     g_synth.patch_idx = (uint8_t)(128u + g_save_slot);
                     str_cpy(g_synth.patch_name, clean_name, sizeof(g_synth.patch_name));
                     set.patch = g_synth.patch_idx;
                     set.octave = (int8_t)g_synth.octave_shift;
                     settings_save(&set, sizeof(set));
+                    if (g_seq_flash_dirty) {
+                        fm106_seq_save_flash(&g_synth.seq);
+                        g_seq_flash_dirty = 0;
+                    }
                     char code_buf[8];
                     fm106_format_slot_code(g_synth.patch_idx, code_buf);
                     fm106_set_banner("SAVED TO ", code_buf);
-                    g_ui_mode = UI_MODE_NORMAL;
-                    save_held_active = 1; /* suppress short save on release */
-                    dirty_screen = 1;
                 }
+                g_ui_mode = UI_MODE_NORMAL;
+                save_held_active = 1; /* suppress short save on release */
+                dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_NORMAL) {
                 t_save_down = fm1_ms;
                 save_held_active = 0;
@@ -2487,6 +3221,7 @@ static void fm106_app_frame(void)
             }
         }
 
+        g_where = 0x22;
         /* 3. Panel Encoders */
         /* Preset navigation encoder: steps within active bank, skipping empty user presets */
         int32_t enc_p = fm1_enc_take(ENC_PRESETS);
@@ -2510,7 +3245,7 @@ static void fm106_app_frame(void)
                     fm106_load_user_preset(&g_synth, (uint32_t)np);
                     set.patch = (uint8_t)np;
                     dirty_screen = 1;
-                    midi_send(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
+                    panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u));
                 }
             }
         }
@@ -2549,17 +3284,33 @@ static void fm106_app_frame(void)
                 if (nm >= (int32_t)MENU_MIDI_COUNT) nm = 0;
                 g_midi_sel = (uint8_t)nm;
                 dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_CC_MAP) {
-                int32_t ns = (int32_t)g_cc_map_sel + enc_s;
-                if (ns < 0) ns = CC_MAP_COUNT - 1;
-                if (ns >= (int32_t)CC_MAP_COUNT) ns = 0;
-                g_cc_map_sel = (uint8_t)ns;
-                if (g_cc_map_sel < g_cc_map_scroll) {
-                    g_cc_map_scroll = g_cc_map_sel;
-                } else if (g_cc_map_sel >= g_cc_map_scroll + CC_MAP_VISIBLE) {
-                    g_cc_map_scroll = g_cc_map_sel - (CC_MAP_VISIBLE - 1);
-                }
+#if FELUCCA_BLE
+            } else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+                int32_t nm = (int32_t)g_ble_sel + enc_s;
+                if (nm < 0) nm = MENU_BLE_COUNT - 1;
+                if (nm >= (int32_t)MENU_BLE_COUNT) nm = 0;
+                g_ble_sel = (uint8_t)nm;
                 dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_BT_SCAN) {
+                if (g_bt_device_menu_on) {
+                    int32_t sel = (int32_t)g_bt_device_menu_sel + enc_s;
+                    if (sel < 0) sel = BT_DEV_MENU_COUNT - 1;
+                    if (sel >= (int32_t)BT_DEV_MENU_COUNT) sel = 0;
+                    g_bt_device_menu_sel = (uint8_t)sel;
+                    dirty_screen = 1;
+                } else {
+                    uint32_t n = btp.an;
+                    if (n > 0) {
+                        int32_t sel = (int32_t)g_bt_scan_sel + enc_s;
+                        if (sel < 0) sel = (int32_t)n - 1;
+                        if (sel >= (int32_t)n) sel = 0;
+                        g_bt_scan_sel = (uint32_t)sel;
+                        dirty_screen = 1;
+                    }
+                }
+#endif
+            } else if (g_ui_mode == UI_MODE_ABOUT) {
+                /* static about screen */
             } else {
                 int32_t npage = (int32_t)g_current_page + enc_s;
                 if (npage < 0) npage = PAGE_COUNT - 1;
@@ -2573,7 +3324,7 @@ static void fm106_app_frame(void)
         int32_t ealgo = fm1_enc_take(ENC_ALGORITHM);
         if (ealgo != 0) {
             if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_seq_menu_on) {
-                seq_ui_menu_adjust(ealgo > 0 ? 1 : -1);          /* glo-menu nav: ALGORITHM edits value */
+                seq_ui_menu_adjust(ealgo);                       /* glo-menu nav: ALGORITHM edits value with encoder velocity */
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && g_note_menu_on) {
                 seq_ui_note_adjust(ealgo > 0 ? 1 : -1);
@@ -2594,8 +3345,8 @@ static void fm106_app_frame(void)
                 fm106_load_user_preset(&g_synth, np);
                 set.patch = (uint8_t)np;
                 dirty_screen = 1;
-                midi_send(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 0, (uint8_t)nb);
-                midi_send(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u), 0);
+                panel_send_cc(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 0u, (uint8_t)nb);
+                panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u));
             } else if (g_ui_mode == UI_MODE_MIDI) {
                 if (g_midi_sel == 0) {          /* MIDI IN: 0 = All, 1..16 */
                     int32_t nc = (int32_t)g_synth.midi_channel + ealgo;
@@ -2621,37 +3372,52 @@ static void fm106_app_frame(void)
                             if (g_synth.voice[v].note != 255u) fm106_note_off(&g_synth, g_synth.voice[v].note);
                         fm1_irq_on();
                     }
-                } else if (g_midi_sel == 4) {   /* PC IN: accept program change */
+                } else {                        /* PC IN: accept program change */
                     g_synth.pc_in ^= (uint8_t)(ealgo > 0 ? 1u : 0u);
-                } else if (g_midi_sel == 5) {   /* CC MAP sub-menu */
-                    g_ui_mode = UI_MODE_CC_MAP;
-                    g_cc_map_sel = 0;
-                    g_cc_map_scroll = 0;
                 }
                 dirty_screen = 1;
                 dirty_save = 1;
                 t_change = fm1_ms;
-            } else if (g_ui_mode == UI_MODE_CC_MAP) {
-                if (g_cc_map_sel < CC_MAP_COUNT) {
-                    const fm106_cc_entry_t *e = &g_cc_map_entries[g_cc_map_sel];
-                    if (e->type == 0 || e->type == 1) {
-                        uint8_t cur_c = (e->type == 0) ? g_param_cc[e->idx] : g_seq_cc[e->idx];
-                        int32_t st = (cur_c == 0xFFu) ? 128 : (int32_t)cur_c;
-                        st += ealgo;
-                        while (st < 0) st += 129;
-                        while (st > 128) st -= 129;
-                        uint8_t new_c = (st == 128) ? 0xFFu : (uint8_t)st;
-                        if (e->type == 0) {
-                            g_param_cc[e->idx] = new_c;
-                        } else {
-                            g_seq_cc[e->idx] = new_c;
-                        }
-                        set.cc_custom = 1u;
+#if FELUCCA_BLE
+            } else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+                bt_set_t bs;
+                bt_set_get(&bs);
+                if (g_ble_sel == 0) {          /* BLUETOOTH ON/OFF */
+                    if (ealgo > 0) bt_page_on();
+                    else bt_page_off();
+                } else if (g_ble_sel == 1) {   /* AUTOSTART ON/OFF */
+                    bs.autostart ^= 1u;
+                    bt_set_put(&bs);
+                } else if (g_ble_sel == 2) {   /* ROLE DEVICE/HOST */
+                    bs.role ^= 1u;
+                    bt_set_put(&bs);
+                    ble_ui_role(bs.role);
+                } else if (g_ble_sel == 3) {   /* RECONNECT AUTO/FAST/SLOW */
+                    int32_t nr = (int32_t)bs.rate + (ealgo > 0 ? 1 : -1);
+                    if (nr < 0) nr = 2;
+                    if (nr > 2) nr = 0;
+                    bs.rate = (uint8_t)nr;
+                    bt_set_put(&bs);
+                }
+                dirty_screen = 1;
+            } else if (g_ui_mode == UI_MODE_BT_SCAN) {
+                if (g_bt_device_menu_on) {
+                    int32_t sel = (int32_t)g_bt_device_menu_sel + (ealgo > 0 ? 1 : -1);
+                    if (sel < 0) sel = BT_DEV_MENU_COUNT - 1;
+                    if (sel >= (int32_t)BT_DEV_MENU_COUNT) sel = 0;
+                    g_bt_device_menu_sel = (uint8_t)sel;
+                    dirty_screen = 1;
+                } else {
+                    uint32_t n = btp.an;
+                    if (n > 0) {
+                        int32_t sel = (int32_t)g_bt_scan_sel + (ealgo > 0 ? 1 : -1);
+                        if (sel < 0) sel = (int32_t)n - 1;
+                        if (sel >= (int32_t)n) sel = 0;
+                        g_bt_scan_sel = (uint32_t)sel;
                         dirty_screen = 1;
-                        dirty_save = 1;
-                        t_change = fm1_ms;
                     }
                 }
+#endif
             }
         }
 
@@ -2683,9 +3449,12 @@ static void fm106_app_frame(void)
                     if (m > 2) m = 0;
                     g_synth.dco_range = (uint8_t)m;
                     for (uint32_t v = 0; v < FM106_NUM_VOICES; v++)
-                        if (g_synth.voice[v].note != 255u)
+                        if (g_synth.voice[v].note != 255u) {
                             g_synth.voice[v].base_inc =
                                 fm106_calc_inc(g_synth.voice[v].note, 0, g_synth.dco_range);
+                            if (!g_synth.voice[v].gliding)
+                                g_synth.voice[v].curr_inc = g_synth.voice[v].base_inc;
+                        }
                 }
                 if (k2) {
                     g_synth.dco_pulse_on = k2 > 0 ? 1u : 0u;
@@ -2710,12 +3479,12 @@ static void fm106_app_frame(void)
                 break;
             case PAGE_DCO2:
                 if (k1) {
+                    /* the level fader changes the level only: SUBSW (PAGE_DCO k4) is the
+                     * master on/off — deriving sub_on from the level here would switch the
+                     * sub back on against the toggle (the gate already silences level 0) */
                     g_synth.dco_sub_level = (uint8_t)fm106_clamp(g_synth.dco_sub_level + k1 * 3, 0, 127);
-                    g_synth.dco_sub_on = g_synth.dco_sub_level > 0 ? 1u : 0u;
-                    for (uint32_t v = 0; v < FM106_NUM_VOICES; v++) {
+                    for (uint32_t v = 0; v < FM106_NUM_VOICES; v++)
                         g_synth.voice[v].dco.sub_level = g_synth.dco_sub_level;
-                        g_synth.voice[v].dco.sub_on = g_synth.dco_sub_on;
-                    }
                 }
                 if (k2) {
                     g_synth.dco_noise_level = (uint8_t)fm106_clamp(g_synth.dco_noise_level + k2 * 3, 0, 127);
@@ -2737,16 +3506,6 @@ static void fm106_app_frame(void)
                 if (k1) g_synth.lfo_rate = (uint8_t)fm106_clamp(g_synth.lfo_rate + k1 * 3, 0, 127);
                 if (k2) g_synth.lfo_delay = (uint8_t)fm106_clamp(g_synth.lfo_delay + k2 * 3, 0, 127);
                 if (k3) g_synth.dco_pwm_mode = k3 > 0 ? 1u : 0u;
-                if (k4) {
-                    int32_t vm = (int32_t)g_synth.voice_mode + (k4 > 0 ? 1 : -1);
-                    if (vm < 0) vm = 2;
-                    if (vm > 2) vm = 0;
-                    fm106_set_voice_mode(&g_synth, (uint8_t)vm);
-                    set.voice_mode = g_synth.voice_mode;
-                    dirty_save = 1;
-                    t_change = fm1_ms;
-                    fm106_set_banner("ASSIGN ", N_POLY[g_synth.voice_mode]);
-                }
                 break;
             case PAGE_ARP:
                 if (k1) fm106_arp_enable(&g_synth, k1 > 0);
@@ -2788,6 +3547,17 @@ static void fm106_app_frame(void)
                 if (k4) fx->character = (uint8_t)fm106_clamp(fx->character + k4 * 3, 0, 127);
                 break;
             }
+            case PAGE_REVERB: {
+                fm106_reverb_t *rv = &g_synth.reverb;
+                if (k1) {
+                    rv->on = (k1 > 0) ? 1u : 0u;
+                    if (rv->on && rv->mix == 0u) rv->mix = 48u;
+                }
+                if (k2) rv->mix     = (uint8_t)fm106_clamp((int32_t)rv->mix + k2 * 3, 0, 127);
+                if (k3) rv->decay   = (uint8_t)fm106_clamp((int32_t)rv->decay + k3 * 3, 0, 127);
+                if (k4) rv->shimmer = (uint8_t)fm106_clamp((int32_t)rv->shimmer + k4 * 3, 0, 127);
+                break;
+            }
             case PAGE_SEQ: {
                 if (!g_seq_menu_on && !g_note_menu_on) {   /* menus use SELECT/ALGORITHM (glo scheme) */
                     if (k1) seq_ui_move_cursor(k1 > 0 ? 1 : -1);
@@ -2802,34 +3572,18 @@ static void fm106_app_frame(void)
             }
         }
 
+        /* Scan panel knob/menu parameter changes -> send MIDI CC out (with self-echo guard) + p-locks */
+        plock_scan(1);
+
+        g_where = 0x23;
         /* 4. USB-MIDI In */
         while (midi_get(&st, &d1, &d2)) {
             /* System Realtime (clock/transport) — arrives interleaved on the
              * status byte, so handle before the channel-type nibble. */
             if (st >= 0xF8u) {
-                if (st == 0xF8u) {
-                    fm106_midi_clock_pulse(&g_synth.seq, fm106_now_ms());
-                } else if (st == 0xFAu || st == 0xFBu || st == 0xFCu) {
+                if (st == 0xF8u)      fm106_midi_clock_pulse(&g_synth.seq, fm106_now_ms());
+                else if (st == 0xFAu || st == 0xFBu || st == 0xFCu)
                     fm106_midi_clock_transport(&g_synth.seq, st);
-                    if (st == 0xFCu) {
-                        /* Realtime Stop: cleanly kill sounding sequencer notes */
-                        fm1_irq_off();
-#if DINGHY_DUAL_CORE
-                        if (audio_worker_online) audio_worker_join();
-#endif
-                        for (uint8_t i = 0; i < g_synth.seq.seq_n; i++)
-                            fm106_note_off(&g_synth, g_synth.seq.seq_notes[i]);
-                        g_synth.seq.seq_n = 0;
-                        g_synth.seq.seq_hold = 0;
-                        g_synth.seq.seq_off = 0;
-                        g_synth.seq.playing = 0;
-                        g_synth.seq.msg_tail = g_synth.seq.msg_head;
-                        fm1_irq_on();
-                        dirty_screen = 1;
-                    } else if (st == 0xFAu || st == 0xFBu) {
-                        dirty_screen = 1;
-                    }
-                }
                 continue;
             }
             /* channel filter: IN = All (0) hears everything, 1..16 only their
@@ -2847,14 +3601,15 @@ static void fm106_app_frame(void)
             } else if (type == 0xE0u) {  /* Pitch Bend */
                 int32_t raw = ((int32_t)d2 << 7) | (int32_t)d1;
                 g_synth.pitch_bend_val = (int16_t)(raw - 8192);
-            } else if (type == 0xC0u) {  /* Program Change (gated by PC IN) */
-                if (!g_synth.pc_in) continue;
+            } else if (type == 0xC0u) {  /* Program Change (gated by PC IN + self-echo guard) */
+                if (!g_synth.pc_in || pc_is_self_echo()) continue;
                 int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
                 uint32_t target_patch = (uint32_t)(cur_bank * 64 + (d1 % 64u));
                 fm106_load_user_preset(&g_synth, target_patch);
                 set.patch = (uint8_t)target_patch;
                 dirty_screen = 1;
             } else if (type == 0xB0u) {  /* Control Change */
+                if (d1 != 119u && d1 != 64u && cc_is_self_echo(d1)) continue;
                 if (d1 == 0 || d1 == 32) { /* Bank Select MSB/LSB */
                     uint32_t nb = d2 & 3u;
                     int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
@@ -2862,51 +3617,48 @@ static void fm106_app_frame(void)
                     fm106_load_user_preset(&g_synth, target_patch);
                     set.patch = (uint8_t)target_patch;
                     dirty_screen = 1;
-                } else if (g_param_cc[10] != 0xFFu && d1 == g_param_cc[10]) {  /* Brightness / Cutoff */
+                } else if (d1 == 74) {          /* Brightness / Cutoff */
                     g_synth.vcf_cutoff = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[11] != 0xFFu && d1 == g_param_cc[11]) {  /* Resonance */
+                } else if (d1 == 71) {   /* Resonance */
                     g_synth.vcf_resonance = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[12] != 0xFFu && d1 == g_param_cc[12]) {  /* VCF Env Mod */
+                } else if (d1 == 76) {   /* VCF Env Mod */
                     g_synth.vcf_env_mod = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[13] != 0xFFu && d1 == g_param_cc[13]) {  /* VCF LFO Mod */
+                } else if (d1 == 77) {   /* VCF LFO Mod */
                     g_synth.vcf_lfo_mod = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[14] != 0xFFu && d1 == g_param_cc[14]) {  /* VCF Key Track */
+                } else if (d1 == 78) {   /* VCF Key Track */
                     g_synth.vcf_kbd_track = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[16] != 0xFFu && d1 == g_param_cc[16]) {  /* Attack */
+                } else if (d1 == 73) {   /* Attack */
                     g_synth.env_a = d2;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
                         fm106_adsr_params(&g_synth.voice[vi].adsr, g_synth.env_a, g_synth.env_d, g_synth.env_s, g_synth.env_r);
                     dirty_screen = 1;
-                } else if (g_param_cc[17] != 0xFFu && d1 == g_param_cc[17]) {  /* Decay */
+                } else if (d1 == 75) {   /* Decay */
                     g_synth.env_d = d2;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
                         fm106_adsr_params(&g_synth.voice[vi].adsr, g_synth.env_a, g_synth.env_d, g_synth.env_s, g_synth.env_r);
                     dirty_screen = 1;
-                } else if (g_param_cc[18] != 0xFFu && d1 == g_param_cc[18]) {  /* Sustain */
+                } else if (d1 == 70) {   /* Sustain */
                     g_synth.env_s = d2;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
                         fm106_adsr_params(&g_synth.voice[vi].adsr, g_synth.env_a, g_synth.env_d, g_synth.env_s, g_synth.env_r);
                     dirty_screen = 1;
-                } else if (g_param_cc[19] != 0xFFu && d1 == g_param_cc[19]) {  /* Release */
+                } else if (d1 == 72) {   /* Release */
                     g_synth.env_r = d2;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
                         fm106_adsr_params(&g_synth.voice[vi].adsr, g_synth.env_a, g_synth.env_d, g_synth.env_s, g_synth.env_r);
                     dirty_screen = 1;
-                } else if (g_param_cc[5] != 0xFFu && d1 == g_param_cc[5]) {    /* DCO LFO */
+                } else if (d1 == 1) {    /* Mod Wheel -> DCO LFO depth */
                     g_synth.dco_lfo_depth = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[6] != 0xFFu && d1 == g_param_cc[6]) {    /* DCO PWM Depth */
+                } else if (d1 == 79) {   /* DCO PWM Depth */
                     g_synth.dco_pwm_depth = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[33] != 0xFFu && d1 == g_param_cc[33]) {  /* PWM Mode */
-                    g_synth.dco_pwm_mode = (d2 >= 64u);
-                    dirty_screen = 1;
-                } else if (g_param_cc[7] != 0xFFu && d1 == g_param_cc[7]) {    /* Sub Level */
+                } else if (d1 == 9) {    /* Sub Level */
                     g_synth.dco_sub_level = d2;
                     g_synth.dco_sub_on = d2 > 0 ? 1u : 0u;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++) {
@@ -2914,119 +3666,84 @@ static void fm106_app_frame(void)
                         g_synth.voice[vi].dco.sub_on = g_synth.dco_sub_on;
                     }
                     dirty_screen = 1;
-                } else if (g_param_cc[25] != 0xFFu && d1 == g_param_cc[25]) {  /* Sub On */
-                    g_synth.dco_sub_on = (d2 >= 64u);
-                    for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
-                        g_synth.voice[vi].dco.sub_on = g_synth.dco_sub_on;
-                    dirty_screen = 1;
-                } else if (g_param_cc[8] != 0xFFu && d1 == g_param_cc[8]) {    /* Noise Level */
+                } else if (d1 == 13) {   /* Noise Level */
                     g_synth.dco_noise_level = d2;
                     for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
                         g_synth.voice[vi].dco.noise_level = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[23] != 0xFFu && d1 == g_param_cc[23]) {  /* Pulse On */
-                    g_synth.dco_pulse_on = (d2 >= 64u);
-                    for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
-                        g_synth.voice[vi].dco.pulse_on = g_synth.dco_pulse_on;
-                    dirty_screen = 1;
-                } else if (g_param_cc[24] != 0xFFu && d1 == g_param_cc[24]) {  /* Saw On */
-                    g_synth.dco_saw_on = (d2 >= 64u);
-                    for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
-                        g_synth.voice[vi].dco.saw_on = g_synth.dco_saw_on;
-                    dirty_screen = 1;
-                } else if (g_param_cc[29] != 0xFFu && d1 == g_param_cc[29]) {  /* DCO Range */
-                    g_synth.dco_range = d2 / 42u > 2u ? 2u : d2 / 42u;
-                    for (uint32_t vi = 0; vi < FM106_NUM_VOICES; vi++)
-                        if (g_synth.voice[vi].note != 255u)
-                            g_synth.voice[vi].base_inc = fm106_calc_inc(g_synth.voice[vi].note, 0, g_synth.dco_range);
-                    dirty_screen = 1;
-                } else if ((g_param_cc[15] != 0xFFu && d1 == g_param_cc[15]) || (g_param_cc[15] != 7 && d1 == 7)) { /* VCA Level / Volume */
-                    g_synth.vca_level = d2;
-                    dirty_screen = 1;
-                } else if (g_param_cc[35] != 0xFFu && d1 == g_param_cc[35]) {  /* VCA Mode */
-                    g_synth.vca_mode = (d2 >= 64u);
-                    dirty_screen = 1;
-                } else if (g_param_cc[34] != 0xFFu && d1 == g_param_cc[34]) {  /* Env Polarity */
-                    g_synth.vcf_env_polarity = (d2 >= 64u);
-                    dirty_screen = 1;
-                } else if (g_param_cc[3] != 0xFFu && d1 == g_param_cc[3]) {    /* LFO Rate */
+                } else if (d1 == 80) {   /* LFO Rate */
                     g_synth.lfo_rate = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[4] != 0xFFu && d1 == g_param_cc[4]) {    /* LFO Delay */
+                } else if (d1 == 81) {   /* LFO Delay */
                     g_synth.lfo_delay = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[9] != 0xFFu && d1 == g_param_cc[9]) {    /* HPF Mode */
-                    g_synth.hpf.mode = (d2 / 32u) > 3 ? 3 : (d2 / 32u);
-                    dirty_screen = 1;
-                } else if (g_param_cc[27] != 0xFFu && d1 == g_param_cc[27]) {  /* Chorus Mode */
-                    g_synth.chorus.mode = d2 < 32u ? 0u : d2 < 64u ? 1u : d2 < 96u ? 2u : 3u;
-                    dirty_screen = 1;
-                } else if (g_param_cc[0] != 0xFFu && d1 == g_param_cc[0]) {    /* Bender DCO */
-                    g_synth.bender_dco = d2;
-                    dirty_screen = 1;
-                } else if (g_param_cc[1] != 0xFFu && d1 == g_param_cc[1]) {    /* Bender VCF */
-                    g_synth.bender_vcf = d2;
-                    dirty_screen = 1;
-                } else if (g_param_cc[2] != 0xFFu && d1 == g_param_cc[2]) {    /* Arp Rate */
+                } else if (d1 == 82) {   /* Arp Rate */
                     g_synth.arp_rate = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[30] != 0xFFu && d1 == g_param_cc[30]) {  /* Arp Mode */
-                    g_synth.arp_mode = (d2 / 42u > 2u) ? 2u : (d2 / 42u);
+                } else if (d1 == 11 || d1 == 7) { /* VCA Level / Volume */
+                    g_synth.vca_level = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[31] != 0xFFu && d1 == g_param_cc[31]) {  /* Arp Range */
-                    g_synth.arp_range = (d2 >= 85u) ? 3u : (d2 >= 42u ? 2u : 1u);
+                } else if (d1 == 12) {   /* HPF Mode */
+                    g_synth.hpf.mode = (d2 / 32u) > 3 ? 3 : (d2 / 32u);
                     dirty_screen = 1;
-                } else if (g_param_cc[36] != 0xFFu && d1 == g_param_cc[36]) {  /* Tape Type */
-                    fm106_cc_fx(&g_synth.fx[0], 0, d2);
+                } else if (d1 >= 20u && d1 <= 23u) {         /* Shimmer Reverb: on/mix/decay/shimmer */
+                    if (d1 == 20u)      g_synth.reverb.on      = (d2 >= 64u) ? 1u : 0u;
+                    else if (d1 == 21u) g_synth.reverb.mix     = d2;
+                    else if (d1 == 22u) g_synth.reverb.decay   = d2;
+                    else                g_synth.reverb.shimmer = d2;
                     dirty_screen = 1;
-                } else if (g_param_cc[37] != 0xFFu && d1 == g_param_cc[37]) {  /* Tape Mix */
-                    fm106_cc_fx(&g_synth.fx[0], 1, d2);
+                } else if (d1 >= 83 && d1 <= 86) {         /* Tape: type/mix/rate/char */
+                    fm106_cc_fx(&g_synth.fx[0], d1 - 83, d2);
                     dirty_screen = 1;
-                } else if (g_param_cc[38] != 0xFFu && d1 == g_param_cc[38]) {  /* Tape Rate */
-                    fm106_cc_fx(&g_synth.fx[0], 2, d2);
+                } else if (d1 == 93) {   /* Chorus mode: off / I / II / I+II zones */
+                    g_synth.chorus.mode = d2 < 32u ? 0u : d2 < 64u ? 1u : d2 < 96u ? 2u : 3u;
                     dirty_screen = 1;
-                } else if (g_param_cc[39] != 0xFFu && d1 == g_param_cc[39]) {  /* Tape Char */
-                    fm106_cc_fx(&g_synth.fx[0], 3, d2);
-                    dirty_screen = 1;
-                } else if (g_param_cc[40] != 0xFFu && d1 == g_param_cc[40]) {  /* Voice Assign Mode */
-                    uint8_t vm = (d2 < 43u) ? FM106_MODE_MONO : (d2 < 86u) ? FM106_MODE_POLY1 : FM106_MODE_POLY2;
-                    fm106_set_voice_mode(&g_synth, vm);
-                    set.voice_mode = g_synth.voice_mode;
-                    dirty_save = 1;
-                    t_change = fm1_ms;
-                    fm106_set_banner("ASSIGN ", N_POLY[g_synth.voice_mode]);
-                    dirty_screen = 1;
+                } else if (d1 >= 87u && d1 <= 98u) {    /* one CC per param */
+                    uint8_t idx = g_cc_param[d1 - 87u];
+                    if (idx != 0xFFu) {
+                        fm106_param_set(&g_synth, idx, cc_to_param_value(idx, d2));
+                        dirty_screen = 1;
+                    }
                 } else if (d1 == 99u || d1 == 100u || d1 == 101u) {
                     /* step accent / slide / ratchet on the edit step */
                     seq_ui_cc_flag(d1 - 99u, d2);
-                } else if (g_seq_cc[0] != 0xFFu && d1 == g_seq_cc[0]) {        /* Seq BPM */
+                } else if (d1 == 102u) {        /* Tempo: v*2+40 (40..240 BPM) */
                     uint32_t bpm = (uint32_t)d2 * 2u + 40u;
                     g_synth.seq.bpm = (uint8_t)(bpm > 240u ? 240u : bpm);
+                    seq_mark_modified();
                     dirty_screen = 1;
-                } else if (g_seq_cc[1] != 0xFFu && d1 == g_seq_cc[1]) {        /* Seq Div */
+                } else if (d1 == 103u) {        /* Step division (0-9, >9 -> 16ths) */
                     g_synth.seq.sdiv = d2 > 9u ? 3u : d2;
+                    seq_mark_modified();
                     dirty_screen = 1;
-                } else if (g_seq_cc[2] != 0xFFu && d1 == g_seq_cc[2]) {        /* Seq Len */
+                } else if (d1 == 104u) {        /* Pattern length: v+1 steps (1..128) */
                     fm1_irq_off();
                     g_synth.seq.slen = (uint16_t)((uint32_t)d2 + 1u);
                     if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = (uint16_t)(g_synth.seq.slen - 1u);
                     fm1_irq_on();
+                    seq_mark_modified();
                     dirty_screen = 1;
-                } else if (g_seq_cc[3] != 0xFFu && d1 == g_seq_cc[3]) {        /* Seq Gate */
+                } else if (d1 == 105u) {        /* Gate length */
                     g_synth.seq.sgate = d2 ? d2 : 1u;
+                    seq_mark_modified();
                     dirty_screen = 1;
-                } else if (g_seq_cc[4] != 0xFFu && d1 == g_seq_cc[4]) {        /* Seq Swing */
+                } else if (d1 == 106u) {        /* Swing */
                     g_synth.seq.swing = d2 > 100u ? 100u : d2;
+                    seq_mark_modified();
                     dirty_screen = 1;
-                } else if (g_seq_cc[5] != 0xFFu && d1 == g_seq_cc[5]) {        /* Seq Transport */
-                    seq_transport_cmd(d2 == 0u ? 0u : d2 == 1u ? 1u : d2 == 2u ? 2u : 3u);
+                } else if (d1 == 107u) {        /* Transport: 0 stop, 1 start, 2 continue, 3 toggle */
+                    seq_transport_cmd(d2 == 0u ? 0u : d2 == 1u ? 1u : d2 == 2u ? 2u : 3u, 0);
+                    dirty_screen = 1;
                 } else if (d1 == 108u) {        /* Record arm */
                     g_seq_rec_arm = d2 >= 64u;
+                    if (!g_seq_rec_arm) count_in_cancel();
                     dirty_screen = 1;
                 } else if (d1 == 109u && d2 >= 64u) {  /* Clear all p-locks */
                     fm1_irq_off();
                     fm106_plock_clear(&g_synth.seq);
                     fm1_irq_on();
+                    seq_mark_modified();
+                    dirty_screen = 1;
                 } else if (d1 == 110u) {        /* Edit cursor step */
                     g_seq_cursor = (uint16_t)((uint32_t)d2 % (g_synth.seq.slen ? g_synth.seq.slen : 1u));
                     dirty_screen = 1;
@@ -3047,24 +3764,30 @@ static void fm106_app_frame(void)
                     dirty_screen = 1;
                 } else if (d1 == 119) {  /* Debug telemetry inquiry */
                     uint8_t tch = (uint8_t)(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu));
+#if defined(FELUCCA_UAC) && FELUCCA_UAC
                     midi_send(tch, 114, (uint8_t)(uac.alt & 0x7Fu));
                     midi_send(tch, 115, (uint8_t)(uac.starts & 0x7Fu));
                     midi_send(tch, 116, (uint8_t)(uac.stalls & 0x7Fu));
                     midi_send(tch, 117, (uint8_t)(uac.rate_sets & 0x7Fu));
                     midi_send(tch, 118, (uint8_t)(uac.flowing & 0x7Fu));
+#endif
                     midi_send(tch, 119, (uint8_t)g_cpu0_load_pct);
                     midi_send(tch, 120, (uint8_t)g_cpu1_load_pct);
                     midi_send(tch, 121, (uint8_t)(g_cpu0_ticks / 1000u));
                     midi_send(tch, 122, (uint8_t)(g_cpu1_ticks / 1000u));
+#if defined(FELUCCA_UAC) && FELUCCA_UAC
                     midi_send(tch, 123, (uint8_t)(uac.overruns & 0x7Fu));
                     midi_send(tch, 124, (uint8_t)(uac.underruns & 0x7Fu));
+#endif
 #if DINGHY_DUAL_CORE
                     midi_send(tch, 125, (uint8_t)(audio_worker.timeouts & 0x7Fu));
 #else
                     midi_send(tch, 125, 0);
 #endif
+#if defined(FELUCCA_UAC) && FELUCCA_UAC
                     midi_send(tch, 126, (uint8_t)(uac.missed & 0x7Fu));
                     midi_send(tch, 127, (uint8_t)(audio_lates & 0x7Fu));
+#endif
                 } else if (d1 == 64) {   /* Sustain pedal */
                     fm1_irq_off();
 #if DINGHY_DUAL_CORE
@@ -3080,35 +3803,14 @@ static void fm106_app_frame(void)
                         }
                     }
                     fm1_irq_on();
-                } else if (d1 == 120u) { /* All Sound Off */
-                    fm1_irq_off();
-#if DINGHY_DUAL_CORE
-                    if (audio_worker_online) audio_worker_join();
-#endif
-                    fm106_all_sound_off(&g_synth);
-                    fm1_irq_on();
-                    dirty_screen = 1;
-                } else if (d1 == 121u) { /* Reset All Controllers */
-                    fm1_irq_off();
-#if DINGHY_DUAL_CORE
-                    if (audio_worker_online) audio_worker_join();
-#endif
-                    g_synth.hold_pedal = 0;
-                    g_synth.pitch_bend_val = 0;
-                    fm1_irq_on();
-                    dirty_screen = 1;
-                } else if (d1 == 123u) { /* All Notes Off */
-                    fm1_irq_off();
-#if DINGHY_DUAL_CORE
-                    if (audio_worker_online) audio_worker_join();
-#endif
-                    fm106_all_notes_off(&g_synth);
-                    fm1_irq_on();
-                    dirty_screen = 1;
                 }
             }
         }
 
+        /* Sync plock_cache + record incoming MIDI CC automation WITHOUT echoing CCs out */
+        plock_scan(0);
+
+        g_where = 0x24;
         /* 5. Voice LEDs + keyboard lit tracking */
         uint32_t voice_active = 0;
         for (k = 0; k < FM106_NUM_VOICES; k++) {
@@ -3128,7 +3830,8 @@ static void fm106_app_frame(void)
         fm1_led_key(BTN_OCT_DOWN, g_synth.octave_shift < 0);
         fm1_led_key(BTN_OCT_UP, g_synth.octave_shift > 0);
         fm1_led_key(BTN_FX, g_synth.chorus.mode != FM106_CHORUS_OFF ||
-                            g_synth.fx[0].type != FM106_FX_OFF);
+                            g_synth.fx[0].type != FM106_FX_OFF ||
+                            g_synth.reverb.on != 0u);
         fm1_led_key(BTN_ARP, g_synth.arp_on);
         fm1_led_key(BTN_SEQ, g_synth.seq.playing);
         fm1_led_key(BTN_PLAY, g_synth.seq.playing);
@@ -3165,8 +3868,12 @@ static void fm106_app_frame(void)
                 draw_menu_main();
             } else if (g_ui_mode == UI_MODE_MIDI) {
                 draw_menu_midi();
-            } else if (g_ui_mode == UI_MODE_CC_MAP) {
-                draw_menu_cc_map();
+#if FELUCCA_BLE
+            } else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+                draw_menu_bluetooth();
+            } else if (g_ui_mode == UI_MODE_BT_SCAN) {
+                draw_menu_bt_scan();
+#endif
             } else if (g_ui_mode == UI_MODE_ABOUT) {
                 draw_menu_about();
             } else if (g_ui_mode == UI_MODE_SAVE) {
@@ -3191,6 +3898,24 @@ static void fm106_app_frame(void)
             prev_voice_active = voice_active;
             draw_top_section(g_synth.patch_idx, g_synth.patch_name);
         }
+
+        /* Live per-core CPU% refresh while viewing OPT menu */
+        static uint32_t t_last_cpu_ui = 0;
+        if (g_ui_mode == UI_MODE_MENU && (fm1_ms - t_last_cpu_ui >= 150u)) {
+            t_last_cpu_ui = fm1_ms;
+            draw_opt_cpu_footer();
+        }
+
+#if FELUCCA_BLE
+        /* Live Bluetooth status refresh while in BLUETOOTH menu or SCAN menu */
+        static uint32_t t_last_bt_ui = 0;
+        g_where = 0x27;
+        if ((g_ui_mode == UI_MODE_BLUETOOTH || g_ui_mode == UI_MODE_BT_SCAN) && (fm1_ms - t_last_bt_ui >= 150u)) {
+            t_last_bt_ui = fm1_ms;
+            if (g_ui_mode == UI_MODE_BLUETOOTH) draw_menu_bluetooth();
+            else draw_menu_bt_scan();
+        }
+#endif
 
         /* SEQ page: periodic redraw for playhead — roll bands only (fast), and
          * follow the playhead when the pattern is longer than the window. */
@@ -3236,12 +3961,15 @@ static void fm106_app_frame(void)
             set.midi_local   = g_synth.midi_local;
             set.pc_in        = g_synth.pc_in;
             set.sync_mode    = g_synth.sync_mode;
-            set.voice_mode   = g_synth.voice_mode;
-            memcpy(set.param_cc, g_param_cc, sizeof(g_param_cc));
-            memcpy(set.seq_cc, g_seq_cc, sizeof(g_seq_cc));
             settings_save(&set, sizeof(set));
             dirty_save = 0;
         }
+        if (g_seq_flash_dirty && !g_synth.seq.playing && !g_count_in &&
+            synth_quiet() && (fm1_ms - g_t_seq_edit > 1500u)) {
+            fm106_seq_save_flash(&g_synth.seq);
+            g_seq_flash_dirty = 0;
+        }
+        g_where = 0x28;
 }
 
 #ifndef FM106_WEB
@@ -3249,6 +3977,7 @@ static void app_main(void)
 {
     fm106_app_init();
     for (;;) {
+        g_where = 0x29;
         fm106_app_frame();
     }
 }

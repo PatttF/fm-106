@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* FM-1 XIP window: flash offset off (>= 0x4000, the app area start) reads
  * at CPU address 0x02000000 + off - 0x4000 through the SFC/cache. Data

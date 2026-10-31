@@ -3,7 +3,17 @@
 #pragma once
 #include <stdint.h>
 
-static const int16_t FM106_SINE[1024] = {
+#ifdef FM1_IRQ_TARGET
+#define FM106_RAM_FUNC __attribute__((section(".ram_text"), noinline))
+#define FM106_HOT_DATA __attribute__((section(".data.hot"), aligned(4)))
+#define FM106_POOL_DATA __attribute__((section(".pool")))
+#else
+#define FM106_RAM_FUNC
+#define FM106_HOT_DATA
+#define FM106_POOL_DATA
+#endif
+
+static const FM106_HOT_DATA int16_t FM106_SINE[1024] = {
          0,    201,    402,    603,    804,   1005,   1206,   1407,
       1608,   1809,   2009,   2210,   2410,   2611,   2811,   3012,
       3212,   3412,   3612,   3811,   4011,   4210,   4410,   4609,
@@ -170,7 +180,7 @@ static const int16_t FM106_TANH[257] = {
      32605,
 };
 
-static const uint16_t FM106_VCF_G1[4096] = {
+static const uint16_t FM106_VCF_G1[4096] FM106_HOT_DATA = {
        13,    13,    13,    13,    14,    14,    14,    14,
        14,    14,    14,    14,    14,    14,    14,    14,
        14,    14,    14,    14,    14,    14,    14,    14,
@@ -685,7 +695,7 @@ static const uint16_t FM106_VCF_G1[4096] = {
     26423, 26423, 26423, 26423, 26423, 26423, 26423, 26423,
 };
 
-static const uint16_t FM106_RES_K[128] = {
+static const uint16_t FM106_RES_K[128] FM106_HOT_DATA = {
         0,   150,   303,   457,   614,   772,   932,  1093,
      1256,  1420,  1586,  1753,  1921,  2090,  2260,  2431,
      2602,  2775,  2948,  3121,  3295,  3469,  3643,  3818,
@@ -704,7 +714,7 @@ static const uint16_t FM106_RES_K[128] = {
     16599, 16811, 17021, 17229, 17436, 17642, 17847, 18050,
 };
 
-static const uint16_t FM106_FB_SCALE[128] = {
+static const uint16_t FM106_FB_SCALE[128] FM106_HOT_DATA = {
      5161,  5161,  5161,  5161,  5161,  5161,  5161,  5161,
      5161,  5161,  5161,  5161,  5161,  5161,  5161,  5161,
      5161,  5161,  5161,  5161,  5161,  5161,  5161,  5161,
@@ -723,7 +733,7 @@ static const uint16_t FM106_FB_SCALE[128] = {
     17203, 17203, 17203, 17203, 17203, 17203, 17203, 17203,
 };
 
-static const uint16_t FM106_INV_FB_SCALE[128] = {
+static const uint16_t FM106_INV_FB_SCALE[128] FM106_HOT_DATA = {
      3251,  3251,  3251,  3251,  3251,  3251,  3251,  3251,
      3251,  3251,  3251,  3251,  3251,  3251,  3251,  3251,
      3251,  3251,  3251,  3251,  3251,  3251,  3251,  3251,
@@ -742,7 +752,7 @@ static const uint16_t FM106_INV_FB_SCALE[128] = {
       975,   975,   975,   975,   975,   975,   975,   975,
 };
 
-static const uint16_t FM106_PEAK_PULL[128] = {
+static const uint16_t FM106_PEAK_PULL[128] FM106_HOT_DATA = {
      4096,  4127,  4158,  4189,  4221,  4252,  4284,  4316,
      4347,  4379,  4411,  4443,  4474,  4505,  4537,  4568,
      4599,  4630,  4660,  4690,  4720,  4750,  4779,  4809,
@@ -797,7 +807,7 @@ static const int16_t FM106_OTA_SAT[257] = {
      32767,
 };
 
-static const uint16_t FM106_SUB_LEVEL_J106[128] = {
+static const uint16_t FM106_SUB_LEVEL_J106[128] FM106_HOT_DATA = {
        50,    79,   107,   135,   164,   192,   220,   249,
       277,   305,   333,   362,   390,   484,   733,   981,
      1229,  1478,  1726,  1974,  2223,  2471,  2719,  2967,
@@ -816,7 +826,7 @@ static const uint16_t FM106_SUB_LEVEL_J106[128] = {
     31165, 31394, 31623, 31852, 32081, 32309, 32538, 32767,
 };
 
-static const uint16_t FM106_NOISE_LEVEL_J106[128] = {
+static const uint16_t FM106_NOISE_LEVEL_J106[128] FM106_HOT_DATA = {
         0,    35,    41,    50,    63,    83,   119,   190,
       324,   523,   759,  1012,  1273,  1539,  1807,  2076,
      2347,  2619,  2891,  3163,  3436,  3709,  3982,  4255,
@@ -835,7 +845,7 @@ static const uint16_t FM106_NOISE_LEVEL_J106[128] = {
     30850, 31125, 31399, 31673, 31948, 32222, 32496, 32767,
 };
 
-static const uint16_t FM106_VCA_LAW[128] = {
+static const uint16_t FM106_VCA_LAW[128] FM106_HOT_DATA = {
      1295,  1319,  1343,  1368,  1393,  1418,  1444,  1471,
      1497,  1525,  1553,  1581,  1610,  1640,  1670,  1700,
      1731,  1763,  1795,  1828,  1861,  1895,  1930,  1965,
@@ -854,7 +864,7 @@ static const uint16_t FM106_VCA_LAW[128] = {
     11409, 11618, 11830, 12047, 12267, 12491, 12720, 12953,
 };
 
-static const uint16_t FM106_VCA_HW[256] = {
+static const uint16_t FM106_VCA_HW[256] FM106_HOT_DATA = {
         0,     6,    12,    32,    52,   122,   193,   287,
       382,   497,   613,   730,   846,   969,  1091,  1217,
      1342,  1469,  1596,  1715,  1833,  1968,  2104,  2221,

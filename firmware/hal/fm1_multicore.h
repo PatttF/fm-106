@@ -5,6 +5,8 @@
  * plus compiler barriers publish SRAM state between the two cores. */
 #pragma once
 #include <stdint.h>
+#include "fm1_cpu1_stop.h"
+#include "fm1_guard.h"
 typedef volatile uint32_t fm1_aw_word;
 #define AW_WORD fm1_aw_word
 static inline __attribute__((always_inline)) uint32_t fm1_aw_load(volatile uint32_t *p)
@@ -22,14 +24,20 @@ static inline __attribute__((always_inline)) void fm1_aw_store(volatile uint32_t
 #define AW_LOAD(p) fm1_aw_load(p)
 #define AW_STORE(p,v) fm1_aw_store(p,v)
 static inline __attribute__((always_inline)) uint32_t fm1_aw_ticks(void) { return FM1_T4_CNT; }
+static inline __attribute__((always_inline)) void fm1_aw_idle(void)
+{
+    __asm__ volatile("nop; nop; nop; nop");
+}
 #define AW_TICKS() fm1_aw_ticks()
-#define AW_TIMEOUT_TICKS (10000u * FM1_TICKS_PER_US)
-#define AW_FAULT() fm1_reboot()
+#define AW_IDLE() fm1_aw_idle()
+#define AW_TIMEOUT_TICKS (15000u * FM1_TICKS_PER_US)
+#define AW_FAULT() do { audio_worker_online = 0; fm1_cpu1_stop(); } while (0)
 #define AW_RAM_LOOP __attribute__((section(".ram_text"), noinline, noreturn, used))
 #include "audio_worker.h"
 #undef AW_RAM_LOOP
 #undef AW_FAULT
 #undef AW_TIMEOUT_TICKS
+#undef AW_IDLE
 #undef AW_TICKS
 #undef AW_STORE
 #undef AW_LOAD
@@ -41,22 +49,17 @@ extern uint8_t _cpu1_stacks_lo[], _cpu1_stacks_hi[];
 /* Assembly names this symbol; the full polling body must be in RAM. */
 void __attribute__((section(".ram_text"), noreturn, used)) fm1_core1_main(void)
 {
-    /* Same combined-stack limit used on CPU0, at CPU1's EMU bank. Reserve
-     * the bottom 256 bytes so a descending stack traps before shared buffers. */
-    uint32_t lo = (uint32_t)(uintptr_t)_cpu1_stacks_lo + 256u;
-    uint32_t hi = (uint32_t)(uintptr_t)_cpu1_stacks_hi - 1u;
-    *(volatile uint32_t *)0x1EEF2D8u = hi;
-    *(volatile uint32_t *)0x1EEF2DCu = lo;
-    *(volatile uint32_t *)0x1EEF2E0u = hi;
-    *(volatile uint32_t *)0x1EEF2E4u = lo;
-    *(volatile uint32_t *)0x1EEF2D0u |= (1u << 2) | (1u << 3);
+    /* Clear all CPU1 EMU traps (no unaligned memory access, divide-by-zero,
+     * or stack overflow traps on CPU1, matching AC79 SDK debug.c). */
+    *(volatile uint32_t *)0x1EEF2D0u = 0;
+    *(volatile uint32_t *)0x1EEF2D4u = 0xFFFFFFFFu;
     audio_worker_loop();
 }
 
 static int fm1_multicore_start(void)
 {
-    uint32_t start, div;
-    fm1_core1_stop();
+    uint32_t start, div, top;
+    fm1_cpu1_stop();
     audio_worker_online = 0;
     fm1_aw_store(&audio_worker.ready, 0);
     fm1_aw_store(&audio_worker.request, 0);
@@ -64,6 +67,10 @@ static int fm1_multicore_start(void)
     /* CPU1's IRQ bank (CPU0 is at 0x1EEF100); worker stays IRQ-disabled. */
     for (uint32_t i = 0; i < 32u; i++)
         *(volatile uint32_t *)(0x1EEF300u + 4u * i) = 0;
+    fm1__dbg_unlock();
+    top = FM1_C0_WR_LIMIT_EN & 4u;
+    FM1_C0_WR_LIMIT_EN &= ~4u;
+    fm1__dbg_lock();
     *(volatile uint32_t *)0x01C7FFF8u = (uint32_t)(uintptr_t)fm1_core1_start;
     div = *(volatile uint32_t *)0x10008u;
     *(volatile uint32_t *)0x10008u = div | 8u;
@@ -71,10 +78,14 @@ static int fm1_multicore_start(void)
     *(volatile uint32_t *)0x1EEE004u |= 8u;
     *(volatile uint32_t *)0x1EEE004u &= ~2u;
     start = fm1_ticks();
-    while (!fm1_aw_load(&audio_worker.ready) && (uint32_t)(fm1_ticks() - start) < 10000u * FM1_TICKS_PER_US)
+    while (!fm1_aw_load(&audio_worker.ready) && (uint32_t)(fm1_ticks() - start) < 20000u * FM1_TICKS_PER_US)
         ;
     audio_worker_online = fm1_aw_load(&audio_worker.ready) != 0;
-    if (!audio_worker_online) fm1_core1_stop();
+    if (!audio_worker_online) fm1_cpu1_stop();
     *(volatile uint32_t *)0x10008u = div;
+    fm1__dbg_unlock();
+    FM1_DBG_MSG_CLR = 0xFFFFFFFFu;
+    FM1_C0_WR_LIMIT_EN |= top;
+    fm1__dbg_lock();
     return audio_worker_online;
 }

@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#define FM106_NSTEP   1024u
+#define FM106_NSTEP   128u
 #define FM106_ST_NOTE 0u
 #define FM106_ST_TIE  1u
 #define FM106_ST_REST 2u
@@ -30,12 +30,11 @@
 #define FM106_SWING_MAX 100
 
 /* ---- Elektron-style parameter locks (B2) ----
- * One lock = (step, param, value). Param indices are the preset p[0..39]
+ * One lock = (step, param, value). Param indices are the preset p[0..48]
  * sound space (see fm106_param_get/set in fm106_engine.h). Sparse table:
- * 256 slots covers any realistic pattern; a full table drops silently. */
-#define FM106_PLOCK_SLOTS 1024u
-#define FM106_NPARAM      41u
-#define FM106_PARAM_VOICE_MODE 40u
+ * 512 slots covers dense 128-step automation while fitting in 4 KiB flash. */
+#define FM106_PLOCK_SLOTS 512u
+#define FM106_NPARAM      49u
 
 typedef struct {
     uint16_t step;             /* locked step index (0..slen-1) */
@@ -65,7 +64,7 @@ typedef struct {
     uint8_t  playing;      /* 1 = running */
     uint8_t  bpm;          /* 40..240 internal tempo */
     uint8_t  sdiv;         /* step divisor (fm106_seq_div_samples) */
-    uint16_t slen;         /* pattern length 1..1024 steps */
+    uint16_t slen;         /* pattern length 1..128 steps */
     uint8_t  sgate;        /* default gate /128 when step.acc == 0 */
     uint8_t  swing;        /* 0..100 global swing */
     fm106_step_t step[FM106_NSTEP];
@@ -233,6 +232,52 @@ static inline void fm106_plock_clear_step(fm106_seq_t *s, uint16_t step)
     s->nplock = (uint16_t)w;
 }
 
+static inline uint32_t fm106_plock_count_step(const fm106_seq_t *s, uint16_t step)
+{
+    uint32_t c = 0;
+    for (uint32_t i = 0; i < s->nplock; i++) {
+        if (s->plock[i].step == step) c++;
+    }
+    return c;
+}
+
+/* Double pattern length (e.g. 16->32->64->128), duplicating steps & p-locks.
+ * Caller holds irq_off when engine is live. Returns new slen (0 if already max). */
+static inline uint16_t fm106_seq_duplicate(fm106_seq_t *s)
+{
+    uint16_t old_len = s->slen ? s->slen : 1u;
+    if (old_len >= FM106_NSTEP) return 0u;
+    uint32_t want = (uint32_t)old_len * 2u;
+    uint16_t new_len = (uint16_t)(want > FM106_NSTEP ? FM106_NSTEP : want);
+    uint16_t copy_n = (uint16_t)(new_len - old_len);
+
+    for (uint16_t i = 0; i < copy_n; i++) {
+        s->step[old_len + i] = s->step[i];
+    }
+
+    /* Strip stale locks in destination span, then duplicate locks from [0, copy_n) */
+    uint32_t w = 0;
+    for (uint32_t i = 0; i < s->nplock; i++) {
+        if (s->plock[i].step < old_len || s->plock[i].step >= new_len) {
+            s->plock[w++] = s->plock[i];
+        }
+    }
+    s->nplock = (uint16_t)w;
+
+    uint32_t orig_locks = w;
+    for (uint32_t i = 0; i < orig_locks; i++) {
+        if (s->plock[i].step < copy_n && s->nplock < FM106_PLOCK_SLOTS) {
+            s->plock[s->nplock].step  = (uint16_t)(old_len + s->plock[i].step);
+            s->plock[s->nplock].param = s->plock[i].param;
+            s->plock[s->nplock].value = s->plock[i].value;
+            s->nplock++;
+        }
+    }
+
+    s->slen = new_len;
+    return new_len;
+}
+
 /* ---- MIDI clock slave (Melodee midi_clock.c) ---- */
 static inline void fm106_midi_clock_mode(fm106_seq_t *s, uint8_t mode)
 {
@@ -307,7 +352,7 @@ static uint32_t fm106_midi_clock_advance(fm106_seq_t *s, uint32_t elapsed)
 
 static inline void fm106_seq_init(fm106_seq_t *s)
 {
-    for (uint32_t i = 0; i < sizeof(*s) / 4u; i++) ((uint32_t *)s)[i] = 0;
+    for (uint32_t i = 0; i < sizeof(*s); i++) ((uint8_t *)s)[i] = 0;
     s->bpm = 120; s->sdiv = 3; s->slen = 16; s->sgate = 128; s->swing = 0;
     s->rng = (int32_t)0x9E3779B9u;
     s->playing = 0;

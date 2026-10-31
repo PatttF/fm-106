@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* FM-1 GPIO port registers: one 0x40 block per
  * port at 0x50000 + p * 0x40. HAL-internal: src/ uses the per-driver

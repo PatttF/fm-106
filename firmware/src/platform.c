@@ -34,6 +34,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
 #include <stdint.h>
 #include "fm1_time.h"
 #include "fm1_sys.h"
+#include "fm1_stub.h"
 #include "fm1_irq.h"
 #include "fm1_guard.h"
 #if DINGHY_DUAL_CORE
@@ -72,7 +73,16 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #define FELUCCA_OTA 1
 #define FELUCCA_CDC 0
 #define FELUCCA_UAC 1
+#define FELUCCA_UAC_48K 1
+#define FELUCCA_UAC_AS_FIRST 1                  /* Audio Streaming first in AC header (macOS <=15 AppleUSBAudio fix) */
+#define FELUCCA_UAC_DEEP 1                      /* 1024-frame ring (+5.8 ms margin for heavy polyphonic + FX renders) */
+#define FELUCCA_UAC_RING_ATTR __attribute__((section(".pool")))
+#define FELUCCA_UAC_Q15 1                       /* app_audio() delivers full-scale Q15 (+-32767) directly to uac_tap() */
+#define FELUCCA_USB_PRODUCT "FM-106"            /* Enumerate as "FM-106" in DAWs and host audio/MIDI panels */
+#define FELUCCA_USB_SERIAL "FM106"              /* Distinct USB serial so CoreMIDI/Windows don't reuse cached "Felucca" */
+#define FELUCCA_BCD_HI 0x09                     /* Distinct bcdDevice (9.28) so hosts refresh cached descriptors */
 #define FELUCCA_UART 1
+#define SXQ 128u
 #include "usb.c"
 #if FELUCCA_UART
 #include "midi_uart.c"
@@ -82,16 +92,31 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #define SETTINGS_AT 0x000FC000u                 /* one 4 KiB sector of Felucca's globals area */
 #define FM106_PRESETS_FLASH_ADDR 0x00098000u
 #define FM106_PRESETS_FLASH_SIZE 0x4000u        /* 16 KiB (4 x 4 KiB sectors) */
+#define FM106_SEQ_FLASH_ADDR     0x0009C000u
+#define FM106_SEQ_FLASH_SIZE     0x1000u        /* 4 KiB (1 sector: 128-step pattern + p-locks) */
+#define BT_ST_A                  0x0009F000u    /* 4 KiB sector: Bluetooth Store A */
+#define BT_ST_B                  0x000FE000u    /* 4 KiB sector: Bluetooth Store B */
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || \
                              FL_IN(off, n, SETTINGS_AT, SETTINGS_AT + 0x1000u) || \
-                             FL_IN(off, n, FM106_PRESETS_FLASH_ADDR, FM106_PRESETS_FLASH_ADDR + FM106_PRESETS_FLASH_SIZE))
+                             FL_IN(off, n, FM106_PRESETS_FLASH_ADDR, FM106_PRESETS_FLASH_ADDR + FM106_PRESETS_FLASH_SIZE) || \
+                             FL_IN(off, n, FM106_SEQ_FLASH_ADDR, FM106_SEQ_FLASH_ADDR + FM106_SEQ_FLASH_SIZE) || \
+                             FL_IN(off, n, BT_ST_A, BT_ST_A + 0x1000u) || \
+                             FL_IN(off, n, BT_ST_B, BT_ST_B + 0x1000u))
+/* CPU1 may run an audio job from XIP: done before the flash leaves XIP (interrupts already off: no new job) */
+#if DINGHY_DUAL_CORE
+#define FL_QUIESCE() do { if (audio_worker_online) audio_worker_join(); } while (0)
+#else
+#define FL_QUIESCE() do {} while (0)
+#endif
 #include "fm1_flash.h"
+#include "fm1_clock.h"
 static uint8_t flash_ok;
 static int st_read(uint32_t off, void *dst, uint32_t n)
 {
     uint8_t *d = dst;
     while (n) {
         uint32_t k = n > 256u ? 256u : n, f = irq_save();
+        FL_QUIESCE();
         int rc = FL_FAR(fl_read_ram)(off, d, k);
         irq_restore(f);
         if (rc)
@@ -101,6 +126,32 @@ static int st_read(uint32_t off, void *dst, uint32_t n)
         n -= k;
     }
     return 0;
+}
+
+static int st_erase(uint32_t off)
+{
+    uint32_t took;
+    return fl_erase4k(off, &took);
+}
+
+static int st_prog(uint32_t off, const void *p, uint32_t n)
+{
+    return fl_write(off, p, n);
+}
+
+static uint32_t st_crc32(const void *p, uint32_t n)
+{
+    static const uint32_t T[16] = {
+        0x00000000u, 0x1DB71064u, 0x3B6E20C8u, 0x26D930ACu, 0x76DC4190u, 0x6B6B51F4u, 0x4DB26158u, 0x5005713Cu,
+        0xEDB88320u, 0xF00F9344u, 0xD6D6A3E8u, 0xCB61B38Cu, 0x9B64C2B0u, 0x86D3D2D4u, 0xA00AE278u, 0xBDBDF21Cu};
+    const uint8_t *b = (const uint8_t *)p;
+    uint32_t c = 0xFFFFFFFFu;
+    while (n--) {
+        c ^= *b++;
+        c = (c >> 4) ^ T[c & 15u];
+        c = (c >> 4) ^ T[c & 15u];
+    }
+    return ~c;
 }
 
 static uint8_t recovery_active;
@@ -205,6 +256,26 @@ static int presets_flash_save(const void *p, uint32_t n)
     return fl_write(FM106_PRESETS_FLASH_ADDR, p, n);
 }
 
+static int seq_flash_read(void *dst, uint32_t n)
+{
+    if (!flash_ok || n > FM106_SEQ_FLASH_SIZE)
+        return -1;
+    return st_read(FM106_SEQ_FLASH_ADDR, dst, n);
+}
+
+static int seq_flash_save(const void *p, uint32_t n)
+{
+    uint32_t took;
+    int rc;
+    if (!flash_ok || n < 8u || n > FM106_SEQ_FLASH_SIZE)
+        return -1;
+    if ((rc = fl_erase4k(FM106_SEQ_FLASH_ADDR, &took)) != 0)
+        return rc;
+    if ((rc = fl_write(FM106_SEQ_FLASH_ADDR + 8u, (const uint8_t *)p + 8u, n - 8u)) != 0)
+        return rc;
+    return fl_write(FM106_SEQ_FLASH_ADDR, p, 8u);   /* magic + crc last: power-fail safe */
+}
+
 static int fm106_sysex_send(const uint8_t *p, uint32_t n)
 {
 #if FELUCCA_OTA
@@ -241,11 +312,28 @@ static void midi_send(uint32_t st, uint32_t d1, uint32_t d2)   /* from the main 
 /* ---- the timer: 10 kHz key scan, milliseconds, USB at 2 kHz. It outranks the audio ISR; nested in a
  * render it only scans, counts and feeds the USB audio stream (as sloopDX main.c) */
 static volatile uint8_t in_audio;
-void fm1_timer5_irq(void)
+
+/* ---- the hang detector: the main loop feeds the watchdog (fm1_wdt_feed, fm1_wdt_beat); when it has not for
+ * FM1_HANG_MS, the timer reports where the interrupted code was (the red screen, VEC 0x3ww: ww = g_where, the main
+ * loop's last step) instead of the watchdog's silent reset seconds later. A hang with interrupts off still ends in
+ * the watchdog (fm1_boot.p3_rst bit 2, the sysex crash query) */
+#define FM1_HANG_MS 2500u
+static volatile uint8_t fm1_hang_armed;
+volatile uint32_t g_where __attribute__((section(".noinit")));   /* the main loop's step (fm106.c / bt_glue.h) */
+static uint32_t g_where_boot;                  /* g_where as the last run left it (a watchdog reset: where it hung) */
+static void __attribute__((noinline)) fm1_hang(const uint32_t *f)
+{
+    fm1_hang_armed = 0;
+    fm1_hang_c(g_where, f);
+}
+
+void fm1_timer5_irq(uint32_t *f)
 {
     static uint32_t sub, owed, last, acc;
     uint32_t t0 = fm1_ticks(), usb_due = sub % 5u == 0u;
     fm1_timer5_ack();
+    if (fm1_hang_armed && (uint32_t)(t0 - fm1_wdt_beat) >= FM1_HANG_MS * 1000u * FM1_TICKS_PER_US)
+        fm1_hang(f);
     fm1_input_tick();
     acc += t0 - last;
     last = t0;
@@ -262,7 +350,8 @@ void fm1_timer5_irq(void)
     if (++sub == 10u)
         sub = 0;
 #if FELUCCA_UAC
-    uac_service_safe();
+    if (in_audio || !(owed & 1u))
+        uac_service_safe();                     /* on usb_poll ticks, usb_poll() services EP0 first, then UAC */
 #endif
     if (in_audio)
         return;
@@ -299,11 +388,9 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         for (i = 0; i < HALF_WORDS; i++)
             o[i] = 0;
         uac_render_start();
-        fm1_irq_on();                           /* Allow TIMER5 (priority 4) to nest during audio render */
+        fm1_irq_on();                           /* Allow TIMER5 (priority 4) to nest during audio render & 48k FIR */
         app_audio(o, HALF_FRAMES);
-        fm1_irq_off();
-        uac_tap(o, HALF_FRAMES);                /* USB Audio records pristine digital engine output */
-        fm1_irq_on();
+        uac_tap(o, HALF_FRAMES);                /* Lock-free SPSC ring: pristine full-scale digital engine output */
         for (i = 0; i < HALF_WORDS; i++) {
             int32_t v = (o[i] * master_q12) >> 12;
             if (v > 32767) v = 32767;
@@ -327,6 +414,8 @@ static void platform_poll(void)
     static int32_t knob_avg = 512 * 16;
     int32_t a;
     fm1_wdt_feed();
+    fm1_hang_armed = 1;
+    g_where = 1;
     usb_retry(fm1_ms);
     const uint8_t *sx_p;
     uint32_t sx_n;
@@ -396,19 +485,25 @@ static void platform_poll(void)
 
 static void fm1_fault(const fm1_crash_t *c)
 {
-    char b[12];
-    uint32_t i, t0, v[3] = {c->vec, c->pc, c->rets};
+    char b[24];
+    uint32_t i, t0;
+    const char *lbl[6] = {"VEC : ", "PC  : ", "RETS: ", "SP  : ", "EMU : ", "DBG : "};
+    uint32_t v[6] = {c->vec, c->pc, c->rets, c->sp, c->emu, c->dbg};
     fm1_audio_stop();
+    fm1_lcd_wait();
+    fm1_lcd_deselect();
+    lcd_busy = 0;
     lcd_fill(0, 0, 240, 240, RGB(160, 0, 0));
-    draw_text_box(0, 20, 240, &FONT_S, APP_NAME " CRASH", C_WHITE, 1);
-    for (i = 0; i < 3u; i++) {
+    draw_text_box(0, 15, 240, &FONT_S, APP_NAME " CRASH", C_WHITE, 1);
+    for (i = 0; i < 6u; i++) {
         uint32_t k;
-        for (k = 0; k < 8u; k++) b[k] = "0123456789ABCDEF"[(v[i] >> (28u - 4u * k)) & 15u];
-        b[8] = 0;
-        draw_text_box(10, 60 + i * 20, 220, &FONT_S, b, C_WHITE, 0);
+        for (k = 0; k < 6u; k++) b[k] = lbl[i][k];
+        for (k = 0; k < 8u; k++) b[6 + k] = "0123456789ABCDEF"[(v[i] >> (28u - 4u * k)) & 15u];
+        b[14] = 0;
+        draw_text_box(10, 45 + i * 20, 220, &FONT_S, b, C_WHITE, 0);
     }
     t0 = fm1_ticks();
-    while ((uint32_t)(fm1_ticks() - t0) < 8000u * 1000u * FM1_TICKS_PER_US)
+    while ((uint32_t)(fm1_ticks() - t0) < 15000u * 1000u * FM1_TICKS_PER_US)
         fm1_wdt_feed();
     fm1_reboot();
 }
@@ -422,7 +517,7 @@ void fm1_cstart(void)
     fm1_reset_reason();
     p3 = fm1_boot.p3_rst;
     fm1_wdt_arm(0x0D);
-    fm1_core1_stop();                          /* hold CPU1 before clearing/copying application RAM */
+    fm1_cpu1_stop();                          /* hold CPU1 before clearing/copying application RAM */
     if ((p3 & 1u) && !(p3 & (4u | 0x40u)))
         bootguard_clear(&bootguard);
     boot_mode = bootguard_begin(&bootguard);
@@ -433,13 +528,16 @@ void fm1_cstart(void)
     for (d = _pool_start; d < _pool_end; d++) *d = 0;
     for (s = _data_load, d = _data_start; d < _data_end; s++, d++) *d = *s;
     for (s = _rt_load, d = _rt_start; d < _rt_end; s++, d++) *d = *s;
+    (void)fm1_clock_stock();                    /* guarantee 360 MHz CPU / 60 MHz LSB across bootloaders */
     fm1_mailbox_clear();
     fm1_guard_enable(FM1_GUARD_STACK | FM1_GUARD_WRITE | FM1_GUARD_BUS
-#if !DINGHY_DUAL_CORE
+#if !DINGHY_DUAL_CORE && !FELUCCA_BLE
                      | FM1_GUARD_PC
 #endif
                      );                          /* CPU1 boots through mask-ROM: PC limits after its handshake */
     fm1_boot.p3_rst = (uint8_t)p3;
+    g_where_boot = g_where;
+    g_where = 0;
     if (boot_mode == BOOT_RECOVERY || recovery_key())
         recovery_main();                        /* OCT- at power-on: the USB rescue */
     flash_ok = FL_FAR(fl_jedec_ram)() == 0x856014u;
@@ -450,11 +548,14 @@ void fm1_cstart(void)
     fm1_adc_init();
 #if DINGHY_DUAL_CORE
     fm1_multicore_start();                  /* bounded handshake; failure keeps serial rendering */
+#if !FELUCCA_BLE
     /* CPU1 starts through mask-ROM before it reaches our RAM worker. Restrict
      * instruction fetch only after that bootstrap has returned (or been
      * stopped on timeout), or the ready handshake bootloops with DBG 0x400
-     * (c1_pc_limit_err_r). */
+     * (c1_pc_limit_err_r). BLE builds omit this because JieLi BLE controller
+     * calls Mask-ROM routines during scan/link. */
     fm1_guard_enable(FM1_GUARD_PC);
+#endif
 #endif
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);   /* (abuf is zero: .bss) */
     usb_start();

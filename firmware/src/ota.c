@@ -1,6 +1,6 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* M-UPGRADE update entry.
+/* M-UPGRADE entry: "step 1 lite".
  *
  * The updater talks SysEx (F0 pack7(00 59 cmd len24 body chk) F7):
  *   cmd 0x11  handshake -> we answer our package identity (FELUCCA_ID)
@@ -12,7 +12,8 @@
  * Nothing is committed before the host's "success"; any failure erases the
  * staging area and Felucca carries on.
  *
- * The firmware (felucca.c) and the host test supply these hooks:
+ * Portable core: the firmware (felucca.c) and the Mac test (ota_test.c)
+ * supply these hooks:
  *   ota_wire_send(p, n)        one complete F0..F7 message to the host
  *   ota_frame_get(&p, &n)      next received SysEx (7-bit bytes between F0/F7), 0 if none
  *   ota_frame_done()           release it
@@ -24,9 +25,6 @@
 #define OTA_AREA 0x000E0000u                     /* staged loader, 5 x 4 KiB */
 #define OTA_AREA_LEN 0x5000u
 #define OTA_RES (OTA_AREA + OTA_AREA_LEN - 0x100u)  /* 0xE4F00 = 4K boundary - 256: SPL scan */
-#define OTA_LDR_HCRC 0xEBAAu                     /* official update loader (usb_hid_ota.bin) */
-#define OTA_LDR_DCRC 0x5881u
-#define OTA_LDR_LEN 0x4DE1u
 #define OTA_FRAME_MAX 640u                       /* 512-B response = 605 wire bytes */
 
 static int ota_wire_send(const uint8_t *p, uint32_t n);
@@ -58,13 +56,18 @@ static uint32_t ota_crc16(const uint8_t *p, uint32_t n, uint32_t c)   /* poly 0x
     return c;
 }
 
-static void ota_jl_enc(uint8_t *p, uint32_t n)   /* UFW header cipher, key 0xFFFF */
+static uint32_t ota_jl_enc_k(uint8_t *p, uint32_t n, uint32_t k)   /* JieLi ENC from key k; -> the next key */
 {
-    uint32_t k = 0xFFFFu;
     while (n--) {
         *p++ ^= (uint8_t)k;
         k = ((k << 1) ^ (k & 0x8000u ? 0x1021u : 0u)) & 0xFFFFu;
     }
+    return k;
+}
+
+static void ota_jl_enc(uint8_t *p, uint32_t n)   /* UFW header cipher, key 0xFFFF */
+{
+    ota_jl_enc_k(p, n, 0xFFFFu);
 }
 
 /* 8-to-7, LSB first */
@@ -103,7 +106,7 @@ static uint32_t ota_unpack7(const uint8_t *in, uint32_t n, uint8_t *out, uint32_
 }
 
 static uint8_t ota_msg[8 + 32], ota_wire[2 + 48];
-static uint8_t ota_dec[OTA_FRAME_MAX] __attribute__((section(".pool")));   /* decoded host message */
+static uint8_t ota_dec[OTA_FRAME_MAX];           /* decoded host message */
 
 static int ota_send_msg(uint32_t cmd, const uint8_t *body, uint32_t n)   /* n <= 32 */
 {
@@ -127,19 +130,11 @@ static int ota_send_msg(uint32_t cmd, const uint8_t *body, uint32_t n)   /* n <=
 
 static void ota_reply_identity(void)
 {
-#ifdef OTA_IDENTITY
-    const char *id_text = OTA_IDENTITY;
-    uint8_t id[27];
-    uint32_t i;
-    for (i = 0; i < sizeof id; i++) id[i] = 0;
-    for (i = 0; i < sizeof id && id_text[i]; i++) id[i] = (uint8_t)id_text[i];
-#else
-    static const char ID[] = FELUCCA_ID;         /* loader / unmodified builds */
+    static const char ID[] = FELUCCA_ID;         /* == the package marker string */
     uint8_t id[27];
     uint32_t i;
     for (i = 0; i < sizeof id; i++)
         id[i] = i < sizeof ID - 1u ? (uint8_t)ID[i] : 0;
-#endif
     ota_send_msg(0x11, id, sizeof id);
 }
 
@@ -161,16 +156,19 @@ static uint32_t ota_take(void)
     return d;
 }
 
-/* main loop, outside a session: answer handshakes */
-static void ota_service(void)
+/* main loop, outside a session: answer handshakes. Returns the frame's decoded length (0: none), the frame in
+ * ota_dec, for a firmware's own commands in the same framing (cmd ota_dec[2], the body from ota_dec + 6) */
+static uint32_t ota_service(void)
 {
     uint32_t d = ota_take();
     if (d == 7u && ota_dec[2] == 0x11)
         ota_reply_identity();
+    return d;
 }
 
 /* one read request (3 tries x 5 s); data -> dst */
 static uint32_t ota_deadline;                    /* 0 = none; else ota_now_ms() limit of the session */
+static uint32_t ota_try_ms = 5000u;              /* a try's wait (a firmware's own transfer may ask less) */
 
 static int ota_read(uint32_t addr, uint8_t *dst, uint32_t len)
 {
@@ -186,7 +184,7 @@ static int ota_read(uint32_t addr, uint8_t *dst, uint32_t len)
     for (tries = 0; tries < 3u; tries++) {
         if (ota_send_msg(0x30, q, 8))
             return -1;
-        for (t = ota_now_ms(); ota_now_ms() - t < 5000u;) {
+        for (t = ota_now_ms(); ota_now_ms() - t < ota_try_ms;) {
             ota_idle();
             d = ota_take();
             if (!d)
@@ -214,6 +212,52 @@ static int ota_memeq(const uint8_t *a, const uint8_t *b, uint32_t n)
     return 1;
 }
 
+/* flash.bin's boot area [0, 0x4000), which a writer other than Felucca's puts on the flash: a broken one is the
+ * failure only the USB_KEY dongle mends. It must be one the ROM boots: the flash header and the boot record at
+ * +0x20 (each ENC 0xFFFF, CRC16), the boot file at 0xA0 a single-bank BANKCB container (its 16-byte header and its
+ * payload each ciphered from their own start) loaded at 0x01C02000, the header's, the payload's and the record's
+ * CRCs right; a container that names its board (m-bootloader: "AC79BLID" + the board at payload +0x40) names the
+ * FM-1's. Any bootloader so made: M-VAVE's of every version, m-bootloader. 0 valid, -5 not, -4 read */
+static int ota_boot_valid(uint32_t fl_off, uint32_t fl_len, uint8_t *b)
+{
+    uint32_t i, n, k = 0xFFFFu, len, dcrc, pwant = 0, pcrc = 0, fcrc = 0;
+    if (fl_len < 0x4000u)
+        return -5;
+    if (ota_read(fl_off, b, 64))
+        return -4;
+    ota_jl_enc(b, 32);
+    ota_jl_enc(b + 32, 32);
+    if (ota_crc16(b + 2, 30, 0) != ota_rd16(b) || ota_crc16(b + 34, 30, 0) != ota_rd16(b + 32) ||
+        ota_rd32(b + 36) != 0xA0u || b[44] != 0u)
+        return -5;
+    dcrc = ota_rd16(b + 34);
+    len = ota_rd32(b + 40);
+    if (len < 16u + 0x50u || len > 0x4000u - 0xA0u)
+        return -5;
+    for (i = 0; i < len; i += n) {
+        uint32_t h = 0;
+        n = len - i > 512u ? 512u : len - i;
+        if (ota_read(fl_off + 0xA0u + i, b, n))
+            return -4;
+        if (!i) {                                           /* the container's header */
+            ota_jl_enc(b, 16);
+            if (ota_crc16(b, 14, 0) != ota_rd16(b + 14) || ota_rd16(b) != 1u || ota_rd16(b + 2) + 16u != len ||
+                ota_rd32(b + 4) != 0x01C02000u || ota_rd32(b + 8) != 16u)
+                return -5;
+            pwant = ota_rd16(b + 12);
+            fcrc = ota_crc16(b, 16, 0);
+            h = 16;
+        }
+        k = ota_jl_enc_k(b + h, n - h, k);
+        pcrc = ota_crc16(b + h, n - h, pcrc);
+        fcrc = ota_crc16(b + h, n - h, fcrc);
+        if (!i && ota_memeq(b + 16 + 0x40, (const uint8_t *)"AC79BLID", 8) &&
+            !ota_memeq(b + 16 + 0x48, (const uint8_t *)"fm1", 4))
+            return -5;                                      /* another board's */
+    }
+    return pcrc == pwant && fcrc == dcrc ? 0 : -5;
+}
+
 /* JLFS head "LOADER.BIN" in front of the staged loader (vm_update_defrag), written last */
 static int ota_stage_head(uint32_t len)
 {
@@ -235,9 +279,7 @@ static int ota_stage_head(uint32_t len)
 }
 
 /* UFW header + entry list (hdr: 1 KiB) from the host -> offset / length of
- * flash.bin (entry type 0) and ota.bin (type 100), 0 if absent, and the CRC16 the
- * package stores for flash.bin (the loader checks what it was served against it);
- * -1 read, -2 CRC */
+ * flash.bin (entry type 0) and ota.bin (type 100), 0 if absent; -1 read, -2 CRC */
 static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *ota_off, uint32_t *ota_len)
 {
     uint32_t i, nent;
@@ -266,17 +308,17 @@ static int ota_ufw(uint8_t *hdr, uint32_t *fl_off, uint32_t *fl_len, uint32_t *o
 
 static int ota_stage(void)                       /* steps 1..6; 0 = host said success */
 {
-    static uint8_t hdr[0x400] __attribute__((section(".pool"))), b[512] __attribute__((section(".pool"))), mine[512] __attribute__((section(".pool")));
-    uint32_t i, n, ota_off, ota_len, fl_off, fl_len, c, len, own, official;
+    static uint8_t hdr[0x400], b[512];
+    uint32_t i, n, ota_off, ota_len, fl_off, fl_len, c, len, own;
     int rc;
     /* 1. UFW header + entry list */
     ota_show(1, 0);
     if ((rc = ota_ufw(hdr, &fl_off, &fl_len, &ota_off, &ota_len)) != 0)
         return rc;
-    if (!fl_off || !ota_off)
+    if (!ota_off)
         return -3;
-    /* 2. which loader: the official one (known CRCs; it rewrites the whole flash.bin
-     *    including the head) or Felucca's own (app area only, checks the chip key) */
+    /* 2. the package's writer (any: M-VAVE's, Felucca's, m-bootloader's installer, another firmware's), well
+     *    made: its JLFS head and inner head right, loaded where the SPL runs it, small enough to stage */
     if (ota_read(ota_off, b, 512))
         return -6;
     len = ota_rd32(b + 8);
@@ -284,19 +326,14 @@ static int ota_stage(void)                       /* steps 1..6; 0 = host said su
         ota_len != len + 0x20u || len > OTA_AREA_LEN - 0x200u || ota_crc16(b + 0x22, 30, 0) != ota_rd16(b + 0x20) ||
         ota_rd32(b + 0x20 + 8) != 0x01C0A800u)
         return -7;
-    official = ota_rd16(b) == OTA_LDR_HCRC && ota_rd16(b + 2) == OTA_LDR_DCRC && len == OTA_LDR_LEN;
     for (i = 0x48, own = 0; i + 16u <= 0x48u + 64u && !own; i++)    /* first LZ4 literals: crt0_ldr.S */
         own = ota_memeq(b + i, (const uint8_t *)"FELUCCA-LOADER-1", 16) && ota_rd32(b + 0x20 + 4) <= 0x14000u;
-    if (!official && !own)
-        return -7;
-    if (official) {                    /* the official loader writes the head: it must equal ours */
+    /* 3. a flash image with it: Felucca's writer never writes its head (the app area only); any other may,
+     *    so its boot area must be a bootable one for the FM-1 (no flash.bin: the writer brings its own) */
+    if (fl_off && !own) {
         ota_show(2, 0);
-        for (i = 0; i < 0x4000u; i += 512u) {
-            if (ota_read(fl_off + i, b, 512) || ota_fread(i, mine, 512))
-                return -4;
-            if (!ota_memeq(b, mine, 512))
-                return -5;
-        }
+        if ((rc = ota_boot_valid(fl_off, fl_len, b)) != 0)
+            return rc;
     }
     /* 4. stage the package's loader: erase, body, verify, head last */
     ota_show(3, 0);

@@ -84,12 +84,14 @@ static void cv_blit_from(uint32_t x, uint32_t y, uint32_t r0)
 static inline void cv_pset(int32_t x, int32_t y, uint16_t c)
 {
     y += cv_oy;
-    if ((uint32_t)x < cv_w && (uint32_t)y < cv_h)
+    if (x >= 0 && y >= 0 && (uint32_t)x < cv_w && (uint32_t)y < cv_h)
         cv_px[(uint32_t)y * cv_w + (uint32_t)x] = swap16(c);
 }
 
 static void cv_rect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
 {
+    if (w <= 0 || h <= 0)
+        return;
     int32_t x1 = x + w, y1 = y + h + cv_oy, i;
     uint16_t sc = swap16(c);
     y += cv_oy;                             /* clipped once, then filled row by row */
@@ -101,6 +103,8 @@ static void cv_rect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t c)
         x1 = (int32_t)cv_w;
     if (y1 > (int32_t)cv_h)
         y1 = (int32_t)cv_h;
+    if (x >= x1 || y >= y1)
+        return;
     for (; y < y1; y++)
         for (i = x; i < x1; i++)
             cv_px[(uint32_t)y * cv_w + (uint32_t)i] = sc;
@@ -151,13 +155,20 @@ static int32_t cv_text(int32_t x, int32_t y, const felucca_font_t *f, const char
         w = f->bw[gi];
         bpr = (w + 1u) / 2u;
         gd = f->data + f->off[gi];
-        for (gy = 0; gy < f->h; gy++)
+        for (gy = 0; gy < f->h; gy++) {
+            int32_t py = y + (int32_t)gy;
+            if (py < 0 || (uint32_t)py >= cv_h)
+                continue;
             for (gx = 0; gx < w; gx++) {
+                int32_t px = x - f->pad + (int32_t)gx;
+                if (px < 0 || (uint32_t)px >= cv_w)
+                    continue;
                 uint32_t v = gd[gy * bpr + gx / 2u];
                 v = (gx & 1u) ? (v & 15u) : (v >> 4);
                 if (v)
-                    cv_pset(x - f->pad + (int32_t)gx, y + (int32_t)gy, ramp[v]);
+                    cv_px[(uint32_t)py * cv_w + (uint32_t)px] = swap16(ramp[v]);
             }
+        }
         x += f->adv[gi];
     }
     return x;
@@ -181,6 +192,8 @@ static void draw_text_box(uint32_t x, uint32_t y, uint32_t w, const felucca_font
         tx = ((int32_t)w - tw) / 2;
     else if (align == 2)
         tx = (int32_t)w - tw;
+    if (tx < 0)
+        tx = 0;
     cv_text(tx, 0, f, s, c);
     cv_blit(x, y);
     lcd_sync();                     /* one-shots (boot, crash, UBOOT, update) finish here */

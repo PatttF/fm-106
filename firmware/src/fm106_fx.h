@@ -54,7 +54,11 @@ typedef struct fm106_fx {
  * .pool; block scratch Melodee sized for CTL = 32. */
 #define FM106_FX_SLOTS 1u
 #define FX_TAPE_RING 512u
+#ifdef FM1_IRQ_TARGET
 static int16_t fm106_fx_mem[FM106_FX_SLOTS][4096] __attribute__((section(".pool")));
+#else
+static int16_t fm106_fx_mem[FM106_FX_SLOTS][4096];
+#endif
 static uint32_t fm106_fx_epoch;
 static int32_t fx_left[FX_CTL],fx_right[FX_CTL],fx_dry_l[FX_CTL],fx_dry_r[FX_CTL];
 static int32_t fx_low_l[FX_CTL/4u+1u],fx_low_r[FX_CTL/4u+1u];
@@ -130,8 +134,8 @@ static void fx_tape_design(fm106_fx_t *f,uint32_t n)
     if(f->phase<old_phase || first)f->random=(int32_t)(fm106_fx_noise(&f->rng)&127u);
     f->age=1;
     if(!first && old_random==f->random && control->b2==(float)f->character)return;
-    int32_t cha=f->character,low=200+(f->random-64)*cha/64;
-    int32_t hz[3]={low,fm106_clamp(1400+(f->random-64)*cha/4,low+150,8000),6500-cha*38};
+    int32_t cha=f->character,low=200+fx_div_pow2((f->random-64)*cha,6);
+    int32_t hz[3]={low,fm106_clamp(1400+fx_div_pow2((f->random-64)*cha,2),low+150,8000),6500-cha*38};
     for(uint32_t k=0;k<3u;k++){
         float w=(float)fm106_clamp(hz[k],60,(int32_t)FX_RATE*45/100)*(6.28318530718f/FX_RATE);
         f->q[0][k].b1=w/(1.0f+w);

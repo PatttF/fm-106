@@ -1,6 +1,8 @@
-/* SPDX-License-Identifier: GPL-3.0-only
- * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
-/* FM-1 USB0 full-speed device controller, register level only.
+/* SPDX-License-Identifier: MPL-2.0
+ * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments
+ * Host mode additions Copyright (C) 2026 Adrien Tibi (Recursive Field Instruments); see NOTICE.
+ * Written against the public JieLi AC79 SDK (Apache-2.0); see NOTICE. */
+/* FM-1 USB0 full-speed device controller, register level only
  * The protocol (descriptors, EP0 requests,
  * MIDI / CDC / SysEx) is the driver src/usb.c, shared with the update loader
  * and the host tests; this header is every USB register access it makes.
@@ -16,6 +18,7 @@
  *                          isochronous mode is TXCSR2 bit 6 through the SIE (usb.c)
  *   fm1_usb_ep_enable(m)   CON0 &= ~(m << 19), m = bit per endpoint
  *   fm1_usb_sof_take()     SOF pending -> clear, 1
+ *   fm1_usb_host_attach(ep0) / fm1_usb_line()   host PHY setup / D+ and D- levels
  * No IRQ: everything is polled (usb_poll from the TIMER5 ISR). */
 #pragma once
 #include <stdint.h>
@@ -65,6 +68,29 @@ FM1_INLINE void fm1_usb_off(void)
     FM1_USB_IO_CON0 = 0x0Cu;
 }
 
+/* Host (A-device) on USB0, the sequence of the AC79 SDK's usb_h_sie_init(0): D+ / D- digital inputs with their
+ * pull-downs (USB_IO_CON0 DPDIE DMDIE DPPD DMPD, no pull-ups), PHY on, SIE out of reset, VBUS valid, CID 0
+ * (A-device). The caller waits >= 20 ms after fm1_usb_reset and again after this before touching the SIE, then
+ * writes DEVCTL = 3 (session + host request). Nothing here drives VBUS: the port needs power from outside. */
+FM1_INLINE void fm1_usb_host_attach(void *ep0)
+{
+    uint32_t n;
+    FM1_CLK_CON1 &= ~3u;                                /* USB clock = PLL48M */
+    FM1_USB_EP0_ADR = (uint32_t)(uintptr_t)ep0;
+    for (n = 1; n <= 3u; n++)
+        FM1_USB_EP_RADR(n) = (uint32_t)(uintptr_t)ep0;
+    FM1_USB_EP4_RADR = (uint32_t)(uintptr_t)ep0;
+    FM1_USB_CON0 = 0;
+    FM1_USB_CON1 = 0;
+    FM1_USB_IO_CON0 = 0;
+    FM1_USB_IO_CON0 |= (1u << 10) | (1u << 9) | (1u << 5) | (1u << 4);
+    FM1_USB_IO_CON0 &= ~((1u << 11) | (1u << 8));
+    FM1_USB_CON0 |= 0x25u;                              /* PHY_ON | USB_NRST | VBUS */
+}
+
+/* D+ / D- single-ended levels (CON0 bit 17 / 16): both 0 = nothing attached, else a device pulls one up */
+FM1_INLINE uint32_t fm1_usb_line(void) { return (FM1_USB_CON0 >> 16) & 3u; }
+
 /* SIE access through CON1: only while CON0.bit2 (USB_NRST) is set */
 FM1_INLINE uint32_t fm1_usb_sie_on(void) { return FM1_USB_CON0 & 4u; }
 FM1_INLINE void fm1_usb_sie_wr_start(uint32_t r, uint32_t v)
@@ -96,8 +122,10 @@ FM1_INLINE void fm1_usb_ep_send(uint32_t ep, void *p, uint32_t n)
     FM1_USB_EP_CNT(ep) = n;
 }
 /* EP4 IN (the USB audio stream, isochronous): its DMA address and count have their own
- * registers (SDK usb_set_dma_taddr / usb_write_ep_cnt, id 0, ep 4) (after Felucca 1.0) */
+ * registers (SDK usb_set_dma_taddr / usb_write_ep_cnt, id 0, ep 4) */
 FM1_INLINE void fm1_usb_ep4_txbuf(void *p) { FM1_USB_EP4_TADR = (uint32_t)(uintptr_t)p; }
+/* EP4 OUT (the USB audio output, isochronous): its DMA address (SDK usb_set_dma_raddr, ep 4) */
+FM1_INLINE void fm1_usb_ep4_rxbuf(void *p) { FM1_USB_EP4_RADR = (uint32_t)(uintptr_t)p; }
 FM1_INLINE void fm1_usb_ep4_send(void *p, uint32_t n)
 {
     __asm__ volatile("csync" ::: "memory");

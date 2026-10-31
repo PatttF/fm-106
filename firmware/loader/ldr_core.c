@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-3.0-only
+/* SPDX-License-Identifier: MPL-2.0
  * Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments */
 /* Felucca update loader, the portable part (step 2 of the M-UPGRADE update
  * protocol).
@@ -26,7 +26,7 @@
  * Hooks from the platform (loader.c, ldr_test.c):
  *   ldr_fread(off, p, n)  ldr_erase(off)  ldr_prog(off, p, n)   flash, 0 = ok
  *   ldr_record_clear()    forget the RAM update record
- *   ldr_progress(done, total)
+ *   ldr_progress(done, total)  both passes on one scale: the check (2b, flash.bin) then the write (3, the app area)
  * plus the ota.c hooks (frames, time, idle). */
 #define LDR_APP_LO 0x4000u
 #define LDR_APP_HI 0x93000u
@@ -97,6 +97,8 @@ static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t 
         if (ota_read(fl_off + i, b, n))
             return -7;
         crc = ota_crc16(b, n, crc);
+        if (!((i + n) & 0xFFFu))
+            ldr_progress(i + n, fl_size + (LDR_APP_HI - LDR_APP_LO));
         if (i >= LDR_APP_LO && i < LDR_APP_HI) {     /* (512-byte reads from 0: never across a sector) */
             uint32_t k = (i - LDR_APP_LO) >> 12;
             sc[k] = (uint16_t)ota_crc16(b, n, (i & 0xFFFu) ? sc[k] : 0u);
@@ -161,7 +163,7 @@ static int ldr_session(void)
                 return -11;                              /* verify failed twice */
         }
         done += 0x1000u;
-        ldr_progress(done, LDR_APP_HI - LDR_APP_LO);
+        ldr_progress(fl_size + done, fl_size + (LDR_APP_HI - LDR_APP_LO));
     }
     /* 4. finish: the host confirms, the record goes, the SPL boots the app */
     for (i = 0; i < 4u; i++)

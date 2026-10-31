@@ -58,7 +58,7 @@ static inline void fm106_adsr_params(fm106_adsr_t *e, uint8_t a, uint8_t d, uint
     e->target14 = (uint16_t)(((uint32_t)s * FM106_ENV_MAX) / 127u);
 }
 
-static inline void fm106_adsr_tick(fm106_adsr_t *e);
+static inline __attribute__((always_inline)) void fm106_adsr_tick(fm106_adsr_t *e);
 
 static inline void fm106_adsr_gate_on(fm106_adsr_t *e)
 {
@@ -88,7 +88,7 @@ static inline void fm106_adsr_gate_off(fm106_adsr_t *e)
 }
 
 /* Authentic D7811G calcDecay: 3 partial products of 8x8 MUL */
-static inline uint16_t fm106_adsr_calc_decay(uint16_t value, uint16_t coeff)
+static inline __attribute__((always_inline)) uint16_t fm106_adsr_calc_decay(uint16_t value, uint16_t coeff)
 {
     uint32_t vh = (uint32_t)(value >> 8);
     uint32_t vl = (uint32_t)(value & 0xFFu);
@@ -100,7 +100,7 @@ static inline uint16_t fm106_adsr_calc_decay(uint16_t value, uint16_t coeff)
 }
 
 /* Advance one firmware tick (~236.2 Hz, 4.2335 ms) */
-static inline void fm106_adsr_tick(fm106_adsr_t *e)
+static inline __attribute__((always_inline)) void fm106_adsr_tick(fm106_adsr_t *e)
 {
     switch (e->stage) {
     case FM106_ENV_ATTACK: {
@@ -151,7 +151,7 @@ static inline void fm106_adsr_tick(fm106_adsr_t *e)
 /* Audio-rate sample processing at 44.1 kHz.
  * Runs the 236.211 Hz tick and linearly interpolates between tick boundaries.
  * Returns Q15 (0..32766). */
-static inline int32_t fm106_adsr_process(fm106_adsr_t *e)
+static inline __attribute__((always_inline)) int32_t fm106_adsr_process(fm106_adsr_t *e)
 {
     /* Tick rate step: 236.211 / 44100 * 65536 ~= 351 */
     e->tick_accum += 351u;
