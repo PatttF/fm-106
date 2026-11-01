@@ -1309,7 +1309,14 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
     uint32_t n0 = num_active;
 
 #if DINGHY_DUAL_CORE
-    if (num_active > 0 && audio_worker_online && n == 256u) {
+    int ble_busy = 0;
+#if FELUCCA_BLE
+    uint32_t bst = ble_ui_state();
+    if (fm1_ms < 3000u || bst == BLE_ST_STARTING || bst == BLE_ST_SCANNING || bst == BLE_ST_CONNECTING) {
+        ble_busy = 1;
+    }
+#endif
+    if (num_active > 0 && audio_worker_online && n == 256u && !ble_busy) {
         /* Dual-Core voice split: CPU0 also runs HPF, VCA, Stereo Chorus, Tape FX, and Reverb.
          * Allocate up to 4..5 voices to CPU1 so both cores run in true balanced parallelism
          * at ~30-35% load each during polyphonic chords:

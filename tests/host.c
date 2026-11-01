@@ -87,7 +87,21 @@ static int settings_save(const void *p, uint32_t n)
 
 static inline int presets_flash_read(void *dst, uint32_t n) { (void)dst; (void)n; return -1; }
 static inline int presets_flash_save(const void *src, uint32_t n) { (void)src; (void)n; return 0; }
+static inline int seq_flash_read(void *dst, uint32_t n) { (void)dst; (void)n; return -1; }
+static inline int seq_flash_save(const void *src, uint32_t n) { (void)src; (void)n; return 0; }
 static inline int fm106_sysex_send(const uint8_t *p, uint32_t n) { (void)p; (void)n; return 0; }
+#ifndef FM1_ADC_BATT
+#define FM1_ADC_BATT 0u
+#endif
+static inline int32_t fm1_adc_read(uint32_t ch) { (void)ch; return 620; }
+static inline uint32_t fm106_now_ms(void) { return fm1_ms; }
+static inline void str_cpy(char *d, const char *s, unsigned max)
+{
+    unsigned i = 0;
+    if (!max) return;
+    while (s[i] && i + 1u < max) { d[i] = s[i]; i++; }
+    d[i] = '\0';
+}
 
 static uint8_t mq[64][3];
 static uint32_t mq_w, mq_r;

@@ -19,9 +19,17 @@ All integrity checks in the format are CRC16 (poly 0x1021, init 0).
 import argparse
 import os
 import struct
+import zlib
 from pathlib import Path
 
 APP_SLOT = 0x8DFBC
+# The stub's commit marker (firmware/stub/stub_core.h): app.bin byte 0 sits at
+# flash 0x4120 (0x4000 + 0x120 in flash_image), so STUB_MARK_OFF 0x91FE0 is
+# app[0x8DEC0]. Without CRBM there, stub_decide sends the boot to the update
+# loader instead of the app and the screen stays black.
+STUB_LEN = 0xEE0
+STUB_MARK_FLASH = 0x91FE0
+STUB_MARK_APP = STUB_MARK_FLASH - 0x4120
 FLASH_SIZE = 0x93000
 KEY = 0x980F
 # flash header: JieLi SDK defaults (burner_size 544, VID "0.01", flash_size 0xFF000,
@@ -122,7 +130,17 @@ def flash_image(app, key):
     # ---- app area (plain first, then SFC)
     if len(app) > APP_SLOT:
         raise SystemExit(f"app is {len(app)} B, the slot is {APP_SLOT} B")
-    app = app + b"\xFF" * (APP_SLOT - len(app))
+    body_len = len(app) - STUB_LEN            # the real body: flash 0x5000 on
+    if body_len <= 0 or body_len & 3:
+        raise SystemExit(f"app body {body_len} B: empty or not word aligned")
+    app = bytearray(app + b"\xFF" * (APP_SLOT - len(app)))
+    # 20-byte commit marker, crc32 exactly as stub_core.h computes it
+    # (zlib: reflected 0xEDB88320, init/final 0xFFFFFFFF): [0]CRBM [4]format
+    # [8]body len [12]body crc32 [16]crc32 of the first 16 bytes
+    mark = struct.pack("<4I", 0x4D425243, 1, body_len,
+                       zlib.crc32(app[STUB_LEN:STUB_LEN + body_len]))
+    mark += struct.pack("<I", zlib.crc32(mark))
+    app[STUB_MARK_APP:STUB_MARK_APP + len(mark)] = mark
     blk = 0x120 + APP_SLOT + len(cfg_tool)              # app_area_head block size
     area = bytearray(b"\xFF" * blk)
     area[0x120:0x120 + APP_SLOT] = app

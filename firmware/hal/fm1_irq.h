@@ -129,7 +129,24 @@ void fm1_fault_c(uint32_t *f)
 #elif DINGHY_DUAL_CORE
     uint32_t cpu = fm1_cnum(), dbg = FM1_DBG_MSG;
     if (cpu != 0) {
-        /* CPU1 took exception; park CPU1 in an idle loop */
+        /* CPU1 took exception; record into crash context before parking */
+        fm1_crash.magic = FM1_CRASH_MAGIC;
+        fm1_crash.count = count + 1u;
+        fm1_crash.vec = 0x100u | ((f[19] - (uint32_t)(uintptr_t)fm1_fatal_stubs) / 6u - 1u);
+        fm1_crash.pc = f[16];
+        fm1_crash.rets = f[25];
+        fm1_crash.emu = FM1_C1_EMU_MSG;
+        fm1_crash.dbg = dbg;
+        fm1_crash.sp = f[24];
+        fm1_crash.psr = f[20];
+        fm1_crash.icfg = f[21];
+        fm1_crash.uptime_ms = *(volatile uint32_t *)0x10804u / 24000u;
+        fm1_crash_ctx_t *x = &fm1_crash_ctx[fm1_crash.count % FM1_CRASH_CTX_N];
+        x->count = fm1_crash.count;
+        x->pc = f[16];
+        for (i = 0; i < 16u; i++) x->r[i] = f[i];
+        x->usp = f[22];
+        x->ssp = f[23];
         for (;;) {
             __asm__ volatile("nop; nop; nop; nop");
         }

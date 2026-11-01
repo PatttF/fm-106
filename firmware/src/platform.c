@@ -29,7 +29,7 @@ enum { ENC_SELECT = 0, ENC_ALGORITHM = 1, ENC_KNOB1 = 2, ENC_KNOB2 = 3, ENC_KNOB
 #include "../../tests/host.c"                  /* on a computer: a fake FM-1 (tests/host.c) */
 #else
 #ifndef DINGHY_DUAL_CORE
-#define DINGHY_DUAL_CORE 1     /* Dual-core CPU0/CPU1 parallel audio engine */
+#define DINGHY_DUAL_CORE 0     /* Single-core release: 100% stable audio engine */
 #endif
 #include <stdint.h>
 #include "fm1_time.h"
@@ -82,7 +82,7 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #define FELUCCA_USB_SERIAL "FM106"              /* Distinct USB serial so CoreMIDI/Windows don't reuse cached "Felucca" */
 #define FELUCCA_BCD_HI 0x09                     /* Distinct bcdDevice (9.28) so hosts refresh cached descriptors */
 #define FELUCCA_UART 1
-#define SXQ 128u
+#define SXQ 256u
 #include "usb.c"
 #if FELUCCA_UART
 #include "midi_uart.c"

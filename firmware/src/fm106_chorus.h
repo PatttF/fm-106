@@ -49,6 +49,8 @@ static inline float fm106_bbd_filter_process(fm106_bbd_filter_t *f, float in)
     float v2 = f->ic2 + 0.8260784f * v1;
     f->ic1 = 2.0f * v1 - f->ic1;
     f->ic2 = 2.0f * v2 - f->ic2;
+    if (f->ic1 > -1.0e-15f && f->ic1 < 1.0e-15f) f->ic1 = 0.0f;
+    if (f->ic2 > -1.0e-15f && f->ic2 < 1.0e-15f) f->ic2 = 0.0f;
     return v2;
 }
 
@@ -137,7 +139,7 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
 
     /* 4-point Hermite interpolation for C1-continuous fractional delay taps (eliminates zipper noise) */
     int32_t int_del_l = delay_l_q16 >> 16;
-    int32_t frac_l = (delay_l_q16 >> 1) & 0x7FFFu;
+    int32_t frac_l = (int32_t)((delay_l_q16 & 0xFFFFu) >> 1);
     uint32_t rd_l1 = (wr - 1u - (uint32_t)int_del_l) & FM106_CHORUS_MASK;
     uint32_t rd_l0 = (rd_l1 + 1u) & FM106_CHORUS_MASK;
     uint32_t rd_l2 = (rd_l1 - 1u) & FM106_CHORUS_MASK;
@@ -146,7 +148,7 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
 
     /* Read Right tap */
     int32_t int_del_r = delay_r_q16 >> 16;
-    int32_t frac_r = (delay_r_q16 >> 1) & 0x7FFFu;
+    int32_t frac_r = (int32_t)((delay_r_q16 & 0xFFFFu) >> 1);
     uint32_t rd_r1 = (wr - 1u - (uint32_t)int_del_r) & FM106_CHORUS_MASK;
     uint32_t rd_r0 = (rd_r1 + 1u) & FM106_CHORUS_MASK;
     uint32_t rd_r2 = (rd_r1 - 1u) & FM106_CHORUS_MASK;

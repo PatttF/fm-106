@@ -115,8 +115,11 @@ static void bt_st_poll(void)
     if (btp.add) return;
     /* Never erase flash while sequencer or arpeggiator is actively playing notes */
     if (g_synth.seq.playing || g_synth.arp_on) return;
-    /* If voices or reverb tails are actively sounding, wait until quiet */
-    if (!synth_quiet()) return;
+    /* Do not erase flash while keys are actively held */
+    if (fm1_in.notes != 0) return;
+    for (uint32_t v = 0; v < FM106_NUM_VOICES; v++) {
+        if (g_synth.voice[v].gate) return;
+    }
 #if DINGHY_DUAL_CORE
     if (audio_worker_online) audio_worker_join();
 #endif

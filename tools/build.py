@@ -32,12 +32,20 @@ sys.path.insert(0, str(SRC / "tools"))
 import fm1pkg_make  # noqa: E402
 import lz4blk  # noqa: E402
 
-APP_XIP = 0x02000120                # app.bin offset 0 in the XIP map; the SPL jumps here
+STUB_XIP = 0x02000120
+STUB_LEN = fm1pkg_make.STUB_LEN     # 0xEE0
+APP_XIP = STUB_XIP + STUB_LEN       # 0x02001000: app.bin offset 0xEE0 in XIP map; the stub jumps here
 APP_SLOT = fm1pkg_make.APP_SLOT
 LOADER_LOAD = 0x01C0A800
 LOADER_NAME = b"usb_hid_ota.bin"    # the file name the SPL looks for
 DOCKER_IMAGE = os.environ.get("JIELI_DOCKER_IMAGE", "debian:bookworm-slim")
-CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function"]
+SDK_MOUNT = None                    # BLE builds: JieLi BT SDK mounted at /sdk
+STB = OUT / "stub"
+# -mcpu=r3 -mfprev1: the AC79's single-precision FPU (the SDK's own flags, via
+# fm1-base); without them clang 4.0.1 emits __floatsisf softfloat, which this
+# freestanding link (no libs) cannot resolve. No fused multiply-add → contract off.
+CFLAGS = ["-Os", "-ffunction-sections", "-fno-builtin", "-Wall", "-Wno-unused-function",
+          "-mcpu=r3", "-mfprev1", "-ffp-contract=off"]
 LINE = re.compile(r"^\s*([0-9a-f]+):\s+((?:[0-9a-f]{2} )+)\s*\t(.*)$")
 
 # SDK files of AC79NN_SDK_V1.2.1_2023-12-13 (the tested version)
@@ -47,12 +55,12 @@ SDK_SHA256 = {
     "cfg/eq_cfg_hw.bin": "41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d",
 }
 
-PRODUCT = "FM-1_906"                # FM-106 package identity (FM-1_9NN)
+PRODUCT = "FM-1_907"                # FM-106 package identity (FM-1_9NN)
 VERSION = None                      # APP_VER for release builds
 
 
 def toolchain():
-    tc = os.environ.get("JIELI_TOOLCHAIN")
+    tc = os.environ.get("JIELI_TOOLCHAIN") or str(Path.home() / ".jieli" / "toolchain")
     if not tc or not (Path(tc) / "pi32v2" / "bin" / "clang").exists():
         raise SystemExit("JIELI_TOOLCHAIN must point at the JieLi Linux toolchain "
                          "(the directory with pi32v2/ and common/; see tools/get_toolchain.sh)")
@@ -70,7 +78,8 @@ def tc(tool, *args):
     if tool == "cc":                # the toolchain's cc wrapper needs python3; call clang directly
         tool, rel = "pi32v2/bin/clang", ["-target", "pi32v2", *rel]
     if use_docker():
-        cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{SRC}:/work",
+        sdk = ["-v", f"{SDK_MOUNT}:/sdk:ro"] if SDK_MOUNT else []
+        cmd = ["docker", "run", "--rm", "--platform", "linux/amd64", "-v", f"{SRC}:/work", *sdk,
                "-v", f"{toolchain()}:/opt/jieli:ro", "-w", "/work", DOCKER_IMAGE, f"/opt/jieli/{tool}", *rel]
     else:
         cmd = [str(toolchain() / tool), *rel]
@@ -150,23 +159,137 @@ def build_loader():
     return ota
 
 
+# ---- boot stub
+
+def build_stub():
+    """firmware/stub -> app.bin's first STUB_LEN bytes (0xFF padded). Code and constants only, built from its own
+    sources alone, so it is the same bytes in every build: the loader rewrites sector 0x4000 only when it changes
+    (docs/BOOT-SAFETY.md). firmware/stub/stub.lock records the version and hash of the stub that is meant to ship."""
+    STB.mkdir(parents=True, exist_ok=True)
+    src = FW / "stub"
+    tc_all(("cc", "-Ifirmware/stub", "-c", src / "crt0_stub.S", "-o", STB / "crt0_stub.o"),
+           ("cc", *CFLAGS, "-Ifirmware/stub", "-c", src / "stub.c", "-o", STB / "stub.o"))
+    elf = STB / "stub.elf"
+    tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", src / "stub.ld",
+       STB / "crt0_stub.o", STB / "stub.o", "-o", elf)
+    (STB / "stub.bin").unlink(missing_ok=True)
+    _, dis, hdr, syms = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, STB / "stub.bin"),
+                               ("common/bin/objdump", "-d", elf),
+                               ("common/bin/objdump", "-h", elf),
+                               ("common/bin/objdump", "-t", elf))
+    (STB / "stub.dis").write_text(dis)
+    img = (STB / "stub.bin").read_bytes()
+    for ln in hdr.splitlines():     # no .data, no .bss: nothing but .text may have a size
+        p = ln.split()
+        if len(p) > 3 and p[0].isdigit() and p[1].startswith(".") and int(p[2], 16) and \
+                p[1] not in (".text", ".shstrtab", ".symtab", ".strtab"):
+            raise SystemExit(f"stub: section {p[1]} holds {int(p[2], 16)} B; the stub is code and constants only")
+    m = re.search(r"^([0-9a-f]+) .*\s_start$", syms, re.M)
+    if not m or int(m.group(1), 16) != STUB_XIP:
+        raise SystemExit(f"stub: _start is not at {STUB_XIP:#x}")
+    if img[:4] != bytes.fromhex("04818000"):
+        raise SystemExit(f"stub: starts with {img[:4].hex()}, not the entry the SPL expects (goto +4; rts)")
+    if img[8:14] != b"CRSTUB":
+        raise SystemExit("stub: no CRSTUB signature at offset 8")
+    if not img or len(img) > STUB_LEN - 256:     # keep a margin: a stub that grows to the brim cannot be fixed
+        raise SystemExit(f"stub: {len(img)} B does not fit {STUB_LEN} B with 256 B to spare")
+    for ln in dis.splitlines():     # nothing may call or load an address in the chip ROM (as the app's check)
+        mm = LINE.match(ln)
+        for v in (re.findall(r"= (-?\d+) <|call -?\d+ <[^:>]*: ([0-9a-f]+) >", mm.group(3)) if mm else ()):
+            val = (int(v[0]) & 0xFFFFFFFF) if v[0] else int(v[1], 16) & 0xFFFFFFFF
+            if 0xFFC00000 <= val < 0xFFD00000:
+                raise SystemExit(f"stub: reference to ROM address {val:#010x}")
+    used = len(img)
+    img += b"\xff" * (STUB_LEN - len(img))
+    ver = struct.unpack_from("<H", img, 14)[0]
+    sha = hashlib.sha256(img).hexdigest()
+    print(f"stub: {used} B of {STUB_LEN} ({100 * used / STUB_LEN:.1f}%), version {ver}, sha256 {sha[:16]}")
+    lock = src / "stub.lock"
+    want = lock.read_text().split() if lock.exists() else []
+    if want != [str(ver), sha]:
+        if os.environ.get("FM1_STUB_LOCK") == "update":
+            lock.write_text(f"{ver} {sha}\n")
+            print(f"stub: {lock.relative_to(SRC)} updated")
+        else:
+            msg = (f"the boot stub differs from {lock.relative_to(SRC)} ({' '.join(want)[:20] or 'none'}..): installing "
+                   "this build rewrites sector 0x4000, the one window an interruption is not rescued in. If the "
+                   "change is meant: bump STUB_VERSION (firmware/stub/stub_core.h), rebuild with "
+                   "FM1_STUB_LOCK=update, and say so in the release notes")
+            if VERSION:
+                raise SystemExit("build: " + msg)
+            print("WARNING: " + msg)
+    return img
+
+
 # ---- app
 
-def build_app():
+def build_app(stub):
+    ble = os.environ.get("FELUCCA_BLE", "1") != "0"
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"', f'-DAPP_VER="{VERSION or "0.0"}"']
-    for flag in ("DINGHY_DUAL_CORE",):         # unset: the default in firmware/src/platform.c
-        v = os.environ.get(flag)
-        if v in ("0", "1"):
-            flags.append(f"-D{flag}={v}")
+    if ble:
+        flags.append("-DFELUCCA_BLE=1")
+        flags.extend(["-mllvm", "-enable-global-merge=false"])
+    default_dc = "0"
+    v = os.environ.get("DINGHY_DUAL_CORE", default_dc)
+    if v in ("0", "1"):
+        flags.append(f"-DDINGHY_DUAL_CORE={v}")
     app_src = FW / "src" / ("fm106.c" if (FW / "src" / "fm106.c").exists() else "dinghy.c")
     cmds = [("cc", *[f for f in flags if f.startswith("-DDINGHY_DUAL_CORE=")], "-c", FW / "crt0.S", "-o", OUT / "crt0.o"),
             ("cc", "-c", FW / "hal" / "fm1_vec.S", "-o", OUT / "fm1_vec.o"),
-            ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o"),
-            ("cc", *flags, "-c", app_src, "-o", OUT / "fm106.o")]
+            ("cc", "-c", FW / "hal" / "fm1_isr.S", "-o", OUT / "fm1_isr.o")]
+    cfg_objs = []
+    if ble:
+        global SDK_MOUNT
+        import ble_libs
+        if not use_docker():
+            raise SystemExit("build: FELUCCA_BLE builds run the toolchain in Docker (the SDK is mounted at /sdk)")
+        ble_libs.libs()
+        SDK_MOUNT = str(ble_libs.SDK)
+        cmds.append(("cc", "-c", FW / "hal" / "fm1_ctx.S", "-o", OUT / "fm1_ctx.o"))
+        (OUT / "blecfg").mkdir(exist_ok=True)
+        for src in ble_libs.SDK_CONFIG_SOURCES:
+            obj = OUT / "blecfg" / (Path(src).stem + ".o")
+            cmds.append(("cc", *ble_libs.SDK_CFLAGS, "-c", f"/sdk/{src}", "-o", obj))
+            cfg_objs.append(obj)
+        cmds.append(("cc", "-mcpu=r3", "-Os", "-flto", "-Wall", "-c", SRC / ble_libs.LTO_STUBS, "-o",
+                     OUT / "blecfg" / "ble_lto_stubs.o"))
+        cfg_objs.append(OUT / "blecfg" / "ble_lto_stubs.o")
+    cmds.append(("cc", *flags, "-c", app_src, "-o", OUT / "fm106.o"))
     tc_all(*cmds)
     elf = OUT / "fm106.elf"
-    tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", FW / "app.ld", OUT / "crt0.o", OUT / "fm1_vec.o",
-       OUT / "fm1_isr.o", OUT / "fm106.o", "-o", elf)
+    extra = []
+    if ble:
+        libdir = OUT / "blelibs"
+        libdir.mkdir(exist_ok=True)
+        libs = ble_libs.libs()
+        for p in libs:
+            shutil.copy(p, libdir / Path(p).name)
+        objs = ble_libs.members(libdir)
+        tc("cc", *[f for f in flags if f != "-Ifirmware/gen"], "-mllvm", "-pi32v2-large-program=true", "-c",
+           FW / "src" / "ble" / "ble.c", "-o", OUT / "ble.o")
+        objs.append(OUT / "ble.o")
+        extra = [OUT / "fm1_ctx.o", *cfg_objs, *objs, "--start-group", *[libdir / Path(p).name for p in libs],
+                 "--end-group"]
+        gold = "/opt/jieli/pi32v2/bin/LLVMgold.so"
+        ld = ["pi32v2/bin/ld", "--plugin", gold, "--plugin-opt=mcpu=r3", "--plugin-opt=-pi32v2-large-program=true",
+              "--plugin-opt=-pi32v2-always-use-itblock=false",
+              "--plugin-opt=-dont-used-symbol-list=" + ",".join(ble_libs.LOG_FUNCS),
+              "-Map", "build/fm106.map",
+              "--wrap=memcpy"]
+        script = FW / "app_ble.ld"
+        tc(*ld, "-T", script, OUT / "crt0.o", OUT / "fm1_vec.o",
+           OUT / "fm1_isr.o", OUT / "fm106.o", *extra, "-o", elf)
+        ok = {".volatile_ram_code", ".bt_updata_ram_code"}
+        ram_code = sorted(set(re.findall(r"^\s*(\.\S*ram_code\S*)", (OUT / "fm106.map").read_text(), re.M)) - ok)
+        if ram_code:
+            raise SystemExit(f"build: BT library RAM code sections linked (not placed in RAM): {ram_code}")
+    else:
+        rt_lib = Path(os.environ.get("AC79_SDK", Path.home() / "fw-AC79_AIoT_SDK")) / "include_lib" / "newlib" / "pi32v2-lib" / "libcompiler_rt.a"
+        if rt_lib.exists():
+            shutil.copyfile(rt_lib, OUT / "libcompiler_rt.a")
+            extra.append(OUT / "libcompiler_rt.a")
+        tc("pi32v2/bin/ld", "--gc-sections", "-e", "_start", "-T", FW / "app.ld", OUT / "crt0.o", OUT / "fm1_vec.o",
+           OUT / "fm1_isr.o", OUT / "fm106.o", *extra, "-o", elf)
     for sect in ("text.bin", "data.bin", "ramtext.bin"):
         (OUT / sect).unlink(missing_ok=True)
     *_, syms, dis, rt = tc_all(("common/bin/objcopy", "-O", "binary", "-j", ".text", elf, OUT / "text.bin"),
@@ -192,6 +315,7 @@ def build_app():
             img += b"\xff" * (load - APP_XIP - len(img))
             img += blob
     img += b"\xff" * (-len(img) % 4)
+    img = stub + bytes(img)         # app.bin as it is packed: the stub, then the app from flash 0x5000
     (OUT / "fm106.bin").write_bytes(img)
     return bytes(img), syms, dis, rt
 
@@ -203,6 +327,8 @@ def check(img, syms, dis, rt):
         errors.append(f"_start is not at {APP_XIP:#x}")
     if img[:4] != bytes.fromhex("04818000"):
         errors.append(f"image starts with {img[:4].hex()}, not the entry stub")
+    if img[STUB_LEN:STUB_LEN + 4] != bytes.fromhex("04818000"):
+        errors.append(f"the app starts with {img[STUB_LEN:STUB_LEN + 4].hex()}, not its entry (goto +4; rts)")
     def sym(name):
         mm = re.search(r"^([0-9a-f]+) .*\s" + name + r"$", syms, re.M)
         return int(mm.group(1), 16) if mm else 0
@@ -311,13 +437,14 @@ def main():
         PRODUCT = "FM-1_90" + m[2]
         VERSION = m[1] + "." + m[2] + (m[3] or "")
         name = f"fm106-{a.release}.fwsc"
-    fm1pkg_make.SDK = a.sdk
+    fm1pkg_make.SDK = a.sdk or Path(os.environ.get("AC79_SDK") or (Path.home() / "fw-AC79_AIoT_SDK"))
     for rel, sha in SDK_SHA256.items():          # fail early without the SDK
         if hashlib.sha256(fm1pkg_make.sdk_file(rel)).hexdigest() != sha:
             print(f"warning: SDK {rel} differs from AC79NN_SDK_V1.2.1; the package will not match the reference")
     OUT.mkdir(parents=True, exist_ok=True)
     ota = build_loader()
-    img, syms, dis, rt = build_app()
+    stub = build_stub()
+    img, syms, dis, rt = build_app(stub)
     errors, notes = check(img, syms, dis, rt)
     hal_err = mmio_check()
     errors += hal_err
@@ -329,7 +456,11 @@ def main():
         print("  FAIL ", e)
     if errors:
         raise SystemExit("build: checks failed")
-    pkg = fm1pkg_make.ufw(fm1pkg_make.flash_image(img, fm1pkg_make.KEY), ota, PRODUCT)
+    flash = fm1pkg_make.flash_image(img, fm1pkg_make.KEY)
+    pkg = fm1pkg_make.ufw(flash, ota, PRODUCT)
+    print(f"sector 0x4000 (the directory and the stub: constant while the stub is) sha256 "
+          f"{hashlib.sha256(flash[0x4000:0x5000]).hexdigest()[:16]}; marker at 0x91fe0, body "
+          f"{len(img) - STUB_LEN + (-len(img) % 4)} B")
     (OUT / name).write_bytes(pkg)
     print(f"app      {OUT / 'fm106.bin'}  {len(img)} B")
     print(f"loader   {LDR / 'ota.bin'}  {len(ota)} B")

@@ -10,6 +10,7 @@ import json
 import struct
 import sys
 import time
+import os
 import mido
 
 PORT_NAME = "FM-106"
@@ -110,10 +111,14 @@ def main():
     parser.add_argument("--load-syx", metavar="FILE", help="Send standard .syx patch or bank file to FM-1")
     parser.add_argument("--load-106", metavar="FILE", help="Load Jarvik7 .106 library file to FM-1 hardware")
     parser.add_argument("--load-json", metavar="FILE", help="Load Jarvik7 lib.json or backup JSON to FM-1 hardware")
+    parser.add_argument("--crash", action="store_true", help="Query crash registers, exception status and BLE diag")
+    parser.add_argument("--ble-on", action="store_true", help="Turn Bluetooth ON via SysEx")
+    parser.add_argument("--ble-off", action="store_true", help="Turn Bluetooth OFF via SysEx")
+    parser.add_argument("--ble-scan", action="store_true", help="Start Bluetooth scan via SysEx")
     args = parser.parse_args()
 
     actions = [args.dump is not None, args.dump_all, args.dump_user, args.burn_flash, args.restore_factory,
-               args.load_syx, args.load_106, args.load_json]
+               args.load_syx, args.load_106, args.load_json, args.crash, args.ble_on, args.ble_off, args.ble_scan]
     if not any(actions):
         parser.print_help()
         sys.exit(0)
@@ -226,6 +231,163 @@ def main():
                         continue
                 pos += 1
             print(f"Transferred {count} SysEx messages to FM-1 hardware.")
+
+        elif args.ble_on:
+            print("Sending Bluetooth ON (41 3B 00 01)...")
+            port.send(mido.Message("sysex", data=[0x41, 0x3B, 0x00, 0x01]))
+            time.sleep(0.1)
+            print("Command sent.")
+
+        elif args.ble_off:
+            print("Sending Bluetooth OFF (41 3B 00 02)...")
+            port.send(mido.Message("sysex", data=[0x41, 0x3B, 0x00, 0x02]))
+            time.sleep(0.1)
+            print("Command sent.")
+
+        elif args.ble_scan:
+            print("Sending Bluetooth Scan Start (41 3B 00 03)...")
+            port.send(mido.Message("sysex", data=[0x41, 0x3B, 0x00, 0x03]))
+            time.sleep(0.1)
+            print("Command sent.")
+
+        elif args.crash:
+            # Send crash query 41 3A 00
+            for _ in port.iter_pending(): pass
+            port.send(mido.Message("sysex", data=[0x41, 0x3A, 0x00]))
+            t0 = time.time()
+            data = None
+            while time.time() - t0 < 1.0 and not data:
+                for msg in port.iter_pending():
+                    if msg.type == "sysex" and len(msg.data) >= 4 and msg.data[0] == 0x41 and msg.data[1] == 0x3A:
+                        data = list(msg.data[3:]) # raw 7-bit bytes after cmd/ch
+                        break
+                time.sleep(0.01)
+
+            if not data:
+                print("No crash response received from FM-106.")
+                return
+
+            words = []
+            for i in range(0, len(data) - 4, 5):
+                chunk = data[i:i+5]
+                w = chunk[0] | (chunk[1] << 7) | (chunk[2] << 14) | (chunk[3] << 21) | (chunk[4] << 28)
+                words.append(w)
+
+            # Load symbol table if available
+            syms = {}
+            if os.path.exists("build/fm106.elf"):
+                try:
+                    import subprocess
+                    from pathlib import Path
+                    tc = os.environ.get("JIELI_TOOLCHAIN") or str(Path.home() / ".jieli" / "toolchain")
+                    out = subprocess.check_output([
+                        "docker", "run", "--rm", "--platform", "linux/amd64",
+                        "-v", f"{os.getcwd()}:/work",
+                        "-v", f"{tc}:/opt/jieli:ro",
+                        "-w", "/work",
+                        "debian:bookworm-slim",
+                        "/opt/jieli/pi32v2/bin/nm", "-n", "build/fm106.elf"
+                    ], text=True)
+                    for l in out.splitlines():
+                        p = l.split()
+                        if len(p) >= 3 and p[1].upper() in ('T', 'W'):
+                            syms[int(p[0], 16)] = p[2]
+                except Exception:
+                    pass
+
+            def resolve(addr):
+                if not addr or not syms: return ""
+                match = None
+                m_addr = 0
+                for a, name in sorted(syms.items()):
+                    if a <= addr:
+                        match = name
+                        m_addr = a
+                    else:
+                        break
+                if match:
+                    return f"({match} + 0x{addr - m_addr:X})"
+                return ""
+
+            print(f"=== CRASH RECORD ({len(words)} words decoded) ===")
+            if len(words) >= 16:
+                magic, count, vec, pc, rets, emu, dbg, sp, psr, icfg, uptime = words[0:11]
+                etm = words[11:15]
+                early = words[15]
+                print(f"Magic : 0x{magic:08X} {'(VALID CRASH)' if magic == 0x43525348 else '(NONE)'}")
+                print(f"Count : {count}")
+                print(f"VEC   : 0x{vec:08X} ({vec})")
+                print(f"PC    : 0x{pc:08X} {resolve(pc)}")
+                print(f"RETS  : 0x{rets:08X} {resolve(rets)}")
+                print(f"EMU   : 0x{emu:08X}")
+                print(f"DBG   : 0x{dbg:08X}")
+                print(f"SP    : 0x{sp:08X}")
+                print(f"PSR   : 0x{psr:08X}")
+                print(f"ICFG  : 0x{icfg:08X}")
+                print(f"Uptime: {uptime} ms")
+                print(f"Early : {early}")
+                etm_strs = [f"0x{x:08X} {resolve(x)}".strip() for x in etm]
+                print(f"ETM   : {etm_strs}")
+
+            if len(words) >= 36:
+                ctx = words[16:36]
+                c_count, c_pc = ctx[0], ctx[1]
+                r = ctx[2:18]
+                usp, ssp = ctx[18], ctx[19]
+                print(f"\n=== REGISTERS AT CRASH (count {c_count}) ===")
+                print(f"PC : 0x{c_pc:08X} {resolve(c_pc)}")
+                for row in range(4):
+                    line = "  ".join(f"R{row*4+col:02d}: 0x{r[row*4+col]:08X}" for col in range(4))
+                    print(line)
+                print(f"USP: 0x{usp:08X}   SSP: 0x{ssp:08X}")
+
+            if len(words) >= 52:
+                bd = words[36:52]
+                st_names = ["OFF", "STARTING", "IDLE", "SCANNING", "CONNECTING", "DISCOVERING", "SUBSCRIBED", "RECEIVING", "FAILED", "ADVERTISING"]
+                st_str = st_names[bd[13]] if bd[13] < len(st_names) else str(bd[13])
+                print(f"\n=== BLE DIAGNOSTICS ===")
+                print(f"Magic       : 0x{bd[0]:08X}")
+                print(f"Stage       : {bd[1]}")
+                print(f"Task        : {bd[2]}")
+                print(f"Starts      : {bd[3]}")
+                print(f"Trim        : {bd[4]}")
+                print(f"Delays      : {bd[5]} (last {bd[6]} us, T4 stalls {bd[7]})")
+                print(f"IRQ leaks   : {bd[8]}")
+                print(f"Fatal       : {bd[9]}")
+                print(f"Heap high   : {bd[10]}")
+                print(f"Alloc fails : {bd[11]}")
+                print(f"IRQ lowered : {bd[12]}")
+                print(f"BLE State   : {st_str}")
+                print(f"Scan On     : {bd[14]}")
+                print(f"Scan Want   : {bd[15]}")
+
+            if len(words) >= 60:
+                sd = words[52:60]
+                p3_rst = sd[0]
+                rst_reasons = []
+                if p3_rst & (1 << 0): rst_reasons.append("POWER_ON")
+                if p3_rst & (1 << 1): rst_reasons.append("VDDIO_LOW")
+                if p3_rst & (1 << 2): rst_reasons.append("WDT_RESET")
+                if p3_rst & (1 << 3): rst_reasons.append("VCM")
+                if p3_rst & (1 << 4): rst_reasons.append("LONG_PRESS")
+                if p3_rst & (1 << 5): rst_reasons.append("1.2V_LOW")
+                if p3_rst & (1 << 6): rst_reasons.append("SOFT_P33")
+                rst_str = "|".join(rst_reasons) if rst_reasons else f"0x{p3_rst:02X}"
+                where_step = sd[1]
+                bt_st = sd[2]
+                st_cur = bt_st & 0xFF
+                st_fails = (bt_st >> 8) & 0xFF
+                st_dirty = (bt_st >> 16) & 0xFF
+                st_loaded = (bt_st >> 24) & 0xFF
+                print(f"\n=== SYSTEM DIAGNOSTICS ===")
+                print(f"Reset Cause : 0x{p3_rst:02X} ({rst_str})")
+                print(f"Last Step   : 0x{where_step:02X} ({where_step})")
+                print(f"BT Store    : cur={st_cur} fails={st_fails} dirty={st_dirty} loaded={st_loaded}")
+                print(f"AW Timeouts : {sd[3]}")
+                print(f"AW Max Wait : {sd[4]} ticks ({sd[4] // 240} us)")
+                print(f"Audio Lates : {sd[5]}")
+                print(f"Uptime ms   : {sd[6]}")
+                print(f"AW Jobs     : {sd[7]}")
 
 if __name__ == "__main__":
     main()

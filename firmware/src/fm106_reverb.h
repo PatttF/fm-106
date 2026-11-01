@@ -535,7 +535,7 @@ static FM106_RAM_FUNC void fm106_reverb_kernel(fm106_reverb_t *r, int32_t *stere
     r->sh_post_r = fm106_rev_flush_denorm(sh_post_r);
 
     /* Tail active flag: holds UI graphics or flash write */
-    r->tail_active = (r->env_mix > 0.001f && peak_energy > 0.0003f) ? 1u : 0u;
+    r->tail_active = (r->on && r->mix > 0u && r->env_mix > 0.001f && peak_energy > 0.0003f) ? 1u : 0u;
 
     /* Auto-sleep once dry input is silent and tank tail decays below audibility */
     if (in_energy < 0.0001f && peak_energy < 0.0002f) {

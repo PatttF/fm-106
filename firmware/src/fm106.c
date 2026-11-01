@@ -7,6 +7,9 @@
 #define FELUCCA_ID "FM-1_907"
 
 #include "platform.c"
+#if FELUCCA_BLE
+#include "ble/ble_core.h"
+#endif
 #include "fm106_engine.h"
 
 /* UI Modes */
@@ -2713,7 +2716,8 @@ static int synth_quiet(void)
         if (g_synth.voice[v].gate || g_synth.voice[v].adsr.stage != FM106_ENV_IDLE)
             return 0;
     }
-    if (g_synth.reverb.tail_active) return 0;
+    if (g_synth.reverb.on && g_synth.reverb.mix > 0u && g_synth.reverb.tail_active && g_synth.reverb.silent_blocks < 32u)
+        return 0;
     return 1;
 }
 

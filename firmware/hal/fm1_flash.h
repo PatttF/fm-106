@@ -255,8 +255,18 @@ static void fl_plain_window_init(void)
     __asm__ volatile("csync\n\tsti" ::: "memory");
 }
 
-static inline uint32_t irq_save(void) { __asm__ volatile("cli" ::: "memory"); return 0; }
-static inline void irq_restore(uint32_t f) { (void)f; __asm__ volatile("csync\n\tsti" ::: "memory"); }
+static inline uint32_t irq_save(void)
+{
+    uint32_t v;
+    __asm__ volatile("%0 = icfg\n\tcli" : "=r"(v) :: "memory");
+    return v;
+}
+static inline void irq_restore(uint32_t f)
+{
+    if (f & 1u) {
+        __asm__ volatile("csync\n\tsti" ::: "memory");
+    }
+}
 
 /* with interrupts off, before the XIP goes away: a second core that runs code from the flash finishes first (the
  * app defines it; an audio job submitted between a join and the irq_save would fetch from a switched-off XIP) */
