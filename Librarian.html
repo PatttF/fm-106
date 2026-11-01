@@ -706,6 +706,45 @@ input[type=range].fader-input {
     box-shadow: 0 0 8px var(--accent-amber);
 }
 
+/* Assign (Voice Mode) Push Buttons */
+.assign-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+}
+
+.assign-btn {
+    background: #16063c;
+    border: 1px solid #4a26a4;
+    color: #b9a6e0;
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    border-radius: 3px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.1s ease;
+}
+
+.assign-btn:hover {
+    background: #2a1260;
+    color: white;
+}
+
+.assign-btn.active {
+    border-color: var(--accent-blue);
+    background: #102550;
+    color: #fff;
+}
+
+.assign-btn.active .led-indicator {
+    background-color: var(--accent-blue);
+    box-shadow: 0 0 8px var(--accent-blue);
+}
+
 /* Playable Virtual Keyboard */
 footer.keyboard-footer {
     background: #12043a;
@@ -1295,6 +1334,31 @@ footer.keyboard-footer {
                         <button class="chorus-btn" data-chorus="2" id="btn-chorus-ii">
                             <span>CHORUS II</span>
                             <span class="led-indicator amber"></span>
+                        </button>
+                        <button class="chorus-btn" data-chorus="3" id="btn-chorus-i-ii">
+                            <span>I + II</span>
+                            <span class="led-indicator amber"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ASSIGN -->
+            <div class="synth-module">
+                <div class="module-title">ASSIGN</div>
+                <div class="module-controls" style="align-items:center;">
+                    <div class="assign-buttons">
+                        <button class="assign-btn" data-assign="0" id="btn-assign-mono">
+                            <span>MONO</span>
+                            <span class="led-indicator"></span>
+                        </button>
+                        <button class="assign-btn active" data-assign="1" id="btn-assign-poly1">
+                            <span>POLY I</span>
+                            <span class="led-indicator active"></span>
+                        </button>
+                        <button class="assign-btn" data-assign="2" id="btn-assign-poly2">
+                            <span>POLY II</span>
+                            <span class="led-indicator"></span>
                         </button>
                     </div>
                 </div>
@@ -4350,7 +4414,8 @@ function makeBlankPreset(idx) {
         isBlank: true,
         sliders: [0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 64, 127, 20, 0],
         sw1: 0x12, // 8', Saw on, Chorus OFF
-        sw2: 0x10  // HPF Flat (mode 1)
+        sw2: 0x10, // HPF Flat (mode 1)
+        assign: 1  // POLY I
     };
 }
 
@@ -4516,7 +4581,8 @@ function loadPresetToUI(preset) {
     setSwitchGroupActive('sw-saw', 'val', saw);
 
     let chorus = 0;
-    if (sw1 & 32) chorus = 0;
+    if ((sw1 & 96) === 96) chorus = 3;
+    else if (sw1 & 32) chorus = 0;
     else if (sw1 & 64) chorus = 1;
     else chorus = 2;
     setChorusActive(chorus);
@@ -4534,6 +4600,10 @@ function loadPresetToUI(preset) {
 
     const hpf = (3 - ((sw2 >> 3) & 3)) & 3;
     setSwitchGroupActive('sw-hpf', 'hpf', hpf);
+
+    // Voice Assign Mode (0 = MONO, 1 = POLY I, 2 = POLY II)
+    const assign = (preset.assign !== undefined) ? preset.assign : 1;
+    setAssignActive(assign);
 }
 
 function setSwitchGroupActive(containerId, attr, val) {
@@ -4551,6 +4621,20 @@ function setSwitchGroupActive(containerId, attr, val) {
 function setChorusActive(mode) {
     document.querySelectorAll('.chorus-btn').forEach(btn => {
         const m = parseInt(btn.dataset.chorus, 10);
+        const led = btn.querySelector('.led-indicator');
+        if (m === mode) {
+            btn.classList.add('active');
+            if (led) led.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+            if (led) led.classList.remove('active');
+        }
+    });
+}
+
+function setAssignActive(mode) {
+    document.querySelectorAll('.assign-btn').forEach(btn => {
+        const m = parseInt(btn.dataset.assign, 10);
         const led = btn.querySelector('.led-indicator');
         if (m === mode) {
             btn.classList.add('active');
@@ -4585,7 +4669,8 @@ function readUIToPreset() {
 
     const chorusBtn = document.querySelector('.chorus-btn.active');
     const chorus = chorusBtn ? parseInt(chorusBtn.dataset.chorus, 10) : 0;
-    if (chorus === 0) sw1 |= 32;
+    if (chorus === 3) sw1 |= 96;
+    else if (chorus === 0) sw1 |= 32;
     else if (chorus === 1) sw1 |= 64;
 
     // SW2
@@ -4603,11 +4688,15 @@ function readUIToPreset() {
     const hpf = hpfOpt ? parseInt(hpfOpt.dataset.hpf, 10) : 1;
     sw2 |= (((3 - hpf) & 3) << 3);
 
+    const assignBtn = document.querySelector('.assign-btn.active');
+    const assign = assignBtn ? parseInt(assignBtn.dataset.assign, 10) : 1;
+
     return {
         name: name,
         sliders: sliders,
         sw1: sw1,
-        sw2: sw2
+        sw2: sw2,
+        assign: assign
     };
 }
 
@@ -4989,6 +5078,9 @@ function auditionCurrentPreset() {
         0xF7
     ];
     midiOutput.send(msg);
+    if (p.assign !== undefined) {
+        sendIPR(0x12, p.assign);
+    }
     flashTx();
     showToast(`Auditioning "${p.name}" on FM-106`, 'success');
     updateSyncStatus(`Auditioning ${p.name}`);
@@ -5022,6 +5114,9 @@ function saveCurrentSlotToHardware() {
         0xF7
     ];
     midiOutput.send(msg);
+    if (p.assign !== undefined) {
+        sendIPR(0x12, p.assign);
+    }
     flashTx();
     showToast(`Stored "${p.name}" to hardware slot ${indexToSlot(selectedSlot)}`, 'success');
     updateSyncStatus(`Stored ${indexToSlot(selectedSlot)} to hardware`);
@@ -5577,7 +5672,8 @@ function parseSyxBuffer(buf) {
                             name: name,
                             sliders: sliders,
                             sw1: sw1,
-                            sw2: sw2
+                            sw2: sw2,
+                            assign: 1
                         }
                     });
                 }
@@ -5717,12 +5813,14 @@ function parseTalPjunoxl(xmlText) {
 
     const c1 = getVal('chorus1enable') >= 0.5;
     const c2 = getVal('chorus2enable') >= 0.5;
-    if (c1 && !c2) {
+    if (c1 && c2) {
+        sw1 |= 96; // Chorus I + II
+    } else if (c1 && !c2) {
         sw1 |= 64; // Chorus I
     } else if (!c1 && !c2) {
         sw1 |= 32; // Chorus OFF
     }
-    // if c2 or (c1 && c2), Chorus II => neither bit 5 nor 6
+    // if (!c1 && c2), Chorus II => neither bit 5 nor 6
 
     // SW2: PWM Mode (bit 0: 1=MAN, 0=LFO), VCF Inv (bit 1: 2=Inv, 0=Norm), VCA Mode (bit 2: 4=Gate, 0=Env), HPF (bits 3-4: 0=24, 1=16, 2=8, 3=0)
     let sw2 = 0;
@@ -5739,11 +5837,24 @@ function parseTalPjunoxl(xmlText) {
 
     sw2 |= (((3 - hpfMode) & 3) << 3);
 
+    // Voice Assign Mode
+    let assign = 1;
+    const vm = getVal('voicemode', -1);
+    if (vm >= 0) {
+        if (vm === 0) assign = 1;
+        else if (vm === 1) assign = 2;
+        else if (vm >= 2) assign = 0;
+    } else {
+        const km = getVal('keymode', -1);
+        if (km === 1) assign = 0;
+    }
+
     return {
         name: name,
         sliders: sliders,
         sw1: sw1,
-        sw2: sw2
+        sw2: sw2,
+        assign: assign
     };
 }
 
@@ -5938,16 +6049,20 @@ function handleImportedFile(file) {
                     data.forEach((p, idx) => {
                         const targetSlot = baseTargetSlot + idx;
                         if (targetSlot < 256) {
-                            if (p.data && Array.isArray(p.data) && p.data.length === 18) {
+                            if (p.data && Array.isArray(p.data) && p.data.length >= 18) {
                                 allPresets[targetSlot] = {
                                     name: p.name || `${indexToSlot(targetSlot)} Patch`,
                                     sliders: p.data.slice(0, 16),
                                     sw1: p.data[16],
-                                    sw2: p.data[17]
+                                    sw2: p.data[17],
+                                    assign: (p.assign !== undefined) ? p.assign : (p.data.length > 18 ? p.data[18] : 1)
                                 };
                                 importedCount++;
                             } else if (p.sliders && p.sliders.length === 16) {
-                                allPresets[targetSlot] = p;
+                                allPresets[targetSlot] = {
+                                    ...p,
+                                    assign: (p.assign !== undefined) ? p.assign : 1
+                                };
                                 importedCount++;
                             }
                         }
@@ -6321,6 +6436,18 @@ function setupEventListeners() {
             setChorusActive(parseInt(btn.dataset.chorus, 10));
             const p = readUIToPreset();
             sendIPR(0x10, p.sw1);
+        });
+    });
+
+    // Assign Buttons
+    document.querySelectorAll('.assign-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const mode = parseInt(btn.dataset.assign, 10);
+            setAssignActive(mode);
+            sendIPR(0x12, mode);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].assign = mode;
+            }
         });
     });
 

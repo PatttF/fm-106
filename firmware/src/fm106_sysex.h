@@ -280,6 +280,15 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
     fm106_reverb_apply_preset(&e->reverb, p);
 
+    /* Voice allocation mode (0 = default/Poly I, 1 = Mono unison, 2 = Poly I, 3 = Poly II) */
+    if (p->p[49] == 1u) {
+        fm106_set_voice_mode(e, FM106_MODE_MONO);
+    } else if (p->p[49] == 3u) {
+        fm106_set_voice_mode(e, FM106_MODE_POLY2);
+    } else {
+        fm106_set_voice_mode(e, FM106_MODE_POLY1);
+    }
+
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
         fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
         e->voice[i].dco.saw_on = e->dco_saw_on;
@@ -288,7 +297,9 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
         e->voice[i].dco.sub_level = e->dco_sub_level;
         e->voice[i].dco.noise_level = e->dco_noise_level;
         if (e->voice[i].note != 255u) {
-            e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            e->voice[i].base_inc = (e->voice_mode == FM106_MODE_MONO)
+                ? fm106_calc_unison_inc(e->voice[i].note, 0, e->dco_range, i)
+                : fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
             if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
         }
     }
@@ -360,6 +371,9 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
     p->p[46] = e->reverb.mix;
     p->p[47] = e->reverb.decay;
     p->p[48] = e->reverb.shimmer;
+
+    /* Voice Mode (1 = Mono unison, 2 = Poly I, 3 = Poly II) */
+    p->p[49] = (e->voice_mode == FM106_MODE_MONO) ? 1u : (e->voice_mode == FM106_MODE_POLY2) ? 3u : 2u;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */
@@ -368,7 +382,9 @@ static inline void fm106_decode_sw1(uint8_t sw1, uint8_t *oct, uint8_t *pulse, u
     *oct = (sw1 & 4u) ? 2u : (sw1 & 2u) ? 1u : 0u;
     *pulse = (sw1 & 8u) ? 1u : 0u;
     *saw = (sw1 & 16u) ? 1u : 0u;
-    if (sw1 & 32u) {
+    if ((sw1 & 96u) == 96u) {
+        *chorus = FM106_CHORUS_I_II;
+    } else if (sw1 & 32u) {
         *chorus = FM106_CHORUS_OFF;
     } else if (sw1 & 64u) {
         *chorus = FM106_CHORUS_I;
@@ -385,7 +401,7 @@ static inline uint8_t fm106_encode_sw1(uint8_t oct, uint8_t pulse, uint8_t saw, 
     if (saw) sw1 |= 16u;
     if (chorus == FM106_CHORUS_OFF) sw1 |= 32u;
     else if (chorus == FM106_CHORUS_I) sw1 |= 64u;
-    else if (chorus == FM106_CHORUS_I_II) sw1 |= 64u;
+    else if (chorus == FM106_CHORUS_I_II) sw1 |= (32u | 64u);
     return sw1;
 }
 
@@ -669,6 +685,9 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
             g_synth.vcf_env_polarity = vcf_inv;
             g_synth.vca_mode         = vca_m;
             g_synth.hpf.mode         = hpf_m;
+        } else if (ctrl == 0x12) {
+            /* Voice Assign Mode: 0 = MONO, 1 = POLY I, 2 = POLY II */
+            fm106_set_voice_mode(&g_synth, val > 2u ? FM106_MODE_POLY1 : val);
         }
         g_dirty_screen = 1;
         return;

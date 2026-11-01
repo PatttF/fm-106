@@ -34,7 +34,7 @@
  * sound space (see fm106_param_get/set in fm106_engine.h). Sparse table:
  * 512 slots covers dense 128-step automation while fitting in 4 KiB flash. */
 #define FM106_PLOCK_SLOTS 512u
-#define FM106_NPARAM      49u
+#define FM106_NPARAM      50u
 
 typedef struct {
     uint16_t step;             /* locked step index (0..slen-1) */

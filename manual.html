@@ -730,7 +730,7 @@
                             <td><code>RATE</code>: LFO Speed (0..127)</td>
                             <td><code>DELAY</code>: LFO Onset Delay (0..127)</td>
                             <td><code>PWM MD</code>: Source (LFO / MAN)</td>
-                            <td><em>(Unassigned)</em></td>
+                            <td><code>ASSIGN</code>: Voice Mode (MONO / POLY I / POLY II)</td>
                         </tr>
                         <tr>
                             <td><strong>PAGE 7: ARP</strong></td>
@@ -831,6 +831,16 @@
                 <li><strong>Sub-Oscillator:</strong> Flip-flop divider producing a perfect square wave exactly one octave below the fundamental pitch. Controlled with the <code>SUB</code> fader for immense low-end weight.</li>
                 <li><strong>White Noise:</strong> Digital pseudo-random linear-feedback shift register (LFSR) emulation delivering analog-style noise for percussive clicks, breath, surf, and wind FX.</li>
             </ul>
+
+            <h3>Voice Allocation & Assign Modes (MONO / POLY I / POLY II)</h3>
+            <p>
+                Controlled via <code>PAGE 6: LFO</code> (Knob 4 <code>ASSIGN</code>), Librarian software, or MIDI CC 68, the FM-106 faithfully reproduces the voice assignment architectures of Roland's microprocessor ROM:
+            </p>
+            <ul>
+                <li><strong>MONO (Unison):</strong> Stacks all 6 voices onto a single monophonic pitch with subtle analog detuning (&plusmn;12 cents spread) and a 16-note legato note-priority stack. Ideal for thunderous basslines and screaming leads.</li>
+                <li><strong>POLY I (Standard Cyclic Allocator):</strong> Classic Roland round-robin voice assignment with restart candidacy. Voices cycle cleanly across all 6 slots, preserving long envelope release tails without voice stealing until all 6 voices are actively held.</li>
+                <li><strong>POLY II (Linear Voice 0 Priority):</strong> Priority allocator with voice 0 preference for smooth monophonic lines, legato playing, and portamento tracking while still allowing full 6-note chords.</li>
+            </ul>
         </section>
 
         <!-- Section 7: Effects -->
@@ -839,13 +849,13 @@
             
             <h3>Roland MN3009 Stereo BBD Chorus</h3>
             <p>
-                The Juno-106 chorus is world-famous. The FM-106 models two independent bucket-brigade delay lines with dual complementary anti-phase triangular LFOs:
+                The Juno-106 chorus is world-famous. The FM-106 models two independent bucket-brigade delay lines with dual complementary triangular LFOs:
             </p>
             <ul>
                 <li><strong>OFF:</strong> Chorus completely bypassed for direct, monophonic dry signal.</li>
-                <li><strong>Chorus I:</strong> Slow, deep modulation (0.39 Hz, delay sweep 3.8 ms to 5.4 ms). Produces a wide, undulating stereo spread.</li>
-                <li><strong>Chorus II:</strong> Faster, shimmering modulation (0.80 Hz, delay sweep 3.2 ms to 6.1 ms). Adds rich movement and motion to electric pianos, bells, and strings.</li>
-                <li><strong>Chorus I+II (Secret Mode):</strong> Both buttons engaged simultaneously. LFO speed increases to <strong>8.0 Hz</strong> with high depth, producing an iconic lo-fi rotary/vibrato wobble.</li>
+                <li><strong>Chorus I:</strong> Slow, lush modulation (~0.514 Hz, &plusmn;2.13 ms delay sweep, antiphase). Produces a wide, undulating stereo spread.</li>
+                <li><strong>Chorus II:</strong> Faster, shimmering modulation (~0.863 Hz, &plusmn;1.71 ms delay sweep, antiphase). Adds rich movement and shimmer to electric pianos, bells, and strings.</li>
+                <li><strong>Chorus I+II:</strong> Authentic dual-mode modulation (~9.75 Hz, &plusmn;0.23 ms delay sweep, <em>in-phase</em>). Delivers the iconic Leslie rotary speaker vibrato without stereo phase cancellation.</li>
             </ul>
 
             <h3>Vintage Tape Echo</h3>
@@ -1037,13 +1047,14 @@
                         <tr><td>36</td><td>ARP</td><td>ARP RATE</td><td><strong>82</strong></td><td>0 - 127</td><td>Arpeggiator clock speed</td></tr>
                         <tr><td>37</td><td>ARP</td><td>ARP MODE</td><td><strong>89</strong></td><td>0 - 2</td><td>0 = Up, 1 = Up & Down, 2 = Down</td></tr>
                         <tr><td>38</td><td>ARP</td><td>ARP RANGE</td><td><strong>90</strong></td><td>0 - 2</td><td>0 = 1 Octave, 1 = 2 Octaves, 2 = 3 Octaves</td></tr>
-                        <tr><td>39</td><td>SEQ</td><td>TEMPO</td><td><strong>102</strong></td><td>40 - 240</td><td>Step sequencer tempo in BPM</td></tr>
-                        <tr><td>40</td><td>SEQ</td><td>DIVISION</td><td><strong>103</strong></td><td>0 - 9</td><td>Sequencer clock subdivision</td></tr>
-                        <tr><td>41</td><td>SEQ</td><td>LENGTH</td><td><strong>104</strong></td><td>1 - 128</td><td>Active sequence pattern step length</td></tr>
-                        <tr><td>42</td><td>SEQ</td><td>GATE</td><td><strong>105</strong></td><td>8 - 128</td><td>Default sequencer gate duration</td></tr>
-                        <tr><td>43</td><td>SEQ</td><td>SWING</td><td><strong>106</strong></td><td>0 - 100</td><td>Groove swing percentage (0..100%)</td></tr>
-                        <tr><td>44</td><td>SEQ</td><td>PLAY/STOP</td><td><strong>107</strong></td><td>0 - 3</td><td>0:Stop, 1:Start, 2:Continue, 3:Toggle Play</td></tr>
-                        <tr><td>45</td><td>SEQ</td><td>REC ARM</td><td><strong>108</strong></td><td>0 - 1</td><td>Arm sequencer for live recording</td></tr>
+                        <tr><td>39</td><td>PRF</td><td>ASSIGN</td><td><strong>68</strong></td><td>0 - 2</td><td>Voice Mode (0=Mono Unison, 1=Poly I, 2=Poly II)</td></tr>
+                        <tr><td>40</td><td>SEQ</td><td>TEMPO</td><td><strong>102</strong></td><td>40 - 240</td><td>Step sequencer tempo in BPM</td></tr>
+                        <tr><td>41</td><td>SEQ</td><td>DIVISION</td><td><strong>103</strong></td><td>0 - 9</td><td>Sequencer clock subdivision</td></tr>
+                        <tr><td>42</td><td>SEQ</td><td>LENGTH</td><td><strong>104</strong></td><td>1 - 128</td><td>Active sequence pattern step length</td></tr>
+                        <tr><td>43</td><td>SEQ</td><td>GATE</td><td><strong>105</strong></td><td>8 - 128</td><td>Default sequencer gate duration</td></tr>
+                        <tr><td>44</td><td>SEQ</td><td>SWING</td><td><strong>106</strong></td><td>0 - 100</td><td>Groove swing percentage (0..100%)</td></tr>
+                        <tr><td>45</td><td>SEQ</td><td>PLAY/STOP</td><td><strong>107</strong></td><td>0 - 3</td><td>0:Stop, 1:Start, 2:Continue, 3:Toggle Play</td></tr>
+                        <tr><td>46</td><td>SEQ</td><td>REC ARM</td><td><strong>108</strong></td><td>0 - 1</td><td>Arm sequencer for live recording</td></tr>
                     </tbody>
                 </table>
             </div>

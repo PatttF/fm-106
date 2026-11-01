@@ -21,7 +21,7 @@ FM-106 is inspired by the analog emulation engine of the legendary 1984 **Roland
 | **IR3109 VCF** | 4-pole 24 dB/oct resonant low-pass filter with self-oscillation and non-linear OTA saturation curves. Sub-sampled at 11 kHz for peak CPU efficiency. |
 | **4-Position HPF** | Authentic discrete resistor network: `0: BST` (+9.4 dB shelf @ 103 Hz), `1: FLT` (Flat), `2: 236` (236 Hz), `3: 754` (754 Hz). |
 | **14-Bit ADSR** | Authentic NEC &mu;PD7811G voice processor envelope with log decay/release and linear attack. |
-| **MN3009 BBD Chorus** | Dual bucket-brigade delay line emulation: `OFF`, `Chorus I` (0.39 Hz), `Chorus II` (0.80 Hz), and `Chorus I+II` (8.0 Hz vibrato). |
+| **MN3009 BBD Chorus** | Dual bucket-brigade delay line emulation: `OFF`, `Chorus I` (0.51 Hz antiphase), `Chorus II` (0.86 Hz antiphase), and `Chorus I+II` (9.75 Hz in-phase rotary vibrato). |
 | **Tape & Shimmer** | FPU-accelerated vintage tape echo (saturation, wow/flutter) and octave pitch-shifted shimmer reverb. |
 | **128-Step Sequencer** | Acid sequencer with visual piano roll, parameter locks (P-Locks), ratchet (1..4), tie, accent, slide, probability, swing, and live recording. |
 | **256 Presets** | 128 Factory presets (Bank A & B 11..88) + 128 User writable presets (Bank UA & UB 11..88) with on-screen alphanumeric name editing and flash persistence. |
@@ -77,7 +77,7 @@ Turn the **`SELECT`** encoder or tap **`EDIT`** to move through the 10 sound des
 | **3. DCO** | `RNG`: Octave (16', 8', 4')| `PULSE`: Pulse (OFF/ON) | `SAW`: Sawtooth (OFF/ON) | `SUBSW`: Sub-Osc (OFF/ON) |
 | **4. DCO 2** | `SUB`: Sub Level (0..127) | `NOISE`: Noise (0..127) | `PWM`: Width/Depth (0..127)| `DCOLFO`: Pitch LFO (0..127) |
 | **5. ENVELOPE** | `ATK`: Attack (0..127) | `DEC`: Decay (0..127) | `SUS`: Sustain (0..127) | `REL`: Release (0..127) |
-| **6. LFO** | `RATE`: Frequency (0..127)| `DELAY`: Onset (0..127) | `PWM MD`: LFO / MAN | *(Unassigned)* |
+| **6. LFO** | `RATE`: Frequency (0..127)| `DELAY`: Onset (0..127) | `PWM MD`: LFO / MAN | `ASSIGN`: Voice Mode (MONO, POLY I, POLY II) |
 | **7. ARP** | `ARP`: Arp (OFF/ON) | `MODE`: UP, U&D, DN | `ARAT`: Rate (0..127) | `ARNG`: Octaves (1..3) |
 | **8. FX** | `CHO`: Chorus (OFF..I+II) | `HPF`: BST / FLT / 236 / 754| `VCA`: Mode (ENV / GATE) | `LEVEL`: Volume (0..127) |
 | **9. TAPE** | `TYPE`: WARM / VINT / LOFI| `MIX`: Wet/Dry (0..127) | `RATE`: Speed/Flutter (0..127)| `CHAR`: Drive & Tone (0..127)|

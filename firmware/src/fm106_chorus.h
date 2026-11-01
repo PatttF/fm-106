@@ -2,8 +2,11 @@
 /* FM-106: Roland MN3009 BBD Stereo Chorus Emulation
  * Replicates the hardware:
  * - 256-stage dual BBD fractional delay lines
- * - LFO frequencies: Chorus I = 0.393 Hz, Chorus II = 0.797 Hz, Chorus I+II = 8.00 Hz
- * - Antiphase modulation (+LFO for Left, -LFO for Right)
+ * - LFO frequencies & modulation amounts:
+ *     Chorus I:    0.514 Hz, depth 94 samples (~2.13 ms, 100% amount, antiphase)
+ *     Chorus II:   0.863 Hz, depth 75 samples (~1.71 ms, 100% amount, antiphase)
+ *     Chorus I+II: 9.750 Hz, depth 10 samples (~0.23 ms, in-phase Leslie rotary vibrato)
+ * - Antiphase modulation for Chorus I & II; in-phase modulation for I+II ("fast rotary mode")
  * - 2nd-order Butterworth reconstruction biquad filter (9,661 Hz)
  * - Calibrated IC6 summer gains (kDry = 0.863, kWet = 1.257) */
 #pragma once
@@ -108,17 +111,17 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
 
     switch (c->mode) {
     case FM106_CHORUS_I:
-        lfo_inc = 50098u;           /* 0.514 Hz (Juno-106 hardware rate) */
+        lfo_inc = 50098u;           /* 0.514 Hz (Juno-106 hardware rate, ~0.5 Hz) */
         depth_samples = 94;         /* +-2.13 ms (4.26 ms pp) */
         break;
     case FM106_CHORUS_II:
-        lfo_inc = 82068u;           /* 0.842 Hz */
+        lfo_inc = 84114u;           /* 0.863 Hz (Juno-106 hardware rate, ~0.83-0.86 Hz) */
         depth_samples = 75;         /* +-1.71 ms (3.42 ms pp) */
         break;
     case FM106_CHORUS_I_II:
     default:
-        lfo_inc = 765109u;          /* 7.85 Hz fast vibrato */
-        depth_samples = 10;         /* +-0.236 ms */
+        lfo_inc = 950112u;          /* 9.75 Hz fast Leslie rotary vibrato (Juno hardware) */
+        depth_samples = 10;         /* +-0.23 ms subtle in-phase pitch wobble */
         break;
     }
 
@@ -129,9 +132,11 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
     if (lfo_tri < 0) lfo_tri = -lfo_tri;
     lfo_tri = (lfo_tri - 16384) << 1;
 
-    /* Antiphase modulation (16.16 fixed point) */
+    /* Antiphase modulation for Chorus I & II; in-phase for I+II ("fast rotary mode") */
     int32_t delay_l_q16 = (center_samples << 16) + lfo_tri * depth_samples;
-    int32_t delay_r_q16 = (center_samples << 16) - lfo_tri * depth_samples;
+    int32_t delay_r_q16 = (c->mode == FM106_CHORUS_I_II)
+                        ? delay_l_q16
+                        : (center_samples << 16) - lfo_tri * depth_samples;
 
     /* 4-point Hermite interpolation for C1-continuous fractional delay taps (eliminates zipper noise) */
     int32_t int_del_l = delay_l_q16 >> 16;

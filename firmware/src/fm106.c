@@ -70,7 +70,7 @@ enum {
     PAGE_DCO,           /* RNG PULSE SAW SUBSW */
     PAGE_DCO2,          /* SUB NOISE PWM DCOLFO */
     PAGE_ENVELOPE,      /* ATK DEC SUS REL */
-    PAGE_LFO,           /* RATE DELAY PWM MD - */
+    PAGE_LFO,           /* RATE DELAY PWM MD ASSIGN */
     PAGE_ARP,           /* ON MODE RATE RANGE */
     PAGE_FX,            /* CHO HPF VCA LEVEL */
     PAGE_TAPE,          /* TAPE: TYPE MIX RATE CHAR */
@@ -87,6 +87,7 @@ enum { SLOT_FADER = 0, SLOT_MODE, SLOT_EMPTY };
 static const char *const N_BOOL[2]   = {"OFF", "ON"};
 static const char *const N_RNG[3]    = {"16'", "8'", "4'"};
 static const char *const N_PWMD[2]   = {"LFO", "MAN"};
+static const char *const N_POLY[3]   = {"MONO", "POLY I", "POLY II"};
 static const char *const N_INV[2]    = {"NORM", "INV"};
 static const char *const N_ARMD[3]   = {"UP", "U&D", "DN"};
 static const char *const N_ARNG[3]   = {"1OC", "2OC", "3OC"};
@@ -122,7 +123,7 @@ static const fm1_slot_t FM1_SLOTS[PAGE_COUNT][4] = {
      {"SUS", SLOT_FADER, 0, 0}, {"REL", SLOT_FADER, 0, 0}},
     /* PAGE_LFO */
     {{"RATE", SLOT_FADER, 0, 0}, {"DELAY", SLOT_FADER, 0, 0},
-     {"PWM MD", SLOT_MODE, 2, N_PWMD}, {"-", SLOT_EMPTY, 0, 0}},
+     {"PWM MD", SLOT_MODE, 2, N_PWMD}, {"ASSIGN", SLOT_MODE, 3, N_POLY}},
     /* PAGE_ARP */
     {{"ARP", SLOT_MODE, 2, N_BOOL}, {"MODE", SLOT_MODE, 3, N_ARMD},
      {"ARAT", SLOT_FADER, 0, 0},    {"ARNG", SLOT_MODE, 3, N_ARNG}},
@@ -198,6 +199,7 @@ static int32_t fm1_slot_val(uint8_t page, int i)
         case 0: return g_synth.lfo_rate;
         case 1: return g_synth.lfo_delay;
         case 2: return g_synth.dco_pwm_mode & 1u;
+        case 3: return g_synth.voice_mode > 2 ? 1 : g_synth.voice_mode;
         }
         break;
     case PAGE_ARP:
@@ -353,7 +355,7 @@ static uint16_t seq_ui_edit_idx(void)
  * One CC per sound param (out: on panel/menu/knob change; in: controller
  * edits). Seq params get 102-106, transport 107, edit helpers 108-113. */
 
-#define CC_MAP_COUNT 45u
+#define CC_MAP_COUNT 46u
 
 typedef struct {
     const char *group;
@@ -412,6 +414,7 @@ static const cc_entry_def_t CC_ENTRIES[CC_MAP_COUNT] = {
     {"ARP", "ARP RATE",   82,  2},
     {"ARP", "ARP MODE",   89, 30},
     {"ARP", "ARP RANGE",  90, 31},
+    {"PRF", "ASSIGN",     68, 49},
 
     /* SEQUENCER */
     {"SEQ", "TEMPO",     102, 0xFF},
@@ -484,6 +487,7 @@ static uint8_t param_cc_value(uint8_t i, uint8_t v)
     case 9: case 29: case 30: return (uint8_t)(v * 42u);            /* 0..3 / 0..2 enums */
     case 31: return v <= 1u ? 0u : (v == 2u ? 64u : 127u);          /* arp range 1..3 */
     case 36: return v ? 127u : 0u;                                  /* fx type */
+    case 49: return (uint8_t)(v * 63u);                             /* assign mode 0..2 */
     case 23: case 24: case 25: case 27: case 28:
     case 33: case 34: case 35: case 45: return v ? 127u : 0u;       /* flags */
     default: return v;
@@ -500,6 +504,7 @@ static uint8_t cc_to_param_value(uint8_t idx, uint8_t v)
     case 29: return v / 42u > 2u ? 2u : v / 42u;                    /* dco range 0-2 */
     case 30: return v >= 84u ? 2u : (v >= 42u ? 1u : 0u);           /* arp mode 0-2 */
     case 31: return v >= 85u ? 3u : (v >= 42u ? 2u : 1u);           /* arp range 1-3 */
+    case 49: return v >= 85u ? 2u : (v >= 42u ? 1u : 0u);           /* assign mode 0-2 */
     default: return v;
     }
 }
@@ -820,37 +825,40 @@ static void fm106_apply_cc(uint8_t entry, uint8_t d2)
     case 37:
         fm106_param_set(&g_synth, 31, cc_to_param_value(31, d2));
         break;
+    case 38:
+        fm106_param_set(&g_synth, 49, cc_to_param_value(49, d2));
+        break;
 
     /* SEQUENCER */
-    case 38: {
+    case 39: {
         uint32_t bpm = (uint32_t)d2 * 2u + 40u;
         g_synth.seq.bpm = (uint8_t)(bpm > 240u ? 240u : bpm);
         seq_mark_modified();
         break;
     }
-    case 39:
+    case 40:
         g_synth.seq.sdiv = d2 > 9u ? 3u : d2;
         seq_mark_modified();
         break;
-    case 40:
+    case 41:
         fm1_irq_off();
         g_synth.seq.slen = (uint16_t)((uint32_t)d2 + 1u);
         if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = (uint16_t)(g_synth.seq.slen - 1u);
         fm1_irq_on();
         seq_mark_modified();
         break;
-    case 41:
+    case 42:
         g_synth.seq.sgate = d2 ? d2 : 1u;
         seq_mark_modified();
         break;
-    case 42:
+    case 43:
         g_synth.seq.swing = d2 > 100u ? 100u : d2;
         seq_mark_modified();
         break;
-    case 43:
+    case 44:
         seq_transport_cmd(d2 == 0u ? 0u : d2 == 1u ? 1u : d2 == 2u ? 2u : 3u, 0);
         break;
-    case 44:
+    case 45:
         g_seq_rec_arm = d2 >= 64u;
         if (!g_seq_rec_arm) count_in_cancel();
         break;
@@ -4018,8 +4026,13 @@ static void fm106_app_frame(void)
                     g_synth.dco_range = (uint8_t)m;
                     for (uint32_t v = 0; v < FM106_NUM_VOICES; v++)
                         if (g_synth.voice[v].note != 255u) {
-                            g_synth.voice[v].base_inc =
-                                fm106_calc_inc(g_synth.voice[v].note, 0, g_synth.dco_range);
+                            if (g_synth.voice_mode == FM106_MODE_MONO) {
+                                g_synth.voice[v].base_inc =
+                                    fm106_calc_unison_inc(g_synth.voice[v].note, 0, g_synth.dco_range, v);
+                            } else {
+                                g_synth.voice[v].base_inc =
+                                    fm106_calc_inc(g_synth.voice[v].note, 0, g_synth.dco_range);
+                            }
                             if (!g_synth.voice[v].gliding)
                                 g_synth.voice[v].curr_inc = g_synth.voice[v].base_inc;
                         }
@@ -4074,6 +4087,12 @@ static void fm106_app_frame(void)
                 if (k1) g_synth.lfo_rate = (uint8_t)fm106_clamp(g_synth.lfo_rate + k1 * 3, 0, 127);
                 if (k2) g_synth.lfo_delay = (uint8_t)fm106_clamp(g_synth.lfo_delay + k2 * 3, 0, 127);
                 if (k3) g_synth.dco_pwm_mode = k3 > 0 ? 1u : 0u;
+                if (k4) {
+                    int32_t vm = (int32_t)g_synth.voice_mode + (k4 > 0 ? 1 : -1);
+                    if (vm < 0) vm = 2;
+                    if (vm > 2) vm = 0;
+                    fm106_set_voice_mode(&g_synth, (uint8_t)vm);
+                }
                 break;
             case PAGE_ARP:
                 if (k1) fm106_arp_enable(&g_synth, k1 > 0);
