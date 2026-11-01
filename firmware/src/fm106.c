@@ -2736,6 +2736,20 @@ static int synth_quiet(void)
 
 static fm106_settings_t set = {0, 0, 0, 1, 1, 1, 0};
 
+#include "splash_data.h"
+
+static uint32_t g_splash_until_ms = 0;
+
+static void draw_splash_screen(void)
+{
+    for (uint32_t s = 0; s < 3u; s++) {
+        lcd_sync();
+        splash_lz4_decompress(splash_strips[s], (uint8_t *)cv_px, 240u * 80u * 2u);
+        lcd_blit(0, s * 80u, 240, 80, cv_px);
+    }
+    lcd_sync();
+}
+
 /* Initialize application and synth state */
 static void fm106_app_init(void)
 {
@@ -2761,7 +2775,8 @@ static void fm106_app_init(void)
     if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = 0;
     fm106_param_snapshot(&g_synth);
 
-    lcd_fill(0, 0, 240, 240, C_BG);
+    draw_splash_screen();
+    g_splash_until_ms = fm1_ms + 1800u;
 
     /* Dim ambient backlight for all buttons (labels readable in the dark) */
     for (uint32_t col = 0; col < FM1_NCOL; col++)
@@ -3875,6 +3890,16 @@ static void fm106_app_frame(void)
         prev_ui_mode = g_ui_mode;
         prev_page = g_current_page;
         int voice_changed = (voice_active != prev_voice_active);
+
+        if (g_splash_until_ms != 0) {
+            if ((int32_t)(fm1_ms - g_splash_until_ms) >= 0 || down != 0 || b != 0 || enc_s != 0 ||
+                k1 != 0 || k2 != 0 || k3 != 0 || k4 != 0 || fm1_in.notes != 0 || g_dirty_screen) {
+                g_splash_until_ms = 0;
+                dirty_screen = 1;
+            } else {
+                return;
+            }
+        }
 
         if (dirty_screen) {
             if (g_ui_mode == UI_MODE_MENU) {

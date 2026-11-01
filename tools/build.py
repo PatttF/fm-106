@@ -224,6 +224,11 @@ def build_stub():
 # ---- app
 
 def build_app(stub):
+    splash_png = SRC / "splash.png"
+    splash_hdr = FW / "src" / "splash_data.h"
+    if splash_png.exists() and (not splash_hdr.exists() or splash_png.stat().st_mtime > splash_hdr.stat().st_mtime):
+        import gen_splash
+        gen_splash.gen_splash()
     ble = os.environ.get("FELUCCA_BLE", "1") != "0"
     flags = [*CFLAGS, "-Ifirmware/hal", "-Ifirmware/src", "-Ifirmware/gen", f'-DFELUCCA_ID="{PRODUCT}"', f'-DAPP_VER="{VERSION or "0.0"}"']
     if ble:
