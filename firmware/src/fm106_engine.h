@@ -517,6 +517,27 @@ static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
      * Matches Roland Juno-106 IC20 ROM at $0A76/$0B30.
      * ------------------------------------------------------------- */
     {
+        /* Check if any keys are currently physically held down */
+        uint32_t num_held = 0;
+        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+            if (e->voice[i].gate) num_held++;
+        }
+
+        /* In Roland Poly 2: if all previous keys were released (no keys held),
+         * choke previously releasing voices so only the new note/chord receives
+         * natural release length, and Voice 0 is prioritized. */
+        if (num_held == 0 && !e->hold_pedal) {
+            for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+                if (!e->voice[i].gate && e->voice[i].adsr.stage != FM106_ENV_IDLE) {
+                    e->voice[i].adsr.stage = FM106_ENV_IDLE;
+                    e->voice[i].adsr.env14 = 0;
+                    e->voice[i].adsr.env_prev = 0;
+                    e->voice[i].adsr.env_next = 0;
+                    e->voice[i].vca_slew = 0;
+                }
+            }
+        }
+
         /* 1. If note already sounding on a voice, retrigger it */
         for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
             if (e->voice[i].note == (uint8_t)note && (e->voice[i].gate || e->voice[i].adsr.stage != FM106_ENV_IDLE)) {
@@ -533,28 +554,16 @@ static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
             }
         }
 
-        /* 2. Linear search from voice 0: find first completely idle voice */
+        /* 2. Linear search from voice 0: find first un-gated voice (Voice 0 priority) */
         uint32_t pick = FM106_NUM_VOICES;
         for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-            if (e->voice[i].adsr.stage == FM106_ENV_IDLE && !e->voice[i].gate && e->voice[i].vca_slew <= 10) {
+            if (!e->voice[i].gate) {
                 pick = i;
                 break;
             }
         }
 
-        int is_retrigger = 0;
-        /* 3. If none idle, linear search for first released voice */
-        if (pick >= FM106_NUM_VOICES) {
-            for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-                if (!e->voice[i].gate) {
-                    pick = i;
-                    is_retrigger = 1;
-                    break;
-                }
-            }
-        }
-
-        /* 4. If all gated, steal voice with oldest age */
+        /* 3. If all 6 voices are actively held down, steal the oldest voice */
         if (pick >= FM106_NUM_VOICES) {
             uint32_t oldest_age = 0xFFFFFFFFu;
             for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
@@ -563,10 +572,10 @@ static void fm106_note_on(fm106_engine_t *e, uint32_t note, uint32_t vel)
                     pick = i;
                 }
             }
-            is_retrigger = 1;
         }
 
         fm106_voice_t *v = &e->voice[pick];
+        int is_retrigger = (v->gate || v->adsr.stage != FM106_ENV_IDLE);
         v->note = (uint8_t)note;
         v->gate = 1;
         v->vel = (uint8_t)vel;
