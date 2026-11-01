@@ -134,3 +134,4 @@ void sm_event_callback_set(void (*cbk_sm_ph)(uint8_t packet_type, uint16_t chann
 #define ble_op_set_adv_data(len, data) ble_user_cmd_prepare(BLE_SDK_CMD_ADV_DATA, 2, (int)(len), (void *)(data))
 #define ble_op_set_rsp_data(len, data) ble_user_cmd_prepare(BLE_SDK_CMD_RSP_DATA, 2, (int)(len), (void *)(data))
 #endif
+

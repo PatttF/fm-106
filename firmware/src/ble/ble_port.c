@@ -345,3 +345,4 @@ int bt_event_notify(int from, struct bt_event *event)
     ble_on_event(from, event);
     return 0;
 }
+

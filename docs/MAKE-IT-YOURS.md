@@ -66,3 +66,4 @@ the headers, and add yourself.
 - A one-pole low-pass: `y += (x - y) * k >> 15` per frame; `k` from a knob.
 - A step sequencer on the white keys, `BTN_PLAY` to start, the tempo on `ENC_SELECT`.
 - Look at how zp12 or sloopDX do it: same platform, much bigger apps.
+

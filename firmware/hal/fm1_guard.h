@@ -131,3 +131,4 @@ FM1_INLINE int fm1_sp_in_isr(void)
     __asm__ volatile("%0 = sp" : "=r"(sp));
     return sp >= (uint32_t)(uintptr_t)_guard1 && sp <= (uint32_t)(uintptr_t)_sstack_top;
 }
+

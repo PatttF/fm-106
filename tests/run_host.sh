@@ -18,3 +18,4 @@ for p in sorted(Path("build/host").glob("fm106-*.ppm")):
     p.unlink()
     print("screen ->", p.with_suffix(".png"))
 PY
+

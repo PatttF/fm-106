@@ -72,3 +72,4 @@ static void recovery_main(void)
     usb_start();
     for (;;) recovery_step();
 }
+

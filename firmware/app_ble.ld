@@ -67,3 +67,4 @@ SECTIONS
     _guard1 = 0x01C7A000; _sstack_lo = 0x01C7A100; _sstack_top = 0x01C7C000;
     /DISCARD/ : { *(.comment) *(.note*) *(.debug*) }
 }
+

@@ -587,3 +587,4 @@ static inline void fm106_reverb_run(fm106_reverb_t *r, int32_t *stereo, uint32_t
     fm106_reverb_fn_t fn = g_reverb_fn;
     fn(r, stereo, n);
 }
+

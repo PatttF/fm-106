@@ -51,3 +51,4 @@ static const uint8_t BLE_GATT_DB[] = {
  * response (the complete local name). In RAM: the stack keeps the pointers (ble_api.h: a global buffer) */
 static uint8_t BLE_ADV_DATA[21] = {0x02, 0x01, 0x06, 0x11, 0x07, BLE_MIDI_SVC_LE};
 static uint8_t BLE_RSP_DATA[8]  = {0x07, 0x09, 'F', 'M', '-', '1', '0', '6'};
+

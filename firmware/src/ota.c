@@ -441,3 +441,4 @@ static int ota_boot_cleanup(void)
         ota_unstage();
     return (int)used;
 }
+

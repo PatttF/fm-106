@@ -144,3 +144,4 @@ FM1_INLINE uint32_t fm1_usb_sof_take(void)
     FM1_USB_CON0 |= 1u << 12;
     return 1;
 }
+

@@ -80,3 +80,4 @@ void core_ble_link(int up)
 {
     bt_link(up);
 }
+

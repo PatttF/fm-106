@@ -214,3 +214,4 @@ In platform.c, before `#include "usb.c"`:
 | `FELUCCA_CDC` | 0 | a USB serial console for debugging (some hosts then hide the audio; see usb.c) |
 | `FELUCCA_OTA` | 1 | the updater. **Leave it on**: without it nothing can install over your firmware but the rescue |
 | `DINGHY_DUAL_CORE` | 0 | set in the environment, not here: `DINGHY_DUAL_CORE=1 ./build.sh` (second core; see above) |
+

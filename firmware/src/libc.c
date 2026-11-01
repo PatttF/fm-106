@@ -139,3 +139,4 @@ static uint32_t rng(void)
     rng_state ^= rng_state << 5;
     return rng_state;
 }
+

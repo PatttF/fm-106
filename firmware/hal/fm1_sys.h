@@ -289,3 +289,4 @@ static int fm1_mem_readable(uint32_t a, uint32_t n)
            (a >= 0x02000000u && a + n <= 0x02100000u && a + n >= a);
 }
 FM1_INLINE uint8_t fm1_peek8(uint32_t a) { return *(const volatile uint8_t *)a; }
+

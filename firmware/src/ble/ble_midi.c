@@ -169,3 +169,4 @@ uint32_t ble_midi_pack(const uint8_t (*msg)[3], const uint8_t *len, uint32_t n, 
     out[0] = (uint8_t)(0x80u | (ts_ms >> 7 & 0x3Fu));
     return o;
 }
+

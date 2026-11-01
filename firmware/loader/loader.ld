@@ -19,3 +19,4 @@ SECTIONS
     _sstack_top = 0x01C72000;
     /DISCARD/ : { *(.comment) *(.note*) *(.noinit*) }
 }
+

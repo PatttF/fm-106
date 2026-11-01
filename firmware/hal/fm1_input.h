@@ -372,3 +372,4 @@ static void fm1_led_key(uint32_t id, int on)
                     fm1_led[p] &= (uint8_t)~(1u << r);
             }
 }
+

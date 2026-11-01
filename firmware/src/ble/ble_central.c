@@ -1152,3 +1152,4 @@ void ble_ui_get_diag(uint32_t out[16])
     out[15] = hs.scan_want;
 }
 #endif
+

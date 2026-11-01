@@ -91,3 +91,4 @@ static void uart_midi_poll(void)                   /* TIMER5 ISR, same context a
 {
     uart_midi_take(fm1_uart1_rx_take());
 }
+

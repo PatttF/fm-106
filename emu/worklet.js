@@ -152,3 +152,4 @@ if (typeof registerProcessor === "function") {
   registerProcessor("fm106", FM106Processor);
   registerProcessor("felucca", FM106Processor);
 }
+

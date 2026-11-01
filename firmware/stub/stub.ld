@@ -16,3 +16,4 @@ SECTIONS
     _stub_ssp = 0x01C7C000;         /* app.ld _sstack_top */
     /DISCARD/ : { *(.comment) *(.note*) }
 }
+

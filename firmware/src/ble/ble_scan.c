@@ -120,3 +120,4 @@ uint32_t ble_scan_sorted(const ble_scan_t *s, uint8_t idx[BLE_SCAN_MAX])
         }
     return n;
 }
+

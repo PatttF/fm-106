@@ -17,3 +17,4 @@ void ble_scan_report(ble_scan_t *s, const uint8_t addr[6], uint8_t addr_type, in
 void ble_scan_expire(ble_scan_t *s, uint32_t now_ms, uint32_t max_age_ms);   /* frees entries unseen that long */
 uint32_t ble_scan_sorted(const ble_scan_t *s, uint8_t idx[BLE_SCAN_MAX]);
 #endif
+

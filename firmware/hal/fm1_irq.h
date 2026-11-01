@@ -226,3 +226,4 @@ static void __attribute__((noinline)) fm1_hang_c(uint32_t where, const uint32_t 
     for (;;)
         ;
 }
+

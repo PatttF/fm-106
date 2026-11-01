@@ -29,3 +29,4 @@ static int bootguard_manual(uint32_t buttons)
     return (buttons & 3u) == 1u;     /* physical OCT- alone; both keep calibration */
 }
 #endif
+

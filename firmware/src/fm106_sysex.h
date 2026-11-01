@@ -910,3 +910,4 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
         return;
     }
 }
+

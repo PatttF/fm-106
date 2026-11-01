@@ -367,3 +367,4 @@ void fm106_fx_run(fm106_fx_t *f,int32_t *stereo,uint32_t n)
 }
 
 #endif /* FM106_FX_H */
+

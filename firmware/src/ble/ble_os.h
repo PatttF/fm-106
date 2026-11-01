@@ -54,3 +54,4 @@ uint32_t ble_os_alloc_fails(void);                /* console: heap requests refu
 int ble_os_stack_intact(uint32_t i);              /* 0: task i overflowed its stack (its lowest words) */
 uint32_t ble_os_now_ms(void);
 #endif
+

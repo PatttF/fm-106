@@ -25,3 +25,4 @@ FM1_INLINE void fm1_stub_request(uint32_t word)
     FM1_STUB_RAM[0] = word;
     fm1_core_reset();
 }
+

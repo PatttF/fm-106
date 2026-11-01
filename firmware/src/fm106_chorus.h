@@ -163,3 +163,4 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
     *out_l = fm106_soft_limit_f32(mix_l);
     *out_r = fm106_soft_limit_f32(mix_r);
 }
+

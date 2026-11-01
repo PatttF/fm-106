@@ -83,3 +83,4 @@ static inline int fm1_clock_stock(void)
     FL_FAR(fm1_clock_set_stock_ram)();
     return fm1_clock_is_stock() ? 1 : -1;
 }
+

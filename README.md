@@ -6,7 +6,7 @@
 [![Firmware](https://img.shields.io/badge/Firmware-FM--106-red.svg)](firmware/)
 [![Web Simulator](https://img.shields.io/badge/Simulator-WebAssembly-cyan.svg)](simulator.html)
 
-FM-106 is inspired by the analog emulation engine of the legendary 1984 **Roland Juno-106** synthesizer to the ultra-portable **M-VAVE FM-1** hardware workstation. Engineered with single-precision floating point effects, an authentic 1980s Roland interface with real-time CRT oscilloscope, 256 presets with on-device naming, a 128-step acid sequencer with piano roll, Apple-compliant Bluetooth MIDI (Host and Peripheral), and a 45-parameter MIDI CC engine featuring live **MIDI Learn**.
+FM-106 is inspired by the analog emulation engine of the legendary 1984 **Roland Juno-106** synthesizer to the ultra-portable **M-VAVE FM-1** hardware workstation. Engineered with single-precision floating point effects, an authentic 1980s Roland interface with real-time CRT oscilloscope, 256 presets with on-device naming, a 128-step acid sequencer with piano roll, wireless Bluetooth MIDI (Host and Peripheral), and a 45-parameter MIDI CC engine featuring live **MIDI Learn**.
 
 > 📖 **Comprehensive User Manual:** For complete operational instructions, diagrams, step-by-step tutorials, and parameter charts, open [manual.html](manual.html) in any web browser.
 
@@ -158,3 +158,4 @@ python3 tools/fm1_install.py build/fm106.fwsc --yes
 ## License
 
 GPL-3.0-only. Built upon the Felucca / SLOOP / Dinghy platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89. DSP models adapted from Ultramaster KR-106 by Kayrock Screenprinting and Melodee by Kerem Kilic.
+

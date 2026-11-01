@@ -27,3 +27,4 @@ the GPL. It marks Dinghy itself; a fork uses its own logo.
 
 "Felucca" and "Hügelton Instruments" are names of Hügelton Instruments; "M-VAVE" and "FM-1" belong to their
 owners. Dinghy is not made or endorsed by them.
+

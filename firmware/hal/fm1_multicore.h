@@ -89,3 +89,4 @@ static int fm1_multicore_start(void)
     fm1__dbg_lock();
     return audio_worker_online;
 }
+

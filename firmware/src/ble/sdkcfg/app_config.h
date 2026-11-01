@@ -27,3 +27,4 @@
 #define BT_SUPPORT_MUSIC_VOL_SYNC       0
 /* (USER_SUPPORT_PROFILE_*: the SDK's bt_profile_cfg.h sets them; they matter only with classic BT) */
 #endif
+

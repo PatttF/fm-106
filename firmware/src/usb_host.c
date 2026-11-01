@@ -537,3 +537,4 @@ static void uh_poll(void)
         sie_wr(S_RXCSR1, 0x20u);
 }
 #endif /* FELUCCA_USB_HOST */
+

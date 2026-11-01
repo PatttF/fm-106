@@ -299,3 +299,4 @@ static int fl_verify_xip(uint32_t off, const uint8_t *ref, uint32_t n)
     for (i = 0; i < n; i++) if (p[i] != ref[i]) return -(int)(i + 1);
     return 0;
 }
+

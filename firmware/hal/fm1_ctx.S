@@ -19,3 +19,4 @@ fm1_ctx_start:                      /* r0 = &save_sp, r1 = stack_top, r2 = entry
 	r0 = r3
 	call r2                         /* entry(arg); a task body never returns */
 1:	goto 1b
+

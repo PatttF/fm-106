@@ -286,3 +286,4 @@ static uint32_t stub_detail(const stub_result_t *r, uint32_t key)
 }
 #endif /* __ASSEMBLER__ */
 #endif
+

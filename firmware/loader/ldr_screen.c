@@ -140,3 +140,4 @@ static void ldr_screen_progress(uint32_t done, uint32_t total)
     scr_fill(SCR_BAR_X + scr_shown, SCR_BAR_Y, px - scr_shown, SCR_BAR_H, SCR_BAR);
     scr_shown = px;
 }
+

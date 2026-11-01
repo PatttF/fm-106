@@ -311,3 +311,4 @@ void stub_main(void)
     shw_rail(0);
     shw_enter_uboot();
 }
+

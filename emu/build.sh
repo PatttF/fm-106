@@ -10,3 +10,4 @@ emcc ${EMU_OPT:--O2} -ffp-contract=off -std=gnu99 -w ${EMU_CFLAGS:-} \
     -o emu/fm106.wasm emu/fm106_web.c
 cp emu/fm106.wasm fm106.wasm
 echo "emu: emu/fm106.wasm ($(wc -c < emu/fm106.wasm | tr -d ' ') B wasm)"
+

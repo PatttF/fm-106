@@ -83,3 +83,4 @@ static uint32_t uh_midi_ok(uint32_t pkt)
         return pkt;
     return 0u;
 }
+

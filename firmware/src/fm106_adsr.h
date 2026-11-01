@@ -170,3 +170,4 @@ static inline __attribute__((always_inline)) int32_t fm106_adsr_process(fm106_ad
 
     return interp << 1;   /* Scale 14-bit to Q15 (0..32766) */
 }
+

@@ -2628,10 +2628,9 @@ static void draw_menu_about(void)
     cv_rect(6, 4, 228, 70, C_BLACK);
     cv_rect(6, 4, 228, 1, C_LINE_DIV);
     cv_rect(6, 73, 228, 1, C_LINE_DIV);
-    cv_text(16, 10, &FONT_S, "ENGINE : 6-Voice Poly DCO", C_TEXT_WHITE);
-    cv_text(16, 25, &FONT_S, "FILTER : 4-Pole 24dB IR3109", C_TEXT_WHITE);
-    cv_text(16, 40, &FONT_S, "AUDIO  : 44.1kHz / USB UAC", C_TEXT_WHITE);
-    cv_text(16, 55, &FONT_S, "BLE    : Apple BLE-MIDI", C_TEXT_WHITE);
+    cv_text(16, 16, &FONT_S, "ENGINE : 6-Voice Poly DCO", C_TEXT_WHITE);
+    cv_text(16, 32, &FONT_S, "FILTER : 4-Pole 24dB IR3109", C_TEXT_WHITE);
+    cv_text(16, 48, &FONT_S, "AUDIO  : 44.1kHz / USB UAC", C_TEXT_WHITE);
     cv_blit(0, 80);
 
     /* Band 3: y=160..239 */
@@ -4502,3 +4501,4 @@ static void app_main(void)
     }
 }
 #endif
+

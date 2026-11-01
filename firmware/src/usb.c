@@ -1824,3 +1824,4 @@ static __attribute__((unused)) void usb_cdc_switch(uint32_t on)
     usb_cdc_on = (uint8_t)on;
 }
 #endif
+

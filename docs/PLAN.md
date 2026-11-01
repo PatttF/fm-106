@@ -102,3 +102,4 @@
 5. **Testing & Verification**:
    - Run host tests and generate audio WAV & screen PNGs.
    - Build target firmware package with dual-core enabled.
+

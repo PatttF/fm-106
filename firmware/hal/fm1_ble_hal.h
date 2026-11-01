@@ -104,3 +104,4 @@ static inline __attribute__((always_inline)) void fm1_ble_irq_on(void)
     }
 }
 #endif
+

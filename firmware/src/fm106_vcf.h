@@ -370,3 +370,4 @@ static inline int32_t fm106_hpf_process(fm106_hpf_t *h, int32_t in)
         return in;
     }
 }
+

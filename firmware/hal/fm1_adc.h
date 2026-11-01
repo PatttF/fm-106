@@ -43,3 +43,4 @@ static int32_t fm1_adc_read(uint32_t ch)
     FM1_ADC_CON = 0;
     return t == 20000u ? -1 : (int32_t)v;
 }
+

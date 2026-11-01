@@ -55,3 +55,4 @@ install a fixed build. You can always force the rescue: hold **OCT-** while swit
 
 If even that is gone (the app is broken before it gets to its boot guard), the FM-1's own boot ROM still
 updates over USB: [FM-1-transporter](https://github.com/kurogedelic/FM-1-transporter) gets it back.
+

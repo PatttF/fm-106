@@ -36,3 +36,4 @@ int main(void)
     assert(audio_worker.timeouts == 1);
     puts("audio worker: busy/offline, bounded stall, wrapping deadline and no unsafe rerun ok");
 }
+

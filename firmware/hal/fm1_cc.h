@@ -8,3 +8,4 @@
 #pragma once
 
 #define FM1_INLINE static inline __attribute__((always_inline))
+

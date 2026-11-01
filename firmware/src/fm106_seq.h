@@ -359,3 +359,4 @@ static inline void fm106_seq_init(fm106_seq_t *s)
 }
 
 #endif /* FM106_SEQ_H */
+

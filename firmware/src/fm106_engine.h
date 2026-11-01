@@ -1437,3 +1437,4 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
     g_cpu0_load_pct = (g_cpu0_load_pct * 7u + l0) >> 3;
     g_cpu1_load_pct = (g_cpu1_load_pct * 7u + l1) >> 3;
 }
+

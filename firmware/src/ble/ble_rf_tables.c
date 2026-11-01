@@ -290,3 +290,4 @@ const unsigned long wl_rfd_ram_lut [256][2] = {
     /*254*/{ 0x00000078, 0xD7E3687a},
     /*255*/{ 0x00000078, 0xD7E3687a},
 };
+

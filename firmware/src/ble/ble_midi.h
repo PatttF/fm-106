@@ -19,3 +19,4 @@ void ble_midi_parse(ble_midi_t *m, const uint8_t *p, uint32_t n, ble_midi_out_fn
 uint32_t ble_midi_pack(const uint8_t (*msg)[3], const uint8_t *len, uint32_t n, uint32_t ts_ms, uint8_t *out,
                        uint32_t max, uint32_t *taken);
 #endif
+

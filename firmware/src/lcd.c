@@ -128,3 +128,4 @@ static void lcd_init(void)
     lcd_fill(0, 0, 240, 240, 0);
     lcd_cmd(0x29);
 }
+

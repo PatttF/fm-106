@@ -118,3 +118,4 @@ for (let b = 0; b < 60; b++) ex.web_render(128);
 console.log("\n=========================================");
 console.log(" ALL FM-106 WEB SIMULATOR TESTS PASSED! ");
 console.log("=========================================\n");
+

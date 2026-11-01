@@ -26,3 +26,4 @@ FM1_INLINE void fm1_timer5_start(void (*isr)(void), uint32_t prio)   /* IRQs off
 }
 
 FM1_INLINE void fm1_timer5_ack(void) { FM1_T5_CON |= 0x4000u; }
+

@@ -47,3 +47,4 @@ echo "When it says it is waiting: plug the FM-1 in and switch it on."
 echo "It will crash and go blank; that is when it is caught. (Ctrl-C stops it.)"
 echo
 exec sudo "$DIR/env/bin/python" "$DIR/fm1_rescue.py" "$DIR/FM-1.fwsc" --ask --wait 300
+

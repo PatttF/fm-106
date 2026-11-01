@@ -198,3 +198,4 @@ static void draw_text_box(uint32_t x, uint32_t y, uint32_t w, const felucca_font
     cv_blit(x, y);
     lcd_sync();                     /* one-shots (boot, crash, UBOOT, update) finish here */
 }
+

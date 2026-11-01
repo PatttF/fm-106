@@ -691,4 +691,3 @@ static void bt_host_connect_first_available(void)
         }
     }
 }
-

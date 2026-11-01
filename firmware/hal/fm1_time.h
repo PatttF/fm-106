@@ -46,3 +46,4 @@ static inline void fm1_delay_ms(uint32_t ms)
     while (ms--)
         fm1_delay_us(1000u);
 }
+

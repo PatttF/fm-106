@@ -194,3 +194,4 @@ static inline int32_t fm106_dco_process(
     float inv_inc = blep_inc ? (1.0f / (float)blep_inc) : 0.0f;
     return fm106_dco_process_fast(d, eff_inc, blep_inc, inv_inc, pw_slider, pw_mode, lfo_tri, env_q15);
 }
+

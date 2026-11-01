@@ -124,3 +124,4 @@ void ble_ui_role(int device);              /* ROLE: 0 HOST (scan, connect: the c
 uint32_t ble_ui_role_now(void);            /* the role in effect */
 void ble_ui_get_diag(uint32_t out[16]);
 #endif
+

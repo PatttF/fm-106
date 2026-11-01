@@ -80,3 +80,4 @@ def decompress(blk: bytes, prefix: bytes = b"") -> bytes:
         for _ in range(ml):
             out.append(out[-off])
     return bytes(out[len(prefix):])
+

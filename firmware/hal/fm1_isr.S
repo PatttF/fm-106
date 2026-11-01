@@ -34,3 +34,4 @@
 
 	FM1_ISR_F isr_timer5, fm1_timer5_irq
 	FM1_ISR isr_alnk0, fm1_alnk0_irq
+

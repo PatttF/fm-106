@@ -58,3 +58,4 @@ FM1_INLINE uint32_t fm1_uart1_rx_take(void)
     FM1_UT1_CON0 |= 0x1400u;                           /* clear RPND / OTPND */
     return FM1_UT1_HRXCNT & 0xFFFFu;
 }
+

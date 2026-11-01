@@ -80,3 +80,4 @@ FM1_INLINE void fm1_lcd_send_data(const void *p, uint32_t n)
     FM1_LCD_SPI_ADR = (uint32_t)(uintptr_t)p;
     FM1_LCD_SPI_CNT = n;
 }
+

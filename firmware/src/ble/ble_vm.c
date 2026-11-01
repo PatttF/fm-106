@@ -56,3 +56,4 @@ static int ble_vm_rf_trim(const uint8_t *p, uint32_t n, uint8_t out[BLE_VM_RF_TR
     }
     return (int)found;
 }
+

@@ -34,3 +34,4 @@ FM1_INLINE void fm1_cpu1_stop(void)
         *(volatile uint32_t *)0x1EEE240u = 0xE7u;
     __asm__ volatile("csync" ::: "memory");
 }
+

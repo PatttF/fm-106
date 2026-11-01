@@ -20,3 +20,4 @@ fm1_fatal_common:
 	r0 = sp				/* frame: r0..r15, reti, rete, retx, rets(stub+6), psr, icfg, usp, ssp, sp, rets(orig) */
 	call fm1_fault_c
 1:	goto 1b
+

@@ -26,3 +26,4 @@ int ble_ui_conn_name(char out[24]) { (void)out; return 0; }
 void ble_ui_role(int device) { (void)device; }
 uint32_t ble_ui_role_now(void) { return 0; }
 void ble_ui_get_diag(uint32_t out[16]) { uint32_t i; for (i = 0; i < 16; i++) out[i] = 0; }
+
