@@ -997,7 +997,7 @@ static const char CHAR_SET[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 
 #if FELUCCA_BLE
 #define MENU_MAIN_COUNT 3
-#define MENU_BLE_COUNT  5
+#define MENU_BLE_COUNT  4
 #else
 #define MENU_MAIN_COUNT 2
 #endif
@@ -1832,26 +1832,24 @@ static void fmt_cpu_pct(uint32_t pct, char *out)
     out[3] = '\0';
 }
 
-/* Live per-core CPU load footer at bottom of OPT menu (y=172..239) */
+/* Live CPU load footer at bottom of OPT menu (y=160..239) */
 static void draw_opt_cpu_footer(void)
 {
     uint32_t c0 = g_cpu0_load_pct;
-    uint32_t c1 = g_cpu1_load_pct;
     if (c0 > 99u) c0 = 99u;
-    if (c1 > 99u) c1 = 99u;
 
     char p0[4];
     fmt_cpu_pct(c0, p0);
     uint16_t col0 = (c0 >= 85u) ? C_ROLAND_RED : (c0 >= 65u) ? C_ROLAND_AMBER : C_STRIPE_CYAN;
-    int32_t w0 = (int32_t)((c0 * 124u) / 100u);
+
 #if DINGHY_DUAL_CORE
+    uint32_t c1 = g_cpu1_load_pct;
+    if (c1 > 99u) c1 = 99u;
     char p1[4];
     fmt_cpu_pct(c1, p1);
     uint16_t col1 = (c1 >= 85u) ? C_ROLAND_RED : (c1 >= 65u) ? C_ROLAND_AMBER : C_STRIPE_CYAN;
+    int32_t w0 = (int32_t)((c0 * 124u) / 100u);
     int32_t w1 = (int32_t)((c1 * 124u) / 100u);
-#else
-    (void)c1;
-#endif
 
     cv_begin(240, 80, C_BG);
     cv_rect(6, 4, 228, 72, C_FADER_BG);
@@ -1873,7 +1871,6 @@ static void draw_opt_cpu_footer(void)
     cv_text(194, 28, &FONT_S, p0, C_TEXT_WHITE);
 
     /* Core 1 row */
-#if DINGHY_DUAL_CORE
     cv_text(14, 50, &FONT_S, "CPU1 (WORKER)", C_TEXT_DIM);
     cv_rect(106, 53, 80, 8, C_BLACK);
     cv_rect(106, 53, 80, 1, C_LINE_DIV);
@@ -1883,15 +1880,33 @@ static void draw_opt_cpu_footer(void)
         cv_rect(108, 55, b1, 4, col1);
     }
     cv_text(194, 50, &FONT_S, p1, C_TEXT_WHITE);
-#else
-    cv_text(14, 50, &FONT_S, "CPU1 (STANDBY)", C_TEXT_DIM);
-    cv_rect(106, 53, 80, 8, C_BLACK);
-    cv_rect(106, 53, 80, 1, C_LINE_DIV);
-    cv_text(114, 50, &FONT_S, "BLE STABILITY", C_TEXT_DIM);
-    cv_text(194, 50, &FONT_S, "OFF", C_TEXT_DIM);
-#endif
 
     cv_blit(0, 160);
+#else
+    cv_begin(240, 80, C_BG);
+    cv_rect(6, 4, 228, 72, C_FADER_BG);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 75, 228, 1, C_LINE_DIV);
+
+    cv_text(14, 8, &FONT_S, "CPU LOAD MONITOR", C_STRIPE_CYAN);
+    cv_rect(14, 22, 212, 1, C_LINE_DIV);
+
+    /* Single core row: clean label, wide meter bar, percentage */
+    cv_text(14, 30, &FONT_S, "SYNTH ENGINE", C_TEXT_DIM);
+    cv_text(194, 30, &FONT_S, p0, C_TEXT_WHITE);
+
+    cv_rect(14, 48, 212, 14, C_BLACK);
+    cv_rect(14, 48, 212, 1, C_LINE_DIV);
+    cv_rect(14, 61, 212, 1, C_LINE_DIV);
+
+    if (c0 > 0) {
+        int32_t b0 = (int32_t)((c0 * 208u) / 100u);
+        if (b0 > 208) b0 = 208;
+        cv_rect(16, 50, b0, 10, col0);
+    }
+
+    cv_blit(0, 160);
+#endif
 }
 
 /* 4. OPT Menu (Covering full screen y=0..239 in three 80px bands) */
@@ -1959,11 +1974,9 @@ static void draw_menu_bluetooth(void)
     const char *on_str = btp.on ? "ON" : "OFF";
     const char *auto_str = s.autostart ? "ON" : "OFF";
     const char *role_str = (s.role == BT_ROLE_DEVICE) ? "DEVICE" : "HOST";
-    const char *rate_names[3] = {"AUTO", "FAST", "SLOW"};
-    const char *rate_str = (s.rate < 3u) ? rate_names[s.rate] : "AUTO";
 
-    const char *labels[4] = {"BLUETOOTH", "AUTOSTART", "ROLE", "RECONNECT"};
-    const char *vals[4]   = {on_str, auto_str, role_str, rate_str};
+    const char *labels[3] = {"BLUETOOTH", "AUTOSTART", "ROLE"};
+    const char *vals[3]   = {on_str, auto_str, role_str};
 
     /* Band 1: y=0..79 (Header + Status + Row 0) */
     cv_begin(240, 80, C_BG);
@@ -1986,27 +1999,27 @@ static void draw_menu_bluetooth(void)
     cv_text_plate(140, 48, 80, vals[0], c0, C_BLACK, 1);
     cv_blit(0, 0);
 
-    /* Band 2: y=80..159 (Rows 1, 2, 3) */
+    /* Band 2: y=80..159 (Rows 1, 2) */
     cv_begin(240, 80, C_BG);
-    for (uint32_t i = 1u; i < 4u; i++) {
+    for (uint32_t i = 1u; i < 3u; i++) {
         uint16_t c = (g_ble_sel == i) ? C_ROLAND_AMBER : C_TEXT_DIM;
-        uint16_t ry = 2 + (i - 1u) * 26;
-        cv_rect(6, ry, 228, 24, (g_ble_sel == i) ? C_LINE_DIV : C_BLACK);
+        uint16_t ry = 8 + (i - 1u) * 34;
+        cv_rect(6, ry, 228, 26, (g_ble_sel == i) ? C_LINE_DIV : C_BLACK);
         cv_rect(6, ry, 228, 1, (g_ble_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
-        cv_rect(6, ry + 23, 228, 1, (g_ble_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
+        cv_rect(6, ry + 25, 228, 1, (g_ble_sel == i) ? C_ROLAND_AMBER : C_LINE_DIV);
         cv_text(14, ry + 6, &FONT_S, labels[i], C_TEXT_DIM);
         cv_text_plate(140, ry + 4, 80, vals[i], c, C_BLACK, 1);
     }
     cv_blit(0, 80);
 
-    /* Band 3: y=160..239 (Row 4 + Guide Footer) */
+    /* Band 3: y=160..239 (Row 3 + Guide Footer) */
     cv_begin(240, 80, C_BG);
-    uint16_t c4 = (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_TEXT_DIM;
-    cv_rect(6, 4, 228, 26, (g_ble_sel == 4u) ? C_LINE_DIV : C_BLACK);
-    cv_rect(6, 4, 228, 1, (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
-    cv_rect(6, 29, 228, 1, (g_ble_sel == 4u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    uint16_t c3 = (g_ble_sel == 3u) ? C_ROLAND_AMBER : C_TEXT_DIM;
+    cv_rect(6, 4, 228, 26, (g_ble_sel == 3u) ? C_LINE_DIV : C_BLACK);
+    cv_rect(6, 4, 228, 1, (g_ble_sel == 3u) ? C_ROLAND_AMBER : C_LINE_DIV);
+    cv_rect(6, 29, 228, 1, (g_ble_sel == 3u) ? C_ROLAND_AMBER : C_LINE_DIV);
     if (s.role == BT_ROLE_HOST) {
-        cv_text_plate(10, 8, 220, "[OCT+] SCAN DEVICES", c4, C_BLACK, 1);
+        cv_text_plate(10, 8, 220, "[OCT+] SCAN DEVICES", c3, C_BLACK, 1);
     } else {
         cv_text_plate(10, 8, 220, "ADVERTISING: FM-106", C_TEXT_DIM, C_BLACK, 1);
     }
@@ -3113,10 +3126,8 @@ static void fm106_app_frame(void)
                     bt_set_put(&bs);
                     ble_ui_role(bs.role);
                     bt_devs_page(!bs.role);
-                } else if (g_ble_sel == 3) {
-                    bs.rate = (bs.rate + 1u) % 3u;
-                    bt_set_put(&bs);
-                } else if (g_ble_sel == 4 && bs.role == BT_ROLE_HOST) {
+                    if (bs.role == BT_ROLE_DEVICE && g_ble_sel >= 3u) g_ble_sel = 2u;
+                } else if (g_ble_sel == 3 && bs.role == BT_ROLE_HOST) {
                     bt_page_on();
                     bt_host_scan_start();
                     g_ui_mode = UI_MODE_BT_SCAN;
@@ -3290,9 +3301,12 @@ static void fm106_app_frame(void)
                 dirty_screen = 1;
 #if FELUCCA_BLE
             } else if (g_ui_mode == UI_MODE_BLUETOOTH) {
+                bt_set_t bs;
+                bt_set_get(&bs);
+                int32_t count = (bs.role == BT_ROLE_HOST) ? (int32_t)MENU_BLE_COUNT : ((int32_t)MENU_BLE_COUNT - 1);
                 int32_t nm = (int32_t)g_ble_sel + enc_s;
-                if (nm < 0) nm = MENU_BLE_COUNT - 1;
-                if (nm >= (int32_t)MENU_BLE_COUNT) nm = 0;
+                if (nm < 0) nm = count - 1;
+                if (nm >= count) nm = 0;
                 g_ble_sel = (uint8_t)nm;
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_BT_SCAN) {
@@ -3396,12 +3410,7 @@ static void fm106_app_frame(void)
                     bs.role ^= 1u;
                     bt_set_put(&bs);
                     ble_ui_role(bs.role);
-                } else if (g_ble_sel == 3) {   /* RECONNECT AUTO/FAST/SLOW */
-                    int32_t nr = (int32_t)bs.rate + (ealgo > 0 ? 1 : -1);
-                    if (nr < 0) nr = 2;
-                    if (nr > 2) nr = 0;
-                    bs.rate = (uint8_t)nr;
-                    bt_set_put(&bs);
+                    if (bs.role == BT_ROLE_DEVICE && g_ble_sel >= 3u) g_ble_sel = 2u;
                 }
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_BT_SCAN) {
