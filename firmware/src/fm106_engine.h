@@ -132,6 +132,7 @@ static volatile uint32_t g_cpu0_load_pct;
 static volatile uint32_t g_cpu1_load_pct;
 static volatile uint32_t g_cpu0_ticks;
 static volatile uint32_t g_cpu1_ticks;
+static volatile uint32_t g_cpu0_peak;   /* peak-hold render ticks (cleared by CC 119 / value 1 query) */
 
 /* Calculate phase step inc for MIDI note and octave range */
 static inline uint32_t fm106_calc_inc(uint32_t note, int8_t oct_shift, uint8_t range)
@@ -1113,6 +1114,7 @@ static FM106_RAM_FUNC void fm106_render_voice_ex(fm106_engine_t *e, uint32_t vi,
     }
     uint32_t static_blep_inc = (static_inc < 2u) ? 0u : static_inc;
     float static_inv_inc = static_blep_inc ? (1.0f / (float)static_blep_inc) : 0.0f;
+    uint16_t dac_slewed = (uint16_t)v->vcf_slew;   /* held VCF CV, refreshed every 4th sample */
 
     for (uint32_t i = 0; i < n; i++) {
         int32_t lfo_s = (int32_t)g_lfo_buf[i];
@@ -1170,19 +1172,27 @@ static FM106_RAM_FUNC void fm106_render_voice_ex(fm106_engine_t *e, uint32_t vi,
         /* Post-DCO DC blocker (1.59 Hz, models 10µF coupling cap between DCO and VCF) */
         dco_s = fm106_dc_block(dco_s, &v->dc_post_osc);
 
-        /* VCF Cutoff calculated via genuine D7811G DAC calculation with per-sample interpolated envelope */
-        uint16_t env14_interp = (uint16_t)(env_q15 >> 1);
-        uint16_t dac = fm106_calc_vcf_freq(
-            vcfCutoff, vcfLfoSignal, vcfBendAmt, vcfEnvMod, vcfKeyTrack,
-            lfoPol, bendPol, envPol, env14_interp, pitch88);
+        /* VCF Cutoff calculated via genuine D7811G DAC calculation, updated at 11.025 kHz
+         * (every 4th sample; the original voice CPU updated its cutoff DAC at ~236 Hz).
+         * Holding the CV for 4 samples lets fm106_vcf_process reuse its cached
+         * coefficients (g1, k, 1/(1+kG)) on 3 of every 4 samples while the cutoff is
+         * moving, instead of recomputing (incl. a float divide) on every sample of every
+         * voice during envelope/LFO sweeps. n is a multiple of 4, so i == 0 always updates. */
+        if ((i & 3u) == 0u) {
+            uint16_t env14_interp = (uint16_t)(env_q15 >> 1);
+            uint16_t dac = fm106_calc_vcf_freq(
+                vcfCutoff, vcfLfoSignal, vcfBendAmt, vcfEnvMod, vcfKeyTrack,
+                lfoPol, bendPol, envPol, env14_interp, pitch88);
 
-        /* VCF Cutoff CV analog RC slew filter: tau = 522 us (1393 in Q15) */
-        if (v->vcf_slew == 0) {
-            v->vcf_slew = (int32_t)dac;
-        } else {
-            v->vcf_slew += (int32_t)(((int32_t)dac - v->vcf_slew) * 1393) >> 15;
+            /* VCF Cutoff CV analog RC slew filter: tau = 522 us. Per-sample Q15 coefficient
+             * 1393 compounded over the 4-sample step: 1 - (1 - 1393/32768)^4 = 0.15951 -> 5227 */
+            if (v->vcf_slew == 0) {
+                v->vcf_slew = (int32_t)dac;
+            } else {
+                v->vcf_slew += (int32_t)(((int32_t)dac - v->vcf_slew) * 5227) >> 15;
+            }
+            dac_slewed = (uint16_t)v->vcf_slew;
         }
-        uint16_t dac_slewed = (uint16_t)v->vcf_slew;
 
         /* 4-pole TPT ladder filter process (hardware single-precision FPU) */
         int32_t vcf_s = fm106_vcf_process(&v->vcf, dco_s, dac_slewed, vcf_res);
@@ -1417,6 +1427,7 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
 #endif
     g_cpu0_ticks = elapsed0;
     g_cpu1_ticks = elapsed1;
+    if (elapsed0 > g_cpu0_peak) g_cpu0_peak = elapsed0;
 
     /* 256 frames at 44.1 kHz = 139,320 ticks of 24 MHz TIMER4 */
     uint32_t l0 = (uint32_t)((float)elapsed0 * (100.0f / 139320.0f));

@@ -372,6 +372,12 @@ extern void isr_timer5(void);
 static int32_t abuf[2u * HALF_WORDS] __attribute__((aligned(4)));
 static volatile int32_t master_q12 = 2048;
 static volatile uint32_t audio_lates = 0;
+/* Whole-ISR timing (24 MHz TIMER4 ticks; budget = 256 frames @ 44.1 kHz = 139,320):
+ * covers render + scope + USB tap (incl. 48 kHz FIR) + MASTER scaling + nested TIMER5.
+ * Peaks are held until read (and cleared) by the CC 119 / value 1 telemetry query. */
+static volatile uint32_t audio_isr_ticks = 0;     /* last block, whole ISR */
+static volatile uint32_t audio_isr_peak = 0;      /* peak-hold, whole ISR */
+static volatile uint32_t audio_post_peak = 0;     /* peak-hold, everything after app_audio (USB tap + scaling) */
 static void app_audio(int32_t *out, uint32_t n);
 static void app_main(void);
 
@@ -382,6 +388,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
     p = fm1_audio_pending();
     fm1_audio_ack_aux(p);
     if (p & FM1_AUDIO_HALF) {
+        uint32_t t_isr0 = fm1_ticks();
         uint32_t half = fm1_audio_free_half();
         int32_t *o = &abuf[half * HALF_WORDS];
         uint32_t i;
@@ -390,6 +397,7 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         uac_render_start();
         fm1_irq_on();                           /* Allow TIMER5 (priority 4) to nest during audio render & 48k FIR */
         app_audio(o, HALF_FRAMES);
+        uint32_t t_post0 = fm1_ticks();
         uac_tap(o, HALF_FRAMES);                /* Lock-free SPSC ring: pristine full-scale digital engine output */
         for (i = 0; i < HALF_WORDS; i++) {
             int32_t v = (o[i] * master_q12) >> 12;
@@ -400,6 +408,11 @@ void fm1_alnk0_irq(void)                       /* via isr_alnk0 (hal/fm1_isr.S) 
         fm1_audio_ack_half();
         if (fm1_audio_free_half() != half)
             audio_lates++;
+        uint32_t t_end = fm1_ticks();
+        uint32_t isr_t = t_end - t_isr0, post_t = t_end - t_post0;
+        audio_isr_ticks = isr_t;
+        if (isr_t > audio_isr_peak) audio_isr_peak = isr_t;
+        if (post_t > audio_post_peak) audio_post_peak = post_t;
     }
     in_audio = 0;
 }

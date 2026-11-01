@@ -45,6 +45,7 @@ static struct {
     uint8_t alt, starts, stalls, rate_sets, flowing, missed;
 } uac;
 static volatile uint32_t audio_lates = 0;
+static volatile uint32_t audio_isr_ticks = 0, audio_isr_peak = 0, audio_post_peak = 0;   /* timing telemetry (unused on web) */
 
 static struct {
     uint32_t notes, buttons;
