@@ -32,6 +32,20 @@ static inline __attribute__((always_inline)) int32_t fm106_soft_limit(int32_t x)
     return x < 0 ? -compressed : compressed;
 }
 
+/* Rational analog soft limiter in single-precision float domain (maps to int32 range -32000..+32000):
+ * Transparent linear pass-through up to |x| <= 24576.0f (-2.5 dBFS) */
+static inline __attribute__((always_inline)) int32_t fm106_soft_limit_f32(float x)
+{
+    float ax = x < 0.0f ? -x : x;
+    if (__builtin_expect(ax <= 24576.0f, 1)) {
+        return (int32_t)(x + (x >= 0.0f ? 0.5f : -0.5f));
+    }
+    float ex = (ax - 24576.0f) * (1.0f / 32.0f);
+    float compressed = 24576.0f + (ex * 7424.0f) / (232.0f + ex);
+    int32_t c = (int32_t)(compressed + 0.5f);
+    return x < 0.0f ? -c : c;
+}
+
 /* BA662 OTA Padé differential saturation in single-precision float:
  * Exact continuous KR106VCF_OPTIMIZED.h curve x * (27 + x^2) / (27 + 9*x^2) */
 static inline __attribute__((always_inline)) float fm106_ota_sat_f(float x)

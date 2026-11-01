@@ -49,16 +49,15 @@ static inline float fm106_bbd_filter_process(fm106_bbd_filter_t *f, float in)
     float v2 = f->ic2 + 0.8260784f * v1;
     f->ic1 = 2.0f * v1 - f->ic1;
     f->ic2 = 2.0f * v2 - f->ic2;
-    if (f->ic1 > -1.0e-15f && f->ic1 < 1.0e-15f) f->ic1 = 0.0f;
-    if (f->ic2 > -1.0e-15f && f->ic2 < 1.0e-15f) f->ic2 = 0.0f;
+    if (__builtin_expect(f->ic1 > -1.0e-15f && f->ic1 < 1.0e-15f, 0)) f->ic1 = 0.0f;
+    if (__builtin_expect(f->ic2 > -1.0e-15f && f->ic2 < 1.0e-15f, 0)) f->ic2 = 0.0f;
     return v2;
 }
 
 /* 4-point Hermite interpolation on the single-precision FPU:
  * Exact C1-continuous fractional delay read returning float */
-static inline __attribute__((always_inline)) float fm106_hermite_f(int32_t frac_q15, float y0, float y1, float y2, float y3)
+static inline __attribute__((always_inline)) float fm106_hermite_f(float t, float y0, float y1, float y2, float y3)
 {
-    float t  = (float)frac_q15 * (1.0f / 32768.0f);
     float c1 = 0.5f * (y2 - y0);
     float c2 = y0 - 2.5f * y1 + 2.0f * y2 - 0.5f * y3;
     float c3 = 0.5f * (y3 - y0) + 1.5f * (y1 - y2);
@@ -66,8 +65,7 @@ static inline __attribute__((always_inline)) float fm106_hermite_f(int32_t frac_
 }
 
 typedef struct {
-    int16_t buf_l[FM106_CHORUS_LEN];
-    int16_t buf_r[FM106_CHORUS_LEN];
+    int16_t buf[FM106_CHORUS_LEN];
     uint32_t wr_idx;
     uint32_t lfo_ph;
     uint8_t mode;               /* FM106_CHORUS_* */
@@ -83,8 +81,7 @@ static inline void fm106_chorus_init(fm106_chorus_t *c)
     fm106_bbd_filter_init(&c->filt_l);
     fm106_bbd_filter_init(&c->filt_r);
     for (uint32_t i = 0; i < FM106_CHORUS_LEN; i++) {
-        c->buf_l[i] = 0;
-        c->buf_r[i] = 0;
+        c->buf[i] = 0;
     }
 }
 
@@ -99,10 +96,9 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
     /* Soft limit input to preserve analog headroom and dry:wet ratio */
     int32_t in_sat = fm106_soft_limit(mono_in);
 
-    /* Store incoming audio in delay rings */
+    /* Store incoming audio in delay ring (shared buffer for L/R antiphase taps) */
     uint32_t wr = c->wr_idx;
-    c->buf_l[wr] = (int16_t)in_sat;
-    c->buf_r[wr] = (int16_t)in_sat;
+    c->buf[wr] = (int16_t)in_sat;
     c->wr_idx = (wr + 1u) & FM106_CHORUS_MASK;
 
     /* LFO parameters according to mode */
@@ -139,21 +135,21 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
 
     /* 4-point Hermite interpolation for C1-continuous fractional delay taps (eliminates zipper noise) */
     int32_t int_del_l = delay_l_q16 >> 16;
-    int32_t frac_l = (int32_t)((delay_l_q16 & 0xFFFFu) >> 1);
+    float frac_l_f = (float)(delay_l_q16 & 0xFFFFu) * (1.0f / 65536.0f);
     uint32_t rd_l1 = (wr - 1u - (uint32_t)int_del_l) & FM106_CHORUS_MASK;
     uint32_t rd_l0 = (rd_l1 + 1u) & FM106_CHORUS_MASK;
     uint32_t rd_l2 = (rd_l1 - 1u) & FM106_CHORUS_MASK;
     uint32_t rd_l3 = (rd_l1 - 2u) & FM106_CHORUS_MASK;
-    float wet_l = fm106_hermite_f(frac_l, (float)c->buf_l[rd_l0], (float)c->buf_l[rd_l1], (float)c->buf_l[rd_l2], (float)c->buf_l[rd_l3]);
+    float wet_l = fm106_hermite_f(frac_l_f, (float)c->buf[rd_l0], (float)c->buf[rd_l1], (float)c->buf[rd_l2], (float)c->buf[rd_l3]);
 
     /* Read Right tap */
     int32_t int_del_r = delay_r_q16 >> 16;
-    int32_t frac_r = (int32_t)((delay_r_q16 & 0xFFFFu) >> 1);
+    float frac_r_f = (float)(delay_r_q16 & 0xFFFFu) * (1.0f / 65536.0f);
     uint32_t rd_r1 = (wr - 1u - (uint32_t)int_del_r) & FM106_CHORUS_MASK;
     uint32_t rd_r0 = (rd_r1 + 1u) & FM106_CHORUS_MASK;
     uint32_t rd_r2 = (rd_r1 - 1u) & FM106_CHORUS_MASK;
     uint32_t rd_r3 = (rd_r1 - 2u) & FM106_CHORUS_MASK;
-    float wet_r = fm106_hermite_f(frac_r, (float)c->buf_r[rd_r0], (float)c->buf_r[rd_r1], (float)c->buf_r[rd_r2], (float)c->buf_r[rd_r3]);
+    float wet_r = fm106_hermite_f(frac_r_f, (float)c->buf[rd_r0], (float)c->buf[rd_r1], (float)c->buf[rd_r2], (float)c->buf[rd_r3]);
 
     /* Apply Butterworth reconstruction filter in float */
     wet_l = fm106_bbd_filter_process(&c->filt_l, wet_l);
@@ -161,9 +157,9 @@ static inline void fm106_chorus_process(fm106_chorus_t *c, int32_t mono_in, int3
 
     /* IC6 summer output: authentic Roland dry:wet ratio (0.863 : 1.257 = 21209 : 30892 in Q15) */
     float dry_f = (float)in_sat * (21209.0f / 32768.0f);
-    int32_t sl = fm106_f2i_round(dry_f + wet_l * (30892.0f / 32768.0f));
-    int32_t sr = fm106_f2i_round(dry_f + wet_r * (30892.0f / 32768.0f));
+    float mix_l = dry_f + wet_l * (30892.0f / 32768.0f);
+    float mix_r = dry_f + wet_r * (30892.0f / 32768.0f);
 
-    *out_l = fm106_soft_limit(sl);
-    *out_r = fm106_soft_limit(sr);
+    *out_l = fm106_soft_limit_f32(mix_l);
+    *out_r = fm106_soft_limit_f32(mix_r);
 }

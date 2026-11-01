@@ -80,7 +80,12 @@ static inline __attribute__((always_inline)) uint32_t fm106_fx_noise(int32_t *st
     *st=(int32_t)s;
     return s;
 }
-static inline __attribute__((always_inline)) float fx_bound(float x,float lim) { return x < -lim ? -lim : x > lim ? lim : x; }
+static inline __attribute__((always_inline)) float fx_bound(float x,float lim)
+{
+    if (__builtin_expect(x > lim, 0)) return lim;
+    if (__builtin_expect(x < -lim, 0)) return -lim;
+    return x;
+}
 static inline __attribute__((always_inline)) int32_t fx_scale(int32_t a,uint32_t k)
 {return (a>>16)*(int32_t)k+(int32_t)(((uint32_t)(a&65535)*k)>>16);}
 static inline __attribute__((always_inline)) int32_t fx_limit(int32_t a,int32_t lo,int32_t hi)
@@ -156,17 +161,18 @@ static inline __attribute__((always_inline)) float fx_tape_lp(fx_bq_t *q,float x
 /* ToTape9's degenerate Taylor-series sin() saturator, ported to float. Clamp to
  * ±2.306 then evaluate the odd polynomial: the peak softens through the sin
  * rolloff rather than hard-clipping, giving tape's gentle even/odd harmonic
- * bloom. Multiplies only — no libm call. */
+ * bloom. Multiplies only — no libm call. Evaluated using Horner form and FMA. */
 static inline __attribute__((always_inline)) float fx_tape_sin(float s)
 {
-    if(s>2.305929f)s=2.305929f;else if(s<-2.305929f)s=-2.305929f;
-    float a2=s*s,e=s*a2;              /* e = s^3 */
-    s-=e*(1.0f/6.0f);
-    e*=a2;s+=e*(1.0f/69.0f);          /* s^5 */
-    e*=a2;s-=e*(1.0f/2530.08f);       /* s^7 */
-    e*=a2;s+=e*(1.0f/224985.6f);      /* s^9 */
-    e*=a2;s-=e*(1.0f/9979200.0f);     /* s^11 */
-    return s;
+    if (__builtin_expect(s > 2.305929f, 0)) s = 2.305929f;
+    else if (__builtin_expect(s < -2.305929f, 0)) s = -2.305929f;
+    float a2 = s * s;
+    float p = -1.00208433e-7f * a2 + 4.4447289e-6f;
+    p = p * a2 - 3.95244419e-4f;
+    p = p * a2 + 1.44927536e-2f;
+    p = p * a2 - 0.166666667f;
+    p = p * a2 + 1.0f;
+    return s * p;
 }
 /* TAPE (Melodee band skeleton + Airwindows ToTape9 ideas). Runs in place on the
  * FS/4-decimated buffers (fx_low_l/fx_low_r, length n); the down/up path does
@@ -178,8 +184,8 @@ static inline __attribute__((always_inline)) float fx_tape_sin(float s)
 static void fx_tape(fm106_fx_t *restrict f,int16_t *restrict mem,int32_t *restrict left,int32_t *restrict right,uint32_t n)
 {
     const float slew=1.0f/(0.015f*FX_RATE);       /* ~15 ms band/polarity smoothing */
-    float drive=1.0f+(float)f->character/127.0f*2.0f;   /* 1..3 saturation drive */
-    float bias=(((float)f->character/127.0f)-0.5f)*0.30f; /* ±0.15 asymmetry */
+    float drive_norm=(1.0f+(float)f->character/127.0f*2.0f)*(1.0f/32768.0f);   /* 1..3 saturation drive, pre-scaled */
+    float bias_scale=((((float)f->character/127.0f)-0.5f)*0.30f)*48.0f;       /* ±0.15 asymmetry pre-scaled */
     float bumpmix=(float)f->character/127.0f*0.35f;      /* 0..0.35 head-bump */
     uint32_t fl_depth=(uint32_t)((float)(f->rate*128)/127.0f);        /* 0..128 samples @FS/4 */
     float fl_freq=(0.5f+(float)(f->rate*f->rate)/16129.0f*6.0f)/(float)FX_RATE; /* cycles/sample, 0.5..6.5 Hz */
@@ -190,15 +196,18 @@ static void fx_tape(fm106_fx_t *restrict f,int16_t *restrict mem,int32_t *restri
         for(uint32_t ch=0;ch<channels;ch++){
             int32_t *b=ch?right:left;float x=(float)b[i];
             /* Flutter: write this sample, read a sine-swept fractional tap. Per-channel
-             * ring halves (mem[0..255]=L, mem[256..511]=R) so L/R don't clobber. */
+             * ring halves (mem[0..255]=L, mem[256..511]=R) so L/R don't clobber.
+             * Evaluated with native single-precision float linear interpolation. */
             if(fl_depth){
                 int16_t *ring=mem+ch*256u;
                 ring[f->fl_wr]=(int16_t)fx_limit((int32_t)x,-32767,32767);
                 float sw=(float)fm106_fx_sine((int32_t)(f->fl_sweep*4294967296.0f))*(1.0f/32768.0f);
                 float offset=(float)fl_depth+(float)fl_depth*sw;      /* 0..2*depth */
-                uint32_t ip=(uint32_t)offset,frac=(uint32_t)((offset-(float)ip)*65536.0f);
+                uint32_t ip=(uint32_t)offset;
+                float frac_f=offset-(float)ip;
                 uint32_t d0=(f->fl_wr+256u-ip)&255u,d1=(d0+255u)&255u;
-                x=(float)ring[d0]+(float)(((ring[d1]-ring[d0])*(int32_t)frac)>>16);
+                float r0=(float)ring[d0];
+                x=r0+((float)ring[d1]-r0)*frac_f;
             }
             /* Band skeleton (Melodee): low + polarity-flipped mid + top rolloff. */
             float low=fx_tape_lp(&f->q[ch][0],x,f->q[0][0].b0);
@@ -207,11 +216,11 @@ static void fx_tape(fm106_fx_t *restrict f,int16_t *restrict mem,int32_t *restri
             x=fx_tape_lp(&f->q[ch][2],x,f->q[0][2].b0);
             /* Bias: signal-following DC offset → asymmetric saturation (even harmonics). */
             f->tape_dc+=(x*0.002f-f->tape_dc)*0.001f;
-            x+=f->tape_dc*bias*48.0f;
+            x+=f->tape_dc*bias_scale;
             /* Core saturation (ToTape9 TapeHack): normalize, drive, sin(). */
-            x=fx_tape_sin(x*(drive*(1.0f/32768.0f)))*32768.0f;
+            x=fx_tape_sin(x*drive_norm)*32768.0f;
             /* Head-bump: resonant low-frequency thump (ToTape9 hdb). */
-            if(bumpmix>0.0f)x+=fx_tick(&f->hb[ch],x)*bumpmix*1.0f;
+            if(bumpmix>0.0f)x+=fx_tick(&f->hb[ch],x)*bumpmix;
             /* Subsonic/DC block (~25 Hz @FS/4): head-bump unity-DC gain and the
              * bias follower both inject low energy that a long reverb LF decay
              * turns into boom. One-pole HP removes it before the return. */
@@ -232,11 +241,11 @@ static void fx_tape(fm106_fx_t *restrict f,int16_t *restrict mem,int32_t *restri
     /* Clear inaudible tails before they can become costly denormals. */
     for(uint32_t ch=0;ch<2u;ch++)for(uint32_t k=0;k<3u;k++){
         fx_bq_t *q=&f->q[ch][k];
-        if(q->z1>-1e-9f && q->z1<1e-9f)q->z1=0;
-        if(q->z2>-1e-9f && q->z2<1e-9f)q->z2=0;
+        if(__builtin_expect(q->z1>-1e-9f && q->z1<1e-9f, 0))q->z1=0;
+        if(__builtin_expect(q->z2>-1e-9f && q->z2<1e-9f, 0))q->z2=0;
         fx_bq_t *h=&f->hb[ch];
-        if(h->z1>-1e-9f && h->z1<1e-9f)h->z1=0;
-        if(h->z2>-1e-9f && h->z2<1e-9f)h->z2=0;
+        if(__builtin_expect(h->z1>-1e-9f && h->z1<1e-9f, 0))h->z1=0;
+        if(__builtin_expect(h->z2>-1e-9f && h->z2<1e-9f, 0))h->z2=0;
     }
 }
 /* Wet/dry return: mix ramps ±128/block toward target (Melodee fx_return), with
