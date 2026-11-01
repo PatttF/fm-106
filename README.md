@@ -6,7 +6,7 @@
 [![Firmware](https://img.shields.io/badge/Firmware-FM--106-red.svg)](firmware/)
 [![Web Simulator](https://img.shields.io/badge/Simulator-WebAssembly-cyan.svg)](simulator.html)
 
-FM-106 pis inspired by the analog emulation engine of the legendary 1984 **Roland Juno-106** synthesizer to the ultra-portable **M-VAVE FM-1** hardware workstation. Engineered with single-precision floating point effects, an authentic 1980s Roland interface with real-time CRT oscilloscope, 256 presets with on-device naming, a 128-step acid sequencer with piano roll, Apple-compliant Bluetooth MIDI (Host and Peripheral), and a 45-parameter MIDI CC engine featuring live **MIDI Learn**.
+FM-106 is inspired by the analog emulation engine of the legendary 1984 **Roland Juno-106** synthesizer to the ultra-portable **M-VAVE FM-1** hardware workstation. Engineered with single-precision floating point effects, an authentic 1980s Roland interface with real-time CRT oscilloscope, 256 presets with on-device naming, a 128-step acid sequencer with piano roll, Apple-compliant Bluetooth MIDI (Host and Peripheral), and a 45-parameter MIDI CC engine featuring live **MIDI Learn**.
 
 > 📖 **Comprehensive User Manual:** For complete operational instructions, diagrams, step-by-step tutorials, and parameter charts, open [manual.html](manual.html) in any web browser.
 
