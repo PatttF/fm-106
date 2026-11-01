@@ -120,7 +120,7 @@ FM-106 includes an on-device MIDI continuous controller engine controlling 45 pa
 ## Web Simulator & Patch Librarian
 
 - **[simulator.html](simulator.html)**: Interactive WebAssembly simulator running the exact FM-106 audio DSP engine and UI directly in your web browser.
-- **[Librarian.html](Librarian.html)**: Visual patch librarian supporting Web MIDI. Connect the FM-106 over USB to audition, back up, and load standard Roland Juno-106 SysEx files (`.syx`), Jarvik7 (`.106`), Web JSON, vintage Roland Juno-106 Tape Cassette audio files (`.wav`), and TAL U-No-LX presets (`.pjunoxl`). Includes the 64-preset LFO Store Future Classic soundset and the Juno Elixir TAL soundset.
+- **[Librarian.html](Librarian.html)**: Visual patch librarian supporting Web MIDI. Connect the FM-106 over USB to audition, back up, and load standard Roland Juno-106 SysEx files (`.syx`), Jarvik7 (`.106`), Web JSON, vintage Roland Juno-106 Tape Cassette audio files (`.wav`), and TAL U-No-LX presets (`.pjunoxl`). Includes the 64-preset LFO Store Future Classic soundset and the Lixor TAL soundset.
 
 ---
 

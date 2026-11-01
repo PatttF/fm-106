@@ -944,7 +944,7 @@ footer.keyboard-footer {
             <div style="display: flex; gap: 6px;">
                 <select id="select-bank-template" style="flex: 1; font-size: 11px; padding: 6px 8px; background: #0d0e12; color: var(--text-white); border: 1px solid var(--panel-light); border-radius: 3px;">
                     <option value="future_classic">Future Classic (LFO Store) (64 Patches)</option>
-                    <option value="juno_elixir">Juno Elixir (TAL U-No-LX) (64 Patches)</option>
+                    <option value="lixor">Lixor (TAL U-No-LX) (64 Patches)</option>
                     <option value="factory">Factory Presets Copy (64 Patches)</option>
                     <option value="blank">All Blank / Empty Bank (64 Patches)</option>
                 </select>
@@ -952,8 +952,8 @@ footer.keyboard-footer {
             </div>
             <div style="display: flex; gap: 8px; justify-content: flex-end; font-size: 10px; flex-wrap: wrap;">
                 <a href="presets/Future_Classic_Bank.syx" download="Future_Classic_Bank.syx" style="color: var(--accent-amber); text-decoration: none; font-weight:700;" title="Download Future Classic .syx bank">&#8595; Future Classic .SYX</a>
-                <a href="presets/Juno_Elixir_Bank.syx" download="Juno_Elixir_Bank.syx" style="color: var(--accent-blue); text-decoration: none; font-weight:700;" title="Download Juno Elixir .syx bank">&#8595; Juno Elixir .SYX</a>
-                <a href="presets/Juno_Elixir_Bank.json" download="Juno_Elixir_Bank.json" style="color: var(--text-muted); text-decoration: none;" title="Download Juno Elixir .json bank">&#8595; Juno Elixir .JSON</a>
+                <a href="presets/Lixor_Bank.syx" download="Lixor_Bank.syx" style="color: var(--accent-blue); text-decoration: none; font-weight:700;" title="Download Lixor .syx bank">&#8595; Lixor .SYX</a>
+                <a href="presets/Lixor_Bank.json" download="Lixor_Bank.json" style="color: var(--text-muted); text-decoration: none;" title="Download Lixor .json bank">&#8595; Lixor .JSON</a>
             </div>
         </div>
 
@@ -2863,8 +2863,8 @@ const SOUNDSET_BANKS = {
             }
         ]
     },
-    "juno_elixir": {
-        "name": "Juno Elixir (TAL U-No-LX)",
+    "lixor": {
+        "name": "Lixor (TAL U-No-LX)",
         "patches": [
             {
                 "name": "BAS Angry Bass",
@@ -4341,6 +4341,7 @@ const SOUNDSET_BANKS = {
         ]
     }
 };
+SOUNDSET_BANKS.juno_elixir = SOUNDSET_BANKS.lixor;
 
 function makeBlankPreset(idx) {
     const slotCode = indexToSlot(idx);
