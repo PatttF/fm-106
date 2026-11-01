@@ -171,13 +171,19 @@ static int ota_erase(uint32_t off)
     uint32_t took;
     if (!ota_in_area(off, 0x1000u) || (off & 0xFFFu))
         return -8;
-    return fl_erase4k(off, &took);
+    ota_idle();
+    int rc = fl_erase4k(off, &took);
+    ota_idle();
+    return rc;
 }
 static int ota_prog(uint32_t off, const void *p, uint32_t n)
 {
     if (!ota_in_area(off, n))
         return -8;
-    return fl_write(off, p, n);
+    ota_idle();
+    int rc = fl_write(off, p, n);
+    ota_idle();
+    return rc;
 }
 static int ota_fread(uint32_t off, void *p, uint32_t n) { return st_read(off, p, n); }
 static void ota_show(uint32_t step, int32_t code)
@@ -430,8 +436,16 @@ static void platform_poll(void)
     }
     if (usb.ota_req) {
         usb.ota_req = 0;
-        if (flash_ok)
+        if (flash_ok) {
+            fm1_audio_stop();
+#if FELUCCA_BLE
+            extern void ble_ui_want(int on);
+            ble_ui_want(0);
+#endif
             ota_session();                      /* returns only if nothing was committed */
+            fm1_audio_start();
+            g_dirty_screen = 1;
+        }
     }
     if (usb.uboot_req) {
         fm1_audio_stop();
