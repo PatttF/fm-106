@@ -1829,8 +1829,8 @@ static void menu_row_draw(uint32_t x, uint32_t y, uint32_t sel, const char *labe
     while (label[j-2] && j < sizeof(buf) - 1u) { buf[j] = label[j-2]; j++; }
     buf[j] = '\0';
     uint16_t c = sel ? C_ROLAND_AMBER : C_TEXT_DIM;
-    cv_text_plate(x, y, 140, buf, c, C_BLACK, 0);
-    cv_text_plate(x + 150, y, 80, val, c, C_BLACK, 1);
+    cv_text_plate(x, y, 138, buf, c, C_BLACK, 0);
+    cv_text_plate(x + 144, y, 76, val, c, C_BLACK, 1);
 }
 
 static void draw_seq_fader_guide(void);
@@ -2212,7 +2212,7 @@ static void draw_menu_main(void)
     cv_rect(0, 16, 240, 1, C_LINE_DIV);
 
     cv_text(12, 22, &FONT_S, "SYSTEM SETTINGS", C_STRIPE_CYAN);
-    cv_text(160, 22, &FONT_S, "[GLO] EXIT", C_TEXT_DIM);
+    cv_text(146, 22, &FONT_S, "[GLO] EXIT", C_TEXT_DIM);
     cv_rect(6, 36, 228, 1, C_LINE_DIV);
 
     /* Item 0 */
@@ -2243,7 +2243,7 @@ static void draw_menu_main(void)
     cv_rect(6, 56, 228, 20, C_BLACK);
     cv_rect(6, 56, 228, 1, C_LINE_DIV);
     cv_rect(6, 75, 228, 1, C_LINE_DIV);
-    cv_text(14, 60, &FONT_S, "[SELECT] Move   [OCT+] Enter", C_TEXT_DIM);
+    cv_text(12, 60, &FONT_S, "[SEL] Move    [OCT+] Enter", C_TEXT_DIM);
     cv_blit(0, 80);
 
     /* Band 3: y=160..239 (CPU meter) */
@@ -2315,7 +2315,7 @@ static void draw_menu_bluetooth(void)
     cv_rect(6, 36, 228, 36, C_BLACK);
     cv_rect(6, 36, 228, 1, C_LINE_DIV);
     cv_rect(6, 71, 228, 1, C_LINE_DIV);
-    cv_text(14, 40, &FONT_S, "[SELECT] Select   [ALGO] Edit", C_TEXT_DIM);
+    cv_text(12, 40, &FONT_S, "[SEL] Select   [ALGO] Edit", C_TEXT_DIM);
     cv_text(14, 54, &FONT_S, "[HOME] Back to Menu", C_ROLAND_AMBER);
     cv_blit(0, 160);
 }
@@ -2419,7 +2419,7 @@ static void draw_bt_device_row(const ble_ui_dev_t *dev_p, int is_sel, uint16_t r
         rssi_str[2] = (char)('0' + pos % 10);
         rssi_str[3] = '\0';
     }
-    cv_text(198, row_y + 5, &FONT_S, rssi_str, C_TEXT_DIM);
+    cv_text(190, row_y + 5, &FONT_S, rssi_str, C_TEXT_DIM);
 }
 
 static void draw_menu_bt_scan(void)
@@ -2485,7 +2485,7 @@ static void draw_menu_bt_scan(void)
         } else if (s_idx == 0) {
             opt_labels[1] = "AUTO CONNECT: ON (#1)";
         } else {
-            opt_labels[1] = "AUTO CONNECT: ON (MAKE #1)";
+            opt_labels[1] = "AUTO CONNECT: ON (TOP)";
         }
         opt_labels[2] = (s_idx >= 0) ? "FORGET DEVICE" : "FORGET (NOT SAVED)";
 
@@ -2510,7 +2510,7 @@ static void draw_menu_bt_scan(void)
         cv_rect(6, 34, 228, 38, C_BLACK);
         cv_rect(6, 34, 228, 1, C_LINE_DIV);
         cv_rect(6, 71, 228, 1, C_LINE_DIV);
-        cv_text(14, 38, &FONT_S, "[OCT+/SEL] Confirm   [OCT-] Back", C_ROLAND_AMBER);
+        cv_text(12, 38, &FONT_S, "[SEL] Confirm  [OCT-] Back", C_ROLAND_AMBER);
         cv_text(14, 54, &FONT_S, "[SELECT] Move Cursor", C_TEXT_DIM);
         cv_blit(0, 160);
         return;
@@ -2551,7 +2551,7 @@ static void draw_menu_bt_scan(void)
 
     if (n == 0) {
         if (fm1_ms - btp.add_t0 < BT_ADD_MS) {
-            cv_text(16, 48, &FONT_S, "SEARCHING FOR BLE DEVICES...", C_TEXT_DIM);
+            cv_text(16, 48, &FONT_S, "SCANNING FOR BLE DEVS...", C_TEXT_DIM);
             cv_text(16, 64, &FONT_S, "SET KEYBOARD TO PAIRING", C_TEXT_DIM);
         } else {
             cv_text(16, 48, &FONT_S, "NO DEVICES FOUND", C_ROLAND_AMBER);
@@ -2596,7 +2596,7 @@ static void draw_menu_bt_scan(void)
     cv_rect(6, 71, 228, 1, C_LINE_DIV);
     if (n > 0) {
         cv_text(14, 38, &FONT_S, "[OCT+/SEL] DEVICE OPTIONS", C_ROLAND_AMBER);
-        cv_text(14, 54, &FONT_S, "[SELECT] Scroll   [OCT-] Back", C_TEXT_DIM);
+        cv_text(12, 54, &FONT_S, "[SEL] Scroll   [OCT-] Back", C_TEXT_DIM);
     } else {
         cv_text(14, 38, &FONT_S, "[OCT+] SCAN AGAIN", C_ROLAND_AMBER);
         cv_text(14, 54, &FONT_S, "[OCT-] RETURN TO MENU", C_TEXT_DIM);
@@ -2642,7 +2642,7 @@ static void draw_menu_about(void)
     cv_text(96, 9, &FONT_S, "GITHUB", C_ROLAND_AMBER);
     cv_text(24, 28, &FONT_S, "github.com/PatttF/fm-106", C_TEXT_WHITE);
 
-    cv_text(76, 58, &FONT_S, "[HOME] Back to Menu", C_TEXT_DIM);
+    cv_text(44, 58, &FONT_S, "[HOME] Back to Menu", C_TEXT_DIM);
     cv_blit(0, 160);
 }
 
@@ -2676,7 +2676,7 @@ static void draw_menu_midi(void)
     cv_rect(0, 16, 240, 1, C_LINE_DIV);
 
     cv_text(12, 22, &FONT_S, "COMMUNICATIONS", C_STRIPE_CYAN);
-    cv_text(160, 22, &FONT_S, "[HOME] BACK", C_TEXT_DIM);
+    cv_text(138, 22, &FONT_S, "[HOME] BACK", C_TEXT_DIM);
     cv_rect(6, 36, 228, 1, C_LINE_DIV);
 
     uint16_t c0 = (g_midi_sel == 0u) ? C_ROLAND_AMBER : C_TEXT_DIM;
@@ -2719,7 +2719,7 @@ static void draw_menu_midi(void)
     cv_rect(6, 51, 228, 26, C_BLACK);
     cv_rect(6, 51, 228, 1, C_LINE_DIV);
     cv_rect(6, 76, 228, 1, C_LINE_DIV);
-    cv_text(14, 55, &FONT_S, "[SELECT] Open/Edit   [HOME] Back", C_ROLAND_AMBER);
+    cv_text(10, 56, &FONT_S, "[SEL] Edit/Open [HOME] Back", C_ROLAND_AMBER);
     cv_blit(0, 160);
 }
 
@@ -2802,7 +2802,7 @@ static void draw_menu_cc_map(void)
     idx_str[10] = 'M';
     idx_str[11] = '\0';
     cv_text(12, 22, &FONT_S, idx_str, C_STRIPE_CYAN);
-    cv_text(160, 22, &FONT_S, "[HOME] BACK", C_TEXT_DIM);
+    cv_text(138, 22, &FONT_S, "[HOME] BACK", C_TEXT_DIM);
     cv_rect(6, 36, 228, 1, C_LINE_DIV);
 
     draw_cc_row(44, (uint32_t)g_cc_scroll_top);
@@ -2828,7 +2828,7 @@ static void draw_menu_cc_map(void)
         cv_text(14, 52, &FONT_S, "[SEL] Cancel   [HOME] Back", C_TEXT_DIM);
     } else {
         cv_text(14, 35, &FONT_S, "[SEL] Learn   [ALGO] Value", C_TEXT_DIM);
-        cv_text(14, 52, &FONT_S, "[EDIT] Reset Def  [HOME] Back", C_ROLAND_AMBER);
+        cv_text(12, 52, &FONT_S, "[EDIT] Reset   [HOME] Back", C_ROLAND_AMBER);
     }
     cv_blit(0, 160);
 }
@@ -2997,7 +2997,7 @@ static void draw_save_menu(void)
 
     cv_rect(6, 4, 4, 12, C_ROLAND_RED);
     cv_text(16, 2, &FONT_S, "SAVE PRESET", C_STRIPE_CYAN);
-    cv_text(130, 2, &FONT_S, "[SELECT] slot", C_ROLAND_AMBER);
+    cv_text(134, 2, &FONT_S, "[SEL] Slot", C_ROLAND_AMBER);
     cv_rect(6, 18, 228, 2, C_STRIPE_CYAN);
 
     cv_text(8, 22, &FONT_S, "DESTINATION:", C_TEXT_DIM);
@@ -3030,7 +3030,7 @@ static void draw_save_menu(void)
     cv_begin(240, 84, C_BG);
 
     cv_text(8, 2, &FONT_S, "PATCH NAME:", C_TEXT_DIM);
-    cv_text(90, 2, &FONT_S, "ALGO:< > PRESET:A-Z", C_STRIPE_CYAN);
+    cv_text(74, 2, &FONT_S, "ALGO:< > PRESET:A-Z", C_STRIPE_CYAN);
 
     cv_rect(6, 20, 228, 38, C_BLACK);
     cv_rect(6, 20, 228, 1, C_LINE_DIV);
@@ -3109,7 +3109,7 @@ static void draw_save_menu(void)
         } else {
             cv_rect(6, 32, 228, 42, C_ROLAND_RED);
             cv_text(14, 36, &FONT_S, "ARE YOU SURE?", C_TEXT_WHITE);
-            cv_text(14, 52, &FONT_S, "[SEL] Yes, Delete   [HOME] Cancel", C_TEXT_WHITE);
+            cv_text(12, 52, &FONT_S, "[SEL] Delete   [HOME] Back", C_TEXT_WHITE);
         }
     }
 
@@ -3297,6 +3297,27 @@ static void fm106_app_frame(void)
             if ((b & (1u << BTN_OCT_UP)) && g_synth.octave_shift < 2) {
                 g_synth.octave_shift++;
                 set.octave = g_synth.octave_shift;
+                dirty_screen = 1;
+            }
+        }
+        else if (g_ui_mode == UI_MODE_MENU) {
+            if (b & (1u << BTN_OCT_UP)) {
+                if (g_menu_sel == 0) {
+                    g_ui_mode = UI_MODE_MIDI;
+                    g_midi_sel = 0;
+#if FELUCCA_BLE
+                } else if (g_menu_sel == 1) {
+                    g_ui_mode = UI_MODE_BLUETOOTH;
+                    g_ble_sel = 0;
+                    bt_page_open();
+                } else if (g_menu_sel == 2) {
+                    g_ui_mode = UI_MODE_ABOUT;
+                }
+#else
+                } else if (g_menu_sel == 1) {
+                    g_ui_mode = UI_MODE_ABOUT;
+                }
+#endif
                 dirty_screen = 1;
             }
         }
@@ -3509,8 +3530,7 @@ static void fm106_app_frame(void)
         }
         if (b & (1u << BTN_SEL)) {
             if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
-                g_synth.vca_mode ^= 1u;
-                g_dirty_screen = 1;
+                /* In normal mode, SEL is a clean no-op (never toggle VCA) */
             } else if (g_ui_mode == UI_MODE_SAVE) {
                 int can_del = (g_save_slot < FM106_NUM_USER_PRESETS) && (g_user_presets[g_save_slot].name[0] != '\0');
                 if (can_del) {
@@ -3596,21 +3616,57 @@ static void fm106_app_frame(void)
                 g_cc_learn_active ^= 1u;
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_MIDI) {
-                if (g_midi_sel == 5) {
+                if (g_midi_sel == 0) {
+                    /* MIDI IN: cycle 0(All), 1..16 */
+                    g_synth.midi_channel = (g_synth.midi_channel >= 16u) ? 0u : (g_synth.midi_channel + 1u);
+                    set.midi_channel = g_synth.midi_channel;
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                } else if (g_midi_sel == 1) {
+                    /* MIDI OUT: cycle 1..16 */
+                    g_synth.midi_out_ch = (g_synth.midi_out_ch >= 16u) ? 1u : (g_synth.midi_out_ch + 1u);
+                    set.midi_out_ch = g_synth.midi_out_ch;
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                } else if (g_midi_sel == 2) {
+                    /* SYNC: cycle OFF -> MASTER -> SLAVE */
+                    g_synth.sync_mode = (g_synth.sync_mode + 1u) % 3u;
+                    set.sync_mode = g_synth.sync_mode;
+                    seq_sync_apply();
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                } else if (g_midi_sel == 3) {
+                    /* LOCAL: toggle ON / OFF */
+                    g_synth.midi_local ^= 1u;
+                    set.midi_local = g_synth.midi_local;
+                    if (!g_synth.midi_local) {
+                        fm1_irq_off();
+                        for (uint8_t v = 0; v < FM106_NUM_VOICES; v++) {
+                            if (g_synth.voice[v].note != 255u) fm106_note_off(&g_synth, g_synth.voice[v].note);
+                        }
+                        fm1_irq_on();
+                    }
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                } else if (g_midi_sel == 4) {
+                    /* PC IN: toggle ON / OFF */
+                    g_synth.pc_in ^= 1u;
+                    set.pc_in = g_synth.pc_in;
+                    dirty_save = 1;
+                    t_change = fm1_ms;
+                } else if (g_midi_sel == 5) {
+                    /* CC CONFIG: open CC Map submenu */
                     g_ui_mode = UI_MODE_CC_MAP;
                     g_cc_menu_sel = 0;
                     g_cc_scroll_top = 0;
                     g_cc_learn_active = 0;
-                } else {
-                    g_ui_mode = UI_MODE_MENU;
                 }
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_ABOUT) {
                 g_ui_mode = UI_MODE_MENU;
                 dirty_screen = 1;
             } else {
-                g_synth.vca_mode ^= 1u;
-                dirty_screen = 1;
+                /* Safe default: do nothing */
             }
         }
         if (b & (1u << BTN_ARP)) {
