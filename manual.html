@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FM-106 Synthesizer — Comprehensive Operations Manual</title>
+    <style>
+        :root {
+            --bg-base: #121418;
+            --bg-surface: #1a1e24;
+            --bg-elevated: #222730;
+            --border-dim: #2e3540;
+            --border-bright: #444f60;
+            --text-main: #e6edf5;
+            --text-dim: #8e9baa;
+            --text-white: #ffffff;
+            --roland-red: #eb2d1e;
+            --juno-cyan: #00a5e1;
+            --roland-amber: #f5af14;
+            --led-on: #ff3333;
+            --plate-bg: #0d0f12;
+            --sidebar-width: 280px;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-base);
+            color: var(--text-main);
+            line-height: 1.6;
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* --- Sidebar Navigation --- */
+        #sidebar {
+            width: var(--sidebar-width);
+            background-color: var(--bg-surface);
+            border-right: 1px solid var(--border-dim);
+            height: 100vh;
+            position: sticky;
+            top: 0;
+            overflow-y: auto;
+            padding: 24px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            flex-shrink: 0;
+        }
+
+        .brand-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid var(--juno-cyan);
+        }
+
+        .brand-badge {
+            background-color: var(--roland-red);
+            color: var(--text-white);
+            font-weight: 800;
+            font-size: 13px;
+            padding: 4px 8px;
+            border-radius: 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 800;
+            color: var(--juno-cyan);
+            letter-spacing: 1px;
+        }
+
+        .nav-group-title {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--roland-amber);
+            margin: 14px 8px 6px 8px;
+        }
+
+        .nav-links {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .nav-links a {
+            color: var(--text-dim);
+            text-decoration: none;
+            font-size: 13px;
+            padding: 7px 10px;
+            border-radius: 4px;
+            transition: all 0.15s ease-in-out;
+            display: block;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-white);
+            background-color: var(--bg-elevated);
+        }
+
+        .nav-links a.active {
+            color: var(--juno-cyan);
+            background-color: var(--bg-elevated);
+            font-weight: 600;
+            border-left: 3px solid var(--juno-cyan);
+        }
+
+        /* --- Main Content --- */
+        #content {
+            flex: 1;
+            padding: 40px 60px;
+            max-width: 1100px;
+            overflow-y: auto;
+        }
+
+        /* Hero Header */
+        .hero-banner {
+            background: linear-gradient(135deg, #1c222b 0%, #15181e 100%);
+            border: 1px solid var(--border-dim);
+            border-top: 4px solid var(--juno-cyan);
+            border-radius: 6px;
+            padding: 32px 36px;
+            margin-bottom: 40px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .hero-banner h1 {
+            font-size: 32px;
+            font-weight: 900;
+            color: var(--text-white);
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .hero-banner .subtitle {
+            font-size: 16px;
+            color: var(--juno-cyan);
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        .hero-banner p {
+            color: var(--text-dim);
+            font-size: 14px;
+            max-width: 820px;
+            line-height: 1.7;
+        }
+
+        .badge-bar {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+
+        .spec-pill {
+            background-color: var(--plate-bg);
+            border: 1px solid var(--border-dim);
+            color: var(--text-main);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .spec-pill .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--juno-cyan);
+        }
+
+        .spec-pill .dot.red { background-color: var(--roland-red); }
+        .spec-pill .dot.amber { background-color: var(--roland-amber); }
+
+        /* Content Sections */
+        section {
+            margin-bottom: 48px;
+            scroll-margin-top: 30px;
+        }
+
+        h2 {
+            font-size: 22px;
+            font-weight: 800;
+            color: var(--text-white);
+            border-bottom: 1px solid var(--border-dim);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        h2::before {
+            content: "";
+            display: inline-block;
+            width: 4px;
+            height: 20px;
+            background-color: var(--juno-cyan);
+            border-radius: 2px;
+        }
+
+        h3 {
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--roland-amber);
+            margin: 24px 0 12px 0;
+        }
+
+        p, ul, ol {
+            font-size: 14px;
+            color: var(--text-main);
+            margin-bottom: 16px;
+        }
+
+        ul, ol {
+            padding-left: 24px;
+        }
+
+        li {
+            margin-bottom: 6px;
+        }
+
+        /* Retro Roland Hardware Box */
+        .roland-panel {
+            background-color: var(--bg-surface);
+            border: 1px solid var(--border-dim);
+            border-radius: 6px;
+            padding: 24px;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .roland-panel-header {
+            position: absolute;
+            top: -12px;
+            left: 20px;
+            background-color: var(--roland-red);
+            color: var(--text-white);
+            font-size: 11px;
+            font-weight: 800;
+            padding: 2px 10px;
+            border-radius: 2px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        /* Tables */
+        .table-wrap {
+            overflow-x: auto;
+            margin: 18px 0 24px 0;
+            border: 1px solid var(--border-dim);
+            border-radius: 6px;
+            background-color: var(--bg-surface);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: left;
+        }
+
+        th {
+            background-color: var(--bg-elevated);
+            color: var(--juno-cyan);
+            font-weight: 700;
+            padding: 10px 14px;
+            border-bottom: 1px solid var(--border-dim);
+            letter-spacing: 0.5px;
+        }
+
+        td {
+            padding: 9px 14px;
+            border-bottom: 1px solid var(--border-dim);
+            color: var(--text-main);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:nth-child(even) {
+            background-color: rgba(255, 255, 255, 0.02);
+        }
+
+        tr:hover td {
+            background-color: rgba(0, 165, 225, 0.05);
+        }
+
+        /* Keyboard / Button Badges */
+        kbd, .btn-badge {
+            background-color: #262c36;
+            color: var(--text-white);
+            border: 1px solid var(--border-bright);
+            box-shadow: 0 2px 0 #13171c;
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            display: inline-block;
+            white-space: nowrap;
+        }
+
+        .btn-badge.red {
+            border-color: #7d1c15;
+            background-color: #3b1411;
+            color: #ff857d;
+        }
+
+        .btn-badge.cyan {
+            border-color: #0d5473;
+            background-color: #0b2c3d;
+            color: #6ed5ff;
+        }
+
+        .btn-badge.amber {
+            border-color: #73510b;
+            background-color: #3d2c0b;
+            color: #ffd86e;
+        }
+
+        /* Note Alerts */
+        .callout {
+            border-left: 4px solid var(--juno-cyan);
+            background-color: rgba(0, 165, 225, 0.08);
+            padding: 14px 18px;
+            border-radius: 0 4px 4px 0;
+            margin: 18px 0;
+            font-size: 13px;
+        }
+
+        .callout.amber {
+            border-left-color: var(--roland-amber);
+            background-color: rgba(245, 175, 20, 0.08);
+        }
+
+        .callout.red {
+            border-left-color: var(--roland-red);
+            background-color: rgba(235, 45, 30, 0.08);
+        }
+
+        .callout strong {
+            color: var(--text-white);
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* Interactive Filter Bar */
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 14px;
+            align-items: center;
+        }
+
+        .search-input {
+            background-color: var(--plate-bg);
+            border: 1px solid var(--border-bright);
+            color: var(--text-white);
+            font-size: 13px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            width: 280px;
+            outline: none;
+            transition: border-color 0.15s;
+        }
+
+        .search-input:focus {
+            border-color: var(--juno-cyan);
+        }
+
+        /* Code snippets */
+        pre {
+            background-color: var(--plate-bg);
+            border: 1px solid var(--border-dim);
+            padding: 14px;
+            border-radius: 6px;
+            font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            color: #b3c2d4;
+            overflow-x: auto;
+            margin: 14px 0 20px 0;
+        }
+
+        code {
+            font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+            font-size: 12px;
+            background-color: rgba(255, 255, 255, 0.07);
+            padding: 2px 4px;
+            border-radius: 3px;
+            color: var(--juno-cyan);
+        }
+
+        /* Footer */
+        footer {
+            margin-top: 60px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border-dim);
+            color: var(--text-dim);
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        @media (max-width: 900px) {
+            body { flex-direction: column; }
+            #sidebar { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border-dim); }
+            #content { padding: 24px 20px; }
+        }
+
+        @media print {
+            #sidebar { display: none; }
+            #content { padding: 0; max-width: 100%; }
+            body { background: white; color: black; }
+            .hero-banner { background: none; border: 1px solid #ccc; color: black; }
+            h2 { color: black; border-bottom: 1px solid #ccc; }
+            th { background: #eee; color: black; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Navigation -->
+    <nav id="sidebar">
+        <div class="brand-header">
+            <span class="brand-badge">FM-106</span>
+            <span class="brand-title">MANUAL</span>
+        </div>
+
+        <div>
+            <div class="nav-group-title">Overview</div>
+            <ul class="nav-links">
+                <li><a href="#introduction">1. Introduction</a></li>
+                <li><a href="#architecture">2. Synth Architecture</a></li>
+                <li><a href="#hardware-controls">3. Hardware Controls</a></li>
+            </ul>
+
+            <div class="nav-group-title">Synthesis Engine</div>
+            <ul class="nav-links">
+                <li><a href="#edit-pages">4. Parameter Edit Pages</a></li>
+                <li><a href="#vcf-section">5. VCF & HPF Filters</a></li>
+                <li><a href="#dco-section">6. PolyBLEP DCO & PWM</a></li>
+                <li><a href="#effects-section">7. Chorus, Tape & Reverb</a></li>
+            </ul>
+
+            <div class="nav-group-title">Sequencing & Presets</div>
+            <ul class="nav-links">
+                <li><a href="#step-sequencer">8. Step Sequencer</a></li>
+                <li><a href="#preset-management">9. Presets & Memory</a></li>
+            </ul>
+
+            <div class="nav-group-title">System & Connectivity</div>
+            <ul class="nav-links">
+                <li><a href="#global-menus">10. Global Setup Menus</a></li>
+                <li><a href="#midi-cc-reference">11. MIDI CC Map & Learn</a></li>
+                <li><a href="#bluetooth-guide">12. Bluetooth LE Guide</a></li>
+                <li><a href="#usb-audio-midi">13. USB Audio & Librarian</a></li>
+                <li><a href="#troubleshooting">14. Troubleshooting & FAQ</a></li>
+            </ul>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="content">
+
+        <!-- Hero Banner -->
+        <header class="hero-banner">
+            <h1>FM-106 <span style="font-weight: 300; font-size: 24px; color: var(--text-dim);">Synthesizer</span></h1>
+            <div class="subtitle">Authentic 6-Voice Roland Juno-106 Firmware for the M-VAVE FM-1</div>
+            <p>
+                The FM-106 firmware transforms the ultra-portable M-VAVE FM-1 synthesizer into a fully featured, authentic emulation of the classic 1984 Roland Juno-106 analog synthesizer. Engineered with dual-core DSP acceleration, single-precision FPU optimizations, 256 presets (128 Factory + 128 User slots with on-device naming), an authentic 128-step acid sequencer, an interactive CRT oscilloscope, Bluetooth MIDI, and a comprehensive 45-parameter MIDI CC mapping engine with live MIDI Learn.
+            </p>
+            <div class="badge-bar">
+                <span class="spec-pill"><span class="dot"></span>6 Polyphonic Voices</span>
+                <span class="spec-pill"><span class="dot red"></span>IR3109 Resonant Filter</span>
+                <span class="spec-pill"><span class="dot"></span>MN3009 BBD Stereo Chorus</span>
+                <span class="spec-pill"><span class="dot amber"></span>Vintage Tape & Shimmer</span>
+                <span class="spec-pill"><span class="dot"></span>128-Step Acid Sequencer</span>
+                <span class="spec-pill"><span class="dot"></span>256 Total Presets</span>
+                <span class="spec-pill"><span class="dot"></span>Class-Compliant USB Audio</span>
+            </div>
+        </header>
+
+        <!-- Section 1: Introduction -->
+        <section id="introduction">
+            <h2>1. Introduction</h2>
+            <p>
+                The <strong>FM-106</strong> is an open-source, bare-metal synthesizer firmware developed for the M-VAVE FM-1 hardware. It models the circuit-level behavior of every block in the original Roland Juno-106 synthesizer:
+            </p>
+            <ul>
+                <li><strong>Digitally Controlled Oscillators (DCO)</strong> with PolyBLEP anti-aliased Sawtooth, Pulse width modulation (manual or LFO driven), Sub-oscillator (-1 octave square), and analog white noise.</li>
+                <li><strong>Voltage Controlled Filter (VCF)</strong> modeling the renowned Roland IR3109 / BA662 4-pole 24 dB/oct resonant low-pass ladder filter with self-oscillation and non-linear saturation.</li>
+                <li><strong>High Pass Filter (HPF)</strong> with the authentic 4-position discrete resistor network: 0 (Bass Shelf Boost +9.4 dB @ 103 Hz), 1 (Flat), 2 (236 Hz), and 3 (754 Hz).</li>
+                <li><strong>14-Bit Integer ADSR Envelope Generator</strong> derived from the NEC &mu;PD7811G voice microprocessor code with piecewise linear attack and exponential decay/release curves.</li>
+                <li><strong>Dual MN3009 Bucket Brigade Device (BBD) Chorus</strong> providing the unmistakable stereo lushness of Chorus I, Chorus II, and the dual I+II vibrato mode.</li>
+                <li><strong>Studio Quality Tape Echo & Shimmer Reverb</strong> running on single-precision floating-point hardware for expansive ambient pads and cosmic leads.</li>
+            </ul>
+        </section>
+
+        <!-- Section 2: Synth Architecture -->
+        <section id="architecture">
+            <h2>2. Synthesis Architecture</h2>
+            <p>
+                The FM-106 signal chain faithfully recreates the original Juno-106 hardware voice topology, augmented with modern digital effects and dual-core parallel processing:
+            </p>
+            
+            <div class="roland-panel">
+                <div class="roland-panel-header">VOICE ARCHITECTURE (VOICES 1 TO 6)</div>
+                <pre>
+ [ DCO ] ──────┬── Saw Wave (Bandlimited PolyBLEP) ────────────────┐
+               ├── Pulse Wave (PWM via LFO or Manual Fader) ───────┼──> [ MIXER ]
+               ├── Sub-Oscillator (Square -1 Octave) ──────────────┤      (DCO Sum + Noise)
+               └── White Noise Generator ──────────────────────────┘             │
+                                                                                 ▼
+ [ VCF ] ◄──── 4-Pole 24dB/Oct IR3109 Resonant LPF (Self-Oscillating) ◄──────────┘
+    │          ▲ Mod: Envelope (+/-), LFO Mod, Keyboard Tracking (0..100%)
+    ▼
+ [ HPF ] ◄──── 4-Position High Pass Filter (0:Bass Boost, 1:Flat, 2:236Hz, 3:754Hz)
+    │
+    ▼
+ [ VCA ] ◄──── Logarithmic Voltage Controlled Amplifier (ENV Shaping or GATE Mode)
+    │
+    ├────────────────────────────────────────────────────────────────────────────┐
+    ▼                                                                            ▼
+ [ STEREO BBD CHORUS ] ────> [ VINTAGE TAPE ECHO ] ────> [ SHIMMER REVERB ] ────> [ STEREO OUT ]
+  (MN3009 Dual-Stage)         (Saturation & Flutter)      (Octave Pitch-Shifter)   (USB UAC + DAC)
+                </pre>
+            </div>
+            <p>
+                <strong>Dual-Core Parallel Rendering:</strong> The FM-106 runs at 44.1 kHz 16-bit stereo. On dual-core builds (or single-core with sub-sampled control rates), voice computation is cleanly distributed between CPU0 and CPU1 during each audio DMA interrupt frame (128 samples / 2.9 ms).
+            </p>
+        </section>
+
+        <!-- Section 3: Hardware Controls -->
+        <section id="hardware-controls">
+            <h2>3. Hardware Controls Reference</h2>
+            <p>
+                The M-VAVE FM-1 panel features 14 tactile push buttons, 2 rotary push-encoders, 4 endless parameter knobs, a master volume potentiometer, and 27 velocity-sensitive keys with red backlighting:
+            </p>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Control</th>
+                            <th>ID</th>
+                            <th>Normal Mode Function</th>
+                            <th>Menu / Alternate Function</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="btn-badge">SELECT (Turn)</span></td>
+                            <td><code>ENC_SELECT</code></td>
+                            <td>Cycle parameter edit pages (VCF &rarr; DCO &rarr; ENV &rarr; ...)</td>
+                            <td>Navigate menu lists (MIDI, CC Map, Bluetooth, Presets)</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">SELECT (Press)</span></td>
+                            <td><code>BTN_SEL</code></td>
+                            <td>Clean no-op (safe while turning) / SEQ: Clear step</td>
+                            <td><strong>MIDI:</strong> Toggle/cycle setting; <strong>CC Map:</strong> Activate MIDI Learn; <strong>Save:</strong> Delete slot</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">ALGORITHM (Turn)</span></td>
+                            <td><code>ENC_ALGORITHM</code></td>
+                            <td>Cycle preset banks (Fact A &rarr; Fact B &rarr; User A &rarr; User B)</td>
+                            <td><strong>MIDI:</strong> Adjust channel/sync; <strong>CC Map:</strong> Dial CC; <strong>Save:</strong> Move cursor</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">PRESETS (Turn)</span></td>
+                            <td><code>ENC_PRESETS</code></td>
+                            <td>Browse 64 patches within the active bank (11..88)</td>
+                            <td><strong>Save Menu:</strong> Pick character A-Z / 0-9 / Symbols</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">KNOB 1 .. 4</span></td>
+                            <td><code>ENC_KNOB1..4</code></td>
+                            <td>Adjust the 4 faders displayed on the active edit page</td>
+                            <td><strong>Sequencer:</strong> Adjust Step, Note Pitch, Gate Length, Velocity</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge red">EDIT</span></td>
+                            <td><code>BTN_EDIT</code></td>
+                            <td>Cycle to next parameter edit page</td>
+                            <td><strong>CC Map:</strong> Reset to Default CC; <strong>SEQ:</strong> Short=Note Menu, Hold=Seq Menu</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge cyan">HOME</span></td>
+                            <td><code>BTN_HOME</code></td>
+                            <td>Quick return to primary <strong>VCF</strong> edit page</td>
+                            <td>Exit any menu / cancel current dialog back to synth</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge amber">GLO / OPT</span></td>
+                            <td><code>BTN_GLO</code></td>
+                            <td>Open <strong>Global Options Menu</strong> (MIDI, BLE, About)</td>
+                            <td>Exit Global Menu back to normal performance mode</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge red">SAVE</span></td>
+                            <td><code>BTN_SAVE</code></td>
+                            <td>Open <strong>Preset Save & Naming Menu</strong></td>
+                            <td>Commit patch and name to non-volatile flash storage</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge cyan">FX</span></td>
+                            <td><code>BTN_FX</code></td>
+                            <td>Jump to FX page (Chorus &rarr; Tape &rarr; Reverb)</td>
+                            <td>Cycles through all 3 onboard effects processors</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge amber">ENV</span></td>
+                            <td><code>BTN_ENV</code></td>
+                            <td>Direct shortcut to <strong>Envelope (ADSR)</strong> page</td>
+                            <td><strong>SEQ Roll:</strong> Quick toggle Slide flag on current step</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">LFO</span></td>
+                            <td><code>BTN_LFO</code></td>
+                            <td>Direct shortcut to <strong>LFO / Arp</strong> edit page</td>
+                            <td><strong>SEQ Roll:</strong> Quick toggle Accent flag on current step</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge">OCT - / OCT +</span></td>
+                            <td><code>BTN_OCT_...</code></td>
+                            <td>Shift keyboard octave (-2 to +2 octaves)</td>
+                            <td><strong>Global Menu:</strong> <code>OCT+</code> enters selected submenu</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge red">REC</span></td>
+                            <td><code>BTN_REC</code></td>
+                            <td>Arm step sequencer for real-time live recording</td>
+                            <td>Flashing LED indicates armed state with 4-beat count-in</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge amber">PLAY / STOP</span></td>
+                            <td><code>BTN_PLAY</code></td>
+                            <td>Start / stop the 128-step sequencer playback</td>
+                            <td>Illuminates solid green/amber while sequencer is running</td>
+                        </tr>
+                        <tr>
+                            <td><span class="btn-badge cyan">ARP</span></td>
+                            <td><code>BTN_ARP</code></td>
+                            <td>Direct shortcut to <strong>Arpeggiator</strong> page</td>
+                            <td>Enables or disables arpeggiator playback</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 4: Parameter Edit Pages -->
+        <section id="edit-pages">
+            <h2>4. Parameter Edit Pages</h2>
+            <p>
+                Parameters are organized across 10 clean, focused 4-slider edit pages displayed on the 240x240 LCD. Turn the <span class="btn-badge">SELECT</span> encoder or tap <span class="btn-badge red">EDIT</span> to browse pages. The 4 knobs directly control the corresponding vertical faders or discrete multi-position switches:
+            </p>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Page Name</th>
+                            <th>Slider 1 (Knob 1)</th>
+                            <th>Slider 2 (Knob 2)</th>
+                            <th>Slider 3 (Knob 3)</th>
+                            <th>Slider 4 (Knob 4)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>PAGE 1: VCF</strong></td>
+                            <td><code>FREQ</code>: Cutoff Freq (0..127)</td>
+                            <td><code>RES</code>: Resonance (0..127)</td>
+                            <td><code>ENV</code>: Envelope Mod (0..127)</td>
+                            <td><code>LFO</code>: LFO Mod Depth (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 2: VCF 2</strong></td>
+                            <td><code>KBD</code>: Key Follow (0..127)</td>
+                            <td><code>INV</code>: Polarity (NORM / INV)</td>
+                            <td><code>B.DCO</code>: Bend &rarr; DCO (0..127)</td>
+                            <td><code>B.VCF</code>: Bend &rarr; VCF (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 3: DCO</strong></td>
+                            <td><code>RNG</code>: Octave (16', 8', 4')</td>
+                            <td><code>PULSE</code>: Pulse Wave (OFF / ON)</td>
+                            <td><code>SAW</code>: Sawtooth (OFF / ON)</td>
+                            <td><code>SUBSW</code>: Sub-Osc (OFF / ON)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 4: DCO 2</strong></td>
+                            <td><code>SUB</code>: Sub Level (0..127)</td>
+                            <td><code>NOISE</code>: White Noise (0..127)</td>
+                            <td><code>PWM</code>: PWM Depth (0..127)</td>
+                            <td><code>DCOLFO</code>: DCO LFO Pitch (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 5: ENVELOPE</strong></td>
+                            <td><code>ATK</code>: Attack Time (0..127)</td>
+                            <td><code>DEC</code>: Decay Time (0..127)</td>
+                            <td><code>SUS</code>: Sustain Level (0..127)</td>
+                            <td><code>REL</code>: Release Time (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 6: LFO</strong></td>
+                            <td><code>RATE</code>: LFO Speed (0..127)</td>
+                            <td><code>DELAY</code>: LFO Onset Delay (0..127)</td>
+                            <td><code>PWM MD</code>: Source (LFO / MAN)</td>
+                            <td><em>(Unassigned)</em></td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 7: ARP</strong></td>
+                            <td><code>ARP</code>: Arpeggiator (OFF / ON)</td>
+                            <td><code>MODE</code>: Order (UP, U&D, DN)</td>
+                            <td><code>ARAT</code>: Speed (0..127)</td>
+                            <td><code>ARNG</code>: Octaves (1OC, 2OC, 3OC)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 8: FX</strong></td>
+                            <td><code>CHO</code>: Chorus (OFF, I, II, I+II)</td>
+                            <td><code>HPF</code>: High Pass (BST, FLT, 236, 754)</td>
+                            <td><code>VCA</code>: Mode (ENV / GATE)</td>
+                            <td><code>LEVEL</code>: VCA Output (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 9: TAPE</strong></td>
+                            <td><code>TYPE</code>: Model (OFF, WARM, VINT, LOFI)</td>
+                            <td><code>MIX</code>: Wet/Dry Amount (0..127)</td>
+                            <td><code>RATE</code>: Delay/Flutter (0..127)</td>
+                            <td><code>CHAR</code>: Drive & Tone (0..127)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PAGE 10: REVERB</strong></td>
+                            <td><code>REV</code>: Shimmer (OFF / ON)</td>
+                            <td><code>MIX</code>: Wet/Dry Mix (0..127)</td>
+                            <td><code>DECAY</code>: Tail Length (0..127)</td>
+                            <td><code>SHIM</code>: Octave Pitch (0..127)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 5: VCF & HPF -->
+        <section id="vcf-section">
+            <h2>5. VCF & HPF Filter Architecture</h2>
+            <p>
+                The low-pass filter is the sonic centerpiece of the Juno-106 sound. The FM-106 implements a digital recreation of the custom Roland <strong>IR3109</strong> integrated circuit containing four Operational Transconductance Amplifier (OTA) stages:
+            </p>
+            <ul>
+                <li><strong>Self-Oscillation:</strong> When <code>RES</code> is elevated beyond ~105, the filter breaks into a pure, singing sinusoidal self-oscillation. With keyboard tracking (<code>KBD</code>) dialed to ~106, the self-oscillating filter tracks the musical keyboard in 1V/octave pitch, functioning as an additional sine wave oscillator!</li>
+                <li><strong>OTA Saturation:</strong> High resonance and multi-voice chords smoothly soft-clip through the non-linear hyperbolic tangent ($\tanh$) transfer curves of the differential input pairs, preventing harsh digital clipping and preserving analog warmth.</li>
+                <li><strong>Sub-Sampled Control Voltage Engine:</strong> Cutoff frequency calculation is sub-sampled at 11.025 kHz (every 4 audio samples) with linear interpolation, delivering analog-smooth modulation while conserving CPU overhead.</li>
+            </ul>
+
+            <h3>The Authentic 4-Position HPF</h3>
+            <p>
+                Unlike standard digital high-pass filters, the Juno-106 HPF switch utilizes a specialized passive RC network. Position 0 famously engages a bass-boost resonance:
+            </p>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Position</th>
+                            <th>On-Screen Label</th>
+                            <th>Circuit Behavior & Sonic Character</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>0</td>
+                            <td><code>BST</code> (Bass Boost)</td>
+                            <td>Engages a low-frequency resonant shelf providing <strong>+9.4 dB gain at 103 Hz</strong>. Ideal for thunderous Juno basslines and thick synthwave leads.</td>
+                        </tr>
+                        <tr>
+                            <td>1</td>
+                            <td><code>FLT</code> (Flat)</td>
+                            <td>Bypasses the high-pass circuit for completely flat, uncolored frequency response down to 10 Hz.</td>
+                        </tr>
+                        <tr>
+                            <td>2</td>
+                            <td><code>236</code> (236 Hz)</td>
+                            <td>1-pole 6 dB/oct high-pass filter with cutoff at 236 Hz. Gently rolls off sub-bass rumble to let brass and pads sit cleanly in a busy mix.</td>
+                        </tr>
+                        <tr>
+                            <td>3</td>
+                            <td><code>754</code> (754 Hz)</td>
+                            <td>High-pass cutoff at 754 Hz. Thin, reedy, cutting textures reminiscent of harpsichords, clavs, and vintage telephone effects.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Section 6: DCO & PWM -->
+        <section id="dco-section">
+            <h2>6. PolyBLEP DCO & Pulse Width Modulation</h2>
+            <p>
+                Original Juno-106 DCOs utilized an 8253 programmable interval timer to generate reset pulses for analog ramp integrators, ensuring rock-solid tuning with zero phase drift across all 6 voices.
+            </p>
+            <p>
+                The FM-106 uses <strong>PolyBLEP (Polynomial Band-Limited Step)</strong> anti-aliasing algorithms to eliminate Nyquist aliasing while retaining razor-sharp analog edges up to the highest MIDI notes:
+            </p>
+            <ul>
+                <li><strong>Sawtooth Wave:</strong> Rich, full-frequency harmonic spectrum with authentic PolyBLEP edge correction.</li>
+                <li><strong>Pulse / PWM:</strong> Continuously variable duty cycle from 50% square down to razor-thin 1% needle pulses. In <code>PWM MD = LFO</code>, the pulse width breathes with the low frequency oscillator. In <code>PWM MD = MAN</code>, Knob 3 directly positions the pulse width.</li>
+                <li><strong>Sub-Oscillator:</strong> Flip-flop divider producing a perfect square wave exactly one octave below the fundamental pitch. Controlled with the <code>SUB</code> fader for immense low-end weight.</li>
+                <li><strong>White Noise:</strong> Digital pseudo-random linear-feedback shift register (LFSR) emulation delivering analog-style noise for percussive clicks, breath, surf, and wind FX.</li>
+            </ul>
+        </section>
+
+        <!-- Section 7: Effects -->
+        <section id="effects-section">
+            <h2>7. Dual BBD Chorus, Tape Echo & Shimmer Reverb</h2>
+            
+            <h3>Roland MN3009 Stereo BBD Chorus</h3>
+            <p>
+                The Juno-106 chorus is world-famous. The FM-106 models two independent bucket-brigade delay lines with dual complementary anti-phase triangular LFOs:
+            </p>
+            <ul>
+                <li><strong>OFF:</strong> Chorus completely bypassed for direct, monophonic dry signal.</li>
+                <li><strong>Chorus I:</strong> Slow, deep modulation (0.39 Hz, delay sweep 3.8 ms to 5.4 ms). Produces a wide, undulating stereo spread.</li>
+                <li><strong>Chorus II:</strong> Faster, shimmering modulation (0.80 Hz, delay sweep 3.2 ms to 6.1 ms). Adds rich movement and motion to electric pianos, bells, and strings.</li>
+                <li><strong>Chorus I+II (Secret Mode):</strong> Both buttons engaged simultaneously. LFO speed increases to <strong>8.0 Hz</strong> with high depth, producing an iconic lo-fi rotary/vibrato wobble.</li>
+            </ul>
+
+            <h3>Vintage Tape Echo</h3>
+            <p>
+                Accessible on the <strong>TAPE</strong> edit page (or by cycling <span class="btn-badge cyan">FX</span>), this processor simulates magnetic tape saturation, hysteresis, head bump resonance, and mechanical wow/flutter. Select from <code>WARM</code>, <code>VINT</code>, or <code>LOFI</code> tape formulations with real-time drive (<code>CHAR</code>) and delay time (<code>RATE</code>).
+            </p>
+
+            <h3>Cosmic Shimmer Reverb</h3>
+            <p>
+                Accessible on the <strong>REVERB</strong> edit page, the Shimmer Reverb combines a multi-tap algorithmic diffuser with dual fractional pitch-shifting delay lines inside the feedback loop. Setting <code>SHIM</code> introduces cascading +1 octave harmonics that bloom into celestial, infinite ambient soundscapes.
+            </p>
+        </section>
+
+        <!-- Section 8: Step Sequencer -->
+        <section id="step-sequencer">
+            <h2>8. 128-Step Acid Sequencer</h2>
+            <p>
+                The FM-106 features an onboard 128-step polyphonic and acid sequencer with an interactive piano roll display and per-step parameter automation (P-Locks):
+            </p>
+
+            <div class="roland-panel">
+                <div class="roland-panel-header">SEQUENCER SHORTCUTS & NAVIGATION</div>
+                <ul>
+                    <li><span class="btn-badge amber">PLAY</span>: Start or pause the sequencer playback.</li>
+                    <li><span class="btn-badge red">REC</span>: Toggle record-arm. Pressing PLAY while armed begins a 4-beat visual metronome count-in (<code>CNT</code>), then records notes and lengths in real-time.</li>
+                    <li><span class="btn-badge">SELECT (Turn)</span>: Scroll the piano roll viewport through all 128 steps.</li>
+                    <li><span class="btn-badge">SELECT (Tap)</span>: Clear the note on the currently selected step.</li>
+                    <li><span class="btn-badge">SELECT (Hold 500ms)</span>: Clear all steps in the sequence.</li>
+                    <li><span class="btn-badge red">EDIT (Tap)</span>: Open <strong>Step Note Options</strong> for the selected step.</li>
+                    <li><span class="btn-badge red">EDIT (Hold 500ms)</span>: Open <strong>Sequencer Global Options</strong>.</li>
+                    <li><span class="btn-badge amber">ENV</span>: Toggle <strong>Slide (Portamento)</strong> flag on current step.</li>
+                    <li><span class="btn-badge">LFO</span>: Toggle <strong>Accent</strong> flag on current step.</li>
+                    <li><strong>Knobs 1..4:</strong> Directly tweak <code>STEP</code>, <code>NOTE</code>, <code>GATE</code>, and <code>VEL</code> for the current step.</li>
+                </ul>
+            </div>
+
+            <h3>Step Note Options Menu (Tap EDIT)</h3>
+            <p>
+                Highlight any step in the piano roll and tap <span class="btn-badge red">EDIT</span> to configure advanced step attributes:
+            </p>
+            <ul>
+                <li><strong>RATCHET (1..4):</strong> Subdivides the step into up to 4 rapid micro-triggers (burst rolls / trap ratchets).</li>
+                <li><strong>TIE (ON/OFF):</strong> Ties the step note to the subsequent step, creating legato phrases without re-triggering envelopes.</li>
+                <li><strong>ACCENT (ON/OFF):</strong> Increases velocity and filter envelope depth for aggressive Roland TB-303-style punch.</li>
+                <li><strong>SLIDE (ON/OFF):</strong> Glides pitch smoothly from the current note to the next step.</li>
+                <li><strong>PROB (0%..100%, MUTE):</strong> Sets the firing probability of the step for generative, ever-evolving rhythms.</li>
+                <li><strong>P-LOCKS:</strong> Displays the count of automated parameter locks assigned to this specific step.</li>
+            </ul>
+
+            <h3>Sequencer Global Options Menu (Hold EDIT 500ms)</h3>
+            <ul>
+                <li><strong>STEPS (1..128):</strong> Set the loop pattern length.</li>
+                <li><strong>BPM (40..240):</strong> Adjust playback tempo (also syncable to external MIDI clock).</li>
+                <li><strong>DIV:</strong> Clock division (1/4, 1/8, 1/16, 1/32, triplets).</li>
+                <li><strong>GATE (8..128):</strong> Default gate length percentage.</li>
+                <li><strong>SWING (0..100%):</strong> MPC-style groove swing.</li>
+                <li><strong>DUP BARS:</strong> Automatically duplicates your active bars to double the pattern length.</li>
+                <li><strong>CLR ALL:</strong> Instantly resets all steps and parameter locks.</li>
+            </ul>
+        </section>
+
+        <!-- Section 9: Presets & Memory -->
+        <section id="preset-management">
+            <h2>9. Presets & Memory Management</h2>
+            <p>
+                The FM-106 includes <strong>256 preset memory locations</strong> arranged in 4 banks of 64 patches:
+            </p>
+            <ul>
+                <li><strong>Bank A: Factory A (A11 to A88)</strong> — The first 64 original Roland Juno-106 factory presets.</li>
+                <li><strong>Bank B: Factory B (B11 to B88)</strong> — The second 64 original Roland Juno-106 factory presets.</li>
+                <li><strong>Bank UA: User A (UA11 to UA88)</strong> — 64 fully editable user preset slots stored in on-board flash.</li>
+                <li><strong>Bank UB: User B (UB11 to UB88)</strong> — 64 additional user preset slots stored in on-board flash.</li>
+            </ul>
+
+            <div class="callout amber">
+                <strong>Preset Code Format</strong>
+                Patches are numbered using authentic Roland 2-digit matrix notation: Bank 1..8, Patch 1..8 (e.g., <code>A11</code>, <code>A12</code> .. <code>A88</code>). Turn <span class="btn-badge">ALGORITHM</span> to switch banks; turn <span class="btn-badge">PRESETS</span> to browse patches within the bank.
+            </div>
+
+            <h3>Saving and Naming Presets (<span class="btn-badge red">SAVE</span>)</h3>
+            <ol>
+                <li>Dial in your sound using the edit pages and faders.</li>
+                <li>Press <span class="btn-badge red">SAVE</span> to open the preset destination and naming screen.</li>
+                <li>Turn <span class="btn-badge">SELECT</span> to choose a destination user slot (<code>UA11</code> to <code>UB88</code>). The screen displays existing patch names or indicates <code>&lt;BLANK SLOT&gt;</code>.</li>
+                <li>Turn <span class="btn-badge">ALGORITHM</span> to move the character cursor across the 15-character name field.</li>
+                <li>Turn <span class="btn-badge">PRESETS</span> to pick characters (letters A-Z, numbers 0-9, spaces, and punctuation).</li>
+                <li>Press <span class="btn-badge red">SAVE</span> to commit the preset to non-volatile flash memory. The banner confirms <code>SAVED TO UA..</code>.</li>
+                <li>To delete an existing user preset, press <span class="btn-badge">SELECT</span> and confirm when prompted with <code>ARE YOU SURE?</code>.</li>
+                <li>Press <span class="btn-badge cyan">HOME</span> at any time to cancel without saving.</li>
+            </ol>
+        </section>
+
+        <!-- Section 10: Global Setup Menus -->
+        <section id="global-menus">
+            <h2>10. Global Setup Menus</h2>
+            <p>
+                Press <span class="btn-badge amber">GLO / OPT</span> to enter the system configuration screen:
+            </p>
+
+            <h3>MIDI Setup Menu</h3>
+            <ul>
+                <li><strong>MIDI IN:</strong> Set receive channel to <code>ALL</code> (Omni mode) or individual channels <code>1</code> through <code>16</code>.</li>
+                <li><strong>MIDI OUT:</strong> Set transmit channel for keyboard performance and sequencer data (<code>1</code> through <code>16</code>).</li>
+                <li><strong>SYNC:</strong> Choose between <code>OFF</code> (internal clock only), <code>MASTER</code> (sends MIDI 24-PPQN clock and start/stop commands), or <code>SLAVE</code> (syncs tempo and sequencer transport to incoming MIDI clock).</li>
+                <li><strong>LOCAL:</strong> <code>ON</code> routes the 27 physical keys to the internal synth engine; <code>OFF</code> disconnects the local keys so they only send MIDI out to external DAWs without triggering local voices.</li>
+                <li><strong>PC IN:</strong> <code>ON</code> accepts MIDI Program Change commands from external controllers; <code>OFF</code> ignores external preset switches.</li>
+                <li><strong>CC CONFIG:</strong> Highlight and press <span class="btn-badge">SELECT</span> to enter the interactive <strong>MIDI CC Mapping & Learn</strong> menu.</li>
+            </ul>
+
+            <h3>CPU Load Monitor</h3>
+            <p>
+                The bottom section of the Global Menu features a high-precision real-time load monitor displaying CPU0 synthesizer core execution percentage and buffer headroom.
+            </p>
+        </section>
+
+        <!-- Section 11: MIDI CC Map & Learn -->
+        <section id="midi-cc-reference">
+            <h2>11. MIDI CC Map & Interactive MIDI Learn</h2>
+            <p>
+                The FM-106 features an interactive 45-parameter MIDI Continuous Controller (CC) engine. Every sound design, effects, and sequencer parameter can be controlled over USB MIDI and Bluetooth MIDI:
+            </p>
+
+            <div class="roland-panel">
+                <div class="roland-panel-header">HOW TO USE MIDI LEARN</div>
+                <ol>
+                    <li>Press <span class="btn-badge amber">GLO</span>, select <strong>MIDI SETUP</strong>, and navigate to <strong>CC CONFIG</strong>.</li>
+                    <li>Scroll the list using the <span class="btn-badge">SELECT</span> encoder to find the parameter you wish to map (e.g. <code>[VCF] CUTOFF</code>).</li>
+                    <li>Press <span class="btn-badge">SELECT</span>. The header flashes <strong style="color:var(--led-on)">MIDI LEARN: SEND CC</strong> and the red LED pulsates.</li>
+                    <li>Move any knob, slider, or pedal on your external MIDI keyboard or hardware controller.</li>
+                    <li>The FM-106 immediately captures the incoming CC number, updates the map, and saves the new configuration to flash!</li>
+                    <li>Press <span class="btn-badge red">EDIT</span> at any time to instantly restore the factory default CC for that parameter.</li>
+                    <li>Press <span class="btn-badge cyan">HOME</span> to exit back to the synth.</li>
+                </ol>
+            </div>
+
+            <h3>Complete 45-Parameter CC Implementation Table</h3>
+            <div class="filter-bar">
+                <input type="text" id="ccSearch" class="search-input" placeholder="Search parameters (e.g. VCF, CUTOFF, 74)..." onkeyup="filterCCTable()">
+            </div>
+
+            <div class="table-wrap">
+                <table id="ccTable">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Group</th>
+                            <th>Parameter Name</th>
+                            <th>Default CC</th>
+                            <th>Value Range</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>1</td><td>VCF</td><td>CUTOFF</td><td><strong>74</strong></td><td>0 - 127</td><td>Low-pass filter cutoff frequency</td></tr>
+                        <tr><td>2</td><td>VCF</td><td>RESONANCE</td><td><strong>71</strong></td><td>0 - 127</td><td>Filter peak resonance (self-oscillates &gt;105)</td></tr>
+                        <tr><td>3</td><td>VCF</td><td>ENV MOD</td><td><strong>76</strong></td><td>0 - 127</td><td>Envelope modulation intensity to VCF</td></tr>
+                        <tr><td>4</td><td>VCF</td><td>LFO MOD</td><td><strong>77</strong></td><td>0 - 127</td><td>LFO modulation depth to VCF</td></tr>
+                        <tr><td>5</td><td>VCF</td><td>KBD TRACK</td><td><strong>78</strong></td><td>0 - 127</td><td>Keyboard pitch follow ratio (0..100%)</td></tr>
+                        <tr><td>6</td><td>VCF</td><td>HPF MODE</td><td><strong>12</strong></td><td>0 - 3</td><td>0:Boost (+9.4dB), 1:Flat, 2:236Hz, 3:754Hz</td></tr>
+                        <tr><td>7</td><td>VCF</td><td>ENV POLAR</td><td><strong>97</strong></td><td>0 - 1</td><td>0 = Normal (+), 1 = Inverted (-)</td></tr>
+                        <tr><td>8</td><td>ENV</td><td>ATTACK</td><td><strong>73</strong></td><td>0 - 127</td><td>Attack rate (1.5 ms to 3.0 s)</td></tr>
+                        <tr><td>9</td><td>ENV</td><td>DECAY</td><td><strong>75</strong></td><td>0 - 127</td><td>Decay rate (2.0 ms to 12.0 s)</td></tr>
+                        <tr><td>10</td><td>ENV</td><td>SUSTAIN</td><td><strong>70</strong></td><td>0 - 127</td><td>Sustain level (0% to 100%)</td></tr>
+                        <tr><td>11</td><td>ENV</td><td>RELEASE</td><td><strong>72</strong></td><td>0 - 127</td><td>Release rate (2.0 ms to 12.0 s)</td></tr>
+                        <tr><td>12</td><td>VCA</td><td>LEVEL</td><td><strong>11</strong></td><td>0 - 127</td><td>VCA master output trim level</td></tr>
+                        <tr><td>13</td><td>VCA</td><td>VCA MODE</td><td><strong>98</strong></td><td>0 - 1</td><td>0 = Envelope shaping, 1 = Raw organ gate</td></tr>
+                        <tr><td>14</td><td>DCO</td><td>LFO DEPTH</td><td><strong>1</strong></td><td>0 - 127</td><td>Modulation Wheel &rarr; DCO pitch vibrato</td></tr>
+                        <tr><td>15</td><td>DCO</td><td>PWM DEPTH</td><td><strong>79</strong></td><td>0 - 127</td><td>Pulse width modulation intensity</td></tr>
+                        <tr><td>16</td><td>DCO</td><td>PWM MODE</td><td><strong>96</strong></td><td>0 - 1</td><td>0 = LFO modulated, 1 = Manual fader width</td></tr>
+                        <tr><td>17</td><td>DCO</td><td>SUB LEVEL</td><td><strong>9</strong></td><td>0 - 127</td><td>-1 Octave square sub-oscillator volume</td></tr>
+                        <tr><td>18</td><td>DCO</td><td>NOISE</td><td><strong>13</strong></td><td>0 - 127</td><td>Analog white noise generator level</td></tr>
+                        <tr><td>19</td><td>DCO</td><td>RANGE</td><td><strong>95</strong></td><td>0 - 2</td><td>Octave range: 0 = 16', 1 = 8', 2 = 4'</td></tr>
+                        <tr><td>20</td><td>DCO</td><td>PULSE SW</td><td><strong>91</strong></td><td>0 - 1</td><td>Pulse waveform enable switch (0=Off, 1=On)</td></tr>
+                        <tr><td>21</td><td>DCO</td><td>SAW SW</td><td><strong>92</strong></td><td>0 - 1</td><td>Sawtooth waveform enable switch (0=Off, 1=On)</td></tr>
+                        <tr><td>22</td><td>DCO</td><td>SUB SW</td><td><strong>94</strong></td><td>0 - 1</td><td>Sub-oscillator enable switch (0=Off, 1=On)</td></tr>
+                        <tr><td>23</td><td>LFO</td><td>RATE</td><td><strong>80</strong></td><td>0 - 127</td><td>LFO oscillation frequency (0.1 Hz to 30 Hz)</td></tr>
+                        <tr><td>24</td><td>LFO</td><td>DELAY</td><td><strong>81</strong></td><td>0 - 127</td><td>LFO onset delay time after key press</td></tr>
+                        <tr><td>25</td><td>FX</td><td>CHORUS</td><td><strong>93</strong></td><td>0 - 3</td><td>0:Off, 1:Chorus I, 2:Chorus II, 3:Chorus I+II</td></tr>
+                        <tr><td>26</td><td>FX</td><td>TAPE TYPE</td><td><strong>83</strong></td><td>0 - 3</td><td>0:Off, 1:Warm, 2:Vintage, 3:Lo-Fi</td></tr>
+                        <tr><td>27</td><td>FX</td><td>TAPE MIX</td><td><strong>84</strong></td><td>0 - 127</td><td>Tape echo wet/dry balance</td></tr>
+                        <tr><td>28</td><td>FX</td><td>TAPE RATE</td><td><strong>85</strong></td><td>0 - 127</td><td>Tape delay repeat speed / wow frequency</td></tr>
+                        <tr><td>29</td><td>FX</td><td>TAPE CHAR</td><td><strong>86</strong></td><td>0 - 127</td><td>Tape saturation drive and tone character</td></tr>
+                        <tr><td>30</td><td>FX</td><td>REV ON</td><td><strong>20</strong></td><td>0 - 1</td><td>Shimmer reverb enable (0=Off, 1=On)</td></tr>
+                        <tr><td>31</td><td>FX</td><td>REV MIX</td><td><strong>21</strong></td><td>0 - 127</td><td>Reverb wet/dry balance</td></tr>
+                        <tr><td>32</td><td>FX</td><td>REV DECAY</td><td><strong>22</strong></td><td>0 - 127</td><td>Reverb reverberation tail time</td></tr>
+                        <tr><td>33</td><td>FX</td><td>REV SHIM</td><td><strong>23</strong></td><td>0 - 127</td><td>Pitch-shifted +1 octave shimmer intensity</td></tr>
+                        <tr><td>34</td><td>PRF</td><td>BEND DCO</td><td><strong>87</strong></td><td>0 - 127</td><td>Pitch bend wheel sensitivity to DCO</td></tr>
+                        <tr><td>35</td><td>PRF</td><td>BEND VCF</td><td><strong>88</strong></td><td>0 - 127</td><td>Pitch bend wheel sensitivity to VCF Cutoff</td></tr>
+                        <tr><td>36</td><td>ARP</td><td>ARP RATE</td><td><strong>82</strong></td><td>0 - 127</td><td>Arpeggiator clock speed</td></tr>
+                        <tr><td>37</td><td>ARP</td><td>ARP MODE</td><td><strong>89</strong></td><td>0 - 2</td><td>0 = Up, 1 = Up & Down, 2 = Down</td></tr>
+                        <tr><td>38</td><td>ARP</td><td>ARP RANGE</td><td><strong>90</strong></td><td>0 - 2</td><td>0 = 1 Octave, 1 = 2 Octaves, 2 = 3 Octaves</td></tr>
+                        <tr><td>39</td><td>SEQ</td><td>TEMPO</td><td><strong>102</strong></td><td>40 - 240</td><td>Step sequencer tempo in BPM</td></tr>
+                        <tr><td>40</td><td>SEQ</td><td>DIVISION</td><td><strong>103</strong></td><td>0 - 9</td><td>Sequencer clock subdivision</td></tr>
+                        <tr><td>41</td><td>SEQ</td><td>LENGTH</td><td><strong>104</strong></td><td>1 - 128</td><td>Active sequence pattern step length</td></tr>
+                        <tr><td>42</td><td>SEQ</td><td>GATE</td><td><strong>105</strong></td><td>8 - 128</td><td>Default sequencer gate duration</td></tr>
+                        <tr><td>43</td><td>SEQ</td><td>SWING</td><td><strong>106</strong></td><td>0 - 100</td><td>Groove swing percentage (0..100%)</td></tr>
+                        <tr><td>44</td><td>SEQ</td><td>PLAY/STOP</td><td><strong>107</strong></td><td>0 - 3</td><td>0:Stop, 1:Start, 2:Continue, 3:Toggle Play</td></tr>
+                        <tr><td>45</td><td>SEQ</td><td>REC ARM</td><td><strong>108</strong></td><td>0 - 1</td><td>Arm sequencer for live recording</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="callout">
+                <strong>Additional Standard MIDI Controllers:</strong>
+                <ul>
+                    <li><code>CC 64</code>: Sustain / Damper Pedal (Hold pedal with natural voice release)</li>
+                    <li><code>CC 119</code>: System Telemetry Request (Replies with CPU0 load, buffer health, and audio ISR stats)</li>
+                    <li><code>Pitch Bend</code>: 14-bit bipolar pitch bend (&plusmn;2 semitones or configured bender depth)</li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- Section 12: Bluetooth Guide -->
+        <section id="bluetooth-guide">
+            <h2>12. Bluetooth Low Energy (BLE) MIDI Guide</h2>
+            <p>
+                The FM-106 features Apple-compliant standard BLE MIDI supporting wireless communication with zero dongles:
+            </p>
+
+            <h3>1. Peripheral (Device) Mode — Connecting to Mac, iOS, Windows & Android</h3>
+            <ol>
+                <li>Enter <span class="btn-badge amber">GLO</span> &rarr; <strong>BLUETOOTH</strong> and ensure <code>ROLE</code> is set to <code>DEVICE</code>.</li>
+                <li>Turn <code>BLUETOOTH</code> to <code>ON</code>. The top header displays <code>BT</code>.</li>
+                <li>On macOS: Open <strong>Audio MIDI Setup</strong> &rarr; <strong>MIDI Studio</strong> &rarr; Double click the <strong>Bluetooth</strong> icon.</li>
+                <li>On iOS: Use any BLE MIDI utility (e.g. GarageBand, AUM, or Bluetooth MIDI Connect).</li>
+                <li>Select <strong>FM-106</strong> and click <strong>Connect</strong>. The on-screen indicator switches to bright cyan.</li>
+            </ol>
+
+            <h3>2. Host Mode — Connecting Wireless MIDI Keyboards Directly</h3>
+            <ol>
+                <li>In <span class="btn-badge amber">GLO</span> &rarr; <strong>BLUETOOTH</strong>, change <code>ROLE</code> to <code>HOST</code>.</li>
+                <li>Select <code>[OCT+] SCAN DEVICES</code> to open the live BLE MIDI Scanner.</li>
+                <li>Place your Bluetooth MIDI controller (e.g., Korg microKEY Air, CME Xkey Air) into pairing mode.</li>
+                <li>The scanner displays discovered devices with signal strength (dBm).</li>
+                <li>Highlight your keyboard and press <span class="btn-badge">SELECT</span> &rarr; <strong>CONNECT NOW</strong>.</li>
+                <li>Enable <code>AUTO CONNECT: ON (#1)</code> to have the FM-106 automatically reconnect whenever powered on!</li>
+            </ol>
+        </section>
+
+        <!-- Section 13: USB Audio & Librarian -->
+        <section id="usb-audio-midi">
+            <h2>13. USB Audio, MIDI & Web Librarian</h2>
+            
+            <h3>Class-Compliant USB Audio (UAC)</h3>
+            <p>
+                The FM-106 streams pristine 16-bit 44.1 kHz stereo digital audio directly over its USB-C connection without requiring drivers. Connect to:
+            </p>
+            <ul>
+                <li><strong>macOS & Windows DAWs:</strong> Select <strong>FM-106</strong> as an input audio device in Ableton Live, Logic Pro, Reaper, FL Studio, or Pro Tools. Record the synth in bit-perfect digital fidelity with zero analog noise or ground hum!</li>
+                <li><strong>iOS & Android:</strong> Connect via USB-C to record directly into camera apps or mobile DAWs.</li>
+            </ul>
+
+            <h3>Interactive Web Librarian & SysEx Support</h3>
+            <p>
+                FM-106 includes a standalone visual Web MIDI patch librarian (<a href="Librarian.html" style="color:var(--juno-cyan); font-weight:700;">Librarian.html</a>). Connect your FM-106 over USB, open <code>Librarian.html</code> in Chrome or Edge, and:
+            </p>
+            <ul>
+                <li>Inspect and tweak any Juno-106 patch with live Roland sliders.</li>
+                <li>Import standard Roland Juno-106 SysEx (<code>.syx</code>) patch dumps and backup entire banks.</li>
+                <li>Export custom user banks directly to your computer.</li>
+            </ul>
+        </section>
+
+        <!-- Section 14: Troubleshooting & FAQ -->
+        <section id="troubleshooting">
+            <h2>14. Troubleshooting & FAQ</h2>
+
+            <h3>Q: My notes stop abruptly and don't decay when I release the keys.</h3>
+            <p>
+                <strong>A:</strong> Check your <strong>VCA Mode</strong> on <strong>PAGE 8 (FX)</strong>. Ensure <code>VCA</code> is set to <code>ENV</code> (Envelope mode). If set to <code>GATE</code>, the envelope release curve is bypassed in favor of raw organ-style gating.
+            </p>
+
+            <h3>Q: How do I recover or update the firmware if the device doesn't boot?</h3>
+            <p>
+                <strong>A:</strong> The FM-1 hardware features a hardware bootloader rescue mode:
+            </p>
+            <ol>
+                <li>Power off the FM-1.</li>
+                <li>Hold down <span class="btn-badge">OCT -</span> while powering on.</li>
+                <li>The screen displays the hardware recovery updater. Connect via USB and run <code>python3 tools/fm1_install.py build/fm106.fwsc</code>.</li>
+            </ol>
+
+            <h3>Q: Why is there no sound coming from the 3.5mm headphone jack?</h3>
+            <p>
+                <strong>A:</strong> Check the <strong>MASTER</strong> analog volume potentiometer on the top-right corner of the panel. Ensure <code>LEVEL</code> on the <strong>FX</strong> page is turned up, and verify that <code>LOCAL</code> is set to <code>ON</code> in the MIDI Setup menu.
+            </p>
+        </section>
+
+        <!-- Footer -->
+        <footer>
+            <div>FM-106 Synthesizer Firmware &bull; Roland Juno-106 Emulation &bull; GNU General Public License v3.0</div>
+            <div>Designed for M-VAVE FM-1 &bull; 2026</div>
+        </footer>
+
+    </main>
+
+    <script>
+        function filterCCTable() {
+            var input = document.getElementById("ccSearch");
+            var filter = input.value.toUpperCase();
+            var table = document.getElementById("ccTable");
+            var tr = table.getElementsByTagName("tr");
+
+            for (var i = 1; i < tr.length; i++) {
+                var text = tr[i].textContent || tr[i].innerText;
+                if (text.toUpperCase().indexOf(filter) > -1) {
+                    tr[i].style.display = "";
+                } else {
+                    tr[i].style.display = "none";
+                }
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,89 +1,160 @@
-
-
 # FM-106
 
-**6-Voice Polyphonic Roland Juno-106 Synthesizer Firmware for the M-VAVE FM-1 with Dual-Core DSP Acceleration**
+**Authentic 6-Voice Polyphonic Roland Juno-106 Synthesizer Firmware for the M-VAVE FM-1**
 
-FM-106 ports the Roland Juno-106 analog emulation engine from [ultramaster_kr106](https://github.com/kayrockscreenprinting/ultramaster_kr106) to the M-VAVE FM-1, featuring dual-core DSP acceleration adapted from [Melodee](https://github.com/keremimo/melodee), authentic 1980s Roland styling, 128 factory presets, and Roland MN3009 BBD Stereo Chorus.
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Firmware](https://img.shields.io/badge/Firmware-FM--106-red.svg)](firmware/)
+[![Web Simulator](https://img.shields.io/badge/Simulator-WebAssembly-cyan.svg)](simulator.html)
+
+FM-106 ports the analog emulation engine of the legendary 1984 **Roland Juno-106** synthesizer to the ultra-portable **M-VAVE FM-1** hardware workstation. Engineered with dual-core DSP acceleration, single-precision floating point effects, an authentic 1980s Roland interface with real-time CRT oscilloscope, 256 presets with on-device naming, a 128-step acid sequencer with piano roll, Apple-compliant Bluetooth MIDI (Host and Peripheral), and a 45-parameter MIDI CC engine featuring live **MIDI Learn**.
+
+> 📖 **Comprehensive User Manual:** For complete operational instructions, diagrams, step-by-step tutorials, and parameter charts, open [manual.html](manual.html) in any web browser.
+
+---
+
+## Key Features
+
+| Feature | Description |
+| :--- | :--- |
+| **6-Voice Polyphony** | True 6-voice polyphonic Juno-106 synthesis with dynamic voice allocation and unison modes. |
+| **PolyBLEP DCO** | Bandlimited PolyBLEP Sawtooth, Pulse width modulation (LFO / Manual), Sub-oscillator (-1 oct), and White Noise. |
+| **IR3109 VCF** | 4-pole 24 dB/oct resonant low-pass filter with self-oscillation and non-linear OTA saturation curves. Sub-sampled at 11 kHz for peak CPU efficiency. |
+| **4-Position HPF** | Authentic discrete resistor network: `0: BST` (+9.4 dB shelf @ 103 Hz), `1: FLT` (Flat), `2: 236` (236 Hz), `3: 754` (754 Hz). |
+| **14-Bit ADSR** | Authentic NEC &mu;PD7811G voice processor envelope with log decay/release and linear attack. |
+| **MN3009 BBD Chorus** | Dual bucket-brigade delay line emulation: `OFF`, `Chorus I` (0.39 Hz), `Chorus II` (0.80 Hz), and `Chorus I+II` (8.0 Hz vibrato). |
+| **Tape & Shimmer** | FPU-accelerated vintage tape echo (saturation, wow/flutter) and octave pitch-shifted shimmer reverb. |
+| **128-Step Sequencer** | Acid sequencer with visual piano roll, parameter locks (P-Locks), ratchet (1..4), tie, accent, slide, probability, swing, and live recording. |
+| **256 Presets** | 128 Factory presets (Bank A & B 11..88) + 128 User writable presets (Bank UA & UB 11..88) with on-screen alphanumeric name editing and flash persistence. |
+| **MIDI Learn Engine** | 45 mappable sound, effects, and sequencer parameters with dynamic on-device MIDI Learn and flash memory storage. |
+| **Bluetooth LE MIDI** | Wireless MIDI in both **Device Mode** (connects to Mac, iOS, Windows, Android) and **Host Mode** (pairs directly with wireless MIDI controllers). |
+| **Class-Compliant USB** | 16-bit 44.1 kHz stereo digital audio streaming directly into your DAW and bidirectional USB-MIDI with SysEx librarian support. |
+| **CRT Oscilloscope** | Real-time waveform display with zero-crossing trigger stabilization and Roland oscilloscope graticule. |
+
+---
+
+## Hardware Controls & Navigation
 
 ```
-firmware/src/fm106.c          <- Main synth application, panel controls, and 80s Juno-106 UI
-firmware/src/fm106_engine.h   <- 6-voice polyphonic engine, dual-core job distribution
-firmware/src/fm106_osc.h      <- Bandlimited PolyBLEP DCO: Saw, Pulse/PWM, Sub-Osc, Noise
-firmware/src/fm106_vcf.h      <- 4-Pole IR3109 Resonant OTA Ladder Filter & 4-Position HPF
-firmware/src/fm106_adsr.h     <- Authentic Juno-106 D7811G 14-bit integer ADSR envelope
-firmware/src/fm106_chorus.h   <- MN3009 BBD Stereo Chorus (OFF, I, II, I+II)
-firmware/src/fm106_presets.h  <- 128 Factory Juno-106 presets from original SysEx
-firmware/src/platform.c       <- Plumbing (boot, dual-core init, USB, audio ISR, settings)
+                       [ M-VAVE FM-1 PANEL ]
+ ┌─────────────────────────────────────────────────────────────┐
+ │  [ 240x240 LCD DISPLAY ]     [SELECT]   [ALGO]    (MASTER)  │
+ │  • Header & Voice LEDs        Encoder    Encoder    Volume   │
+ │  • 4 Live Parameter Faders                                  │
+ │  • Real-time Oscilloscope    [PRESETS]  [1] [2] [3] [4]     │
+ │                               Encoder     Macro Knobs       │
+ │                                                             │
+ │  [OCT-] [OCT+] [FX]   [SEL]  [ENV]  [LFO]  [EDIT]  [GLO]    │
+ │  [HOME] [SAVE] [ARP]  [SEQ]  [PLAY] [REC]                   │
+ │                                                             │
+ │  [ ||| | ||| | ||| | ||| | ||| | ||| | ||| ] 27-Key Touch   │
+ └─────────────────────────────────────────────────────────────┘
 ```
 
-## Features
+### Quick Button Shortcuts
 
-| | |
-| --- | --- |
-| **6-Voice Polyphony** | True 6-voice polyphonic Roland Juno-106 synthesis with dynamic voice stealing and unison mode. |
-| **Dual-Core DSP** | CPU0 and CPU1 concurrently render voices in parallel during the audio ISR before stereo effects mixdown. |
-| **1980s Juno-106 UI** | Signature Roland color scheme: dark chassis, Roland red badge, Juno cyan stripe, orange slider caps, 6 voice activity LEDs, and live 27-key keyboard. |
-| **DCO** | Bandlimited PolyBLEP Sawtooth, Variable-width Pulse with manual/LFO PWM, Sub-oscillator (-1 or -2 oct), and Noise. |
-| **VCF** | 4-pole 24 dB/oct IR3109 / BA662 resonant OTA ladder filter with self-oscillation and OTA saturation. |
-| **HPF** | Authentic 4-position high-pass filter: 0: Bass boost (+9.4 dB shelf @ 103 Hz), 1: Flat, 2: 236 Hz, 3: 754 Hz. |
-| **ADSR** | Authentic NEC uPD7811G voice microprocessor 14-bit integer envelope algorithm. |
-| **BBD Chorus** | MN3009 analog delay line emulation with antiphase LFO modulation: OFF, Chorus I (0.39 Hz), Chorus II (0.80 Hz), and Chorus I+II (8.0 Hz vibrato). |
-| **128 Presets** | 128 factory Juno-106 presets decoded from hardware SysEx (Groups A & B, Banks 1-8, Patches 1-8). |
-| **USB Audio & MIDI** | Class-compliant 16-bit 44.1/48 kHz stereo USB audio input and USB-MIDI in/out identifying as **FM-106**. |
+- **`ENC_SELECT` (Turn)**: Browse through parameter edit pages.
+- **`ENC_ALGORITHM` (Turn)**: Cycle preset banks: **Fact A** &rarr; **Fact B** &rarr; **User A** &rarr; **User B**.
+- **`ENC_PRESETS` (Turn)**: Browse 64 patches within the active bank (`11` to `88`).
+- **`ENC_KNOB1..4`**: Direct hands-on control of the 4 sliders on the active edit page.
+- **`BTN_EDIT`**: Step to next parameter page (Hold 500ms in Sequencer for global options).
+- **`BTN_HOME`**: Instant return to primary **VCF** page; cancels menus.
+- **`BTN_GLO`**: Open **Global Options Menu** (MIDI Setup, Bluetooth, System Specs).
+- **`BTN_SAVE`**: Open **Preset Save & Name Editor** to store custom patches into user banks.
+- **`BTN_FX`**: Cycle through effects processors: **Chorus** &rarr; **Tape** &rarr; **Reverb**.
+- **`BTN_ENV` / `BTN_LFO` / `BTN_ARP`**: One-touch page jumps.
+- **`BTN_PLAY` / `BTN_REC`**: Transport start/stop and real-time live recording with 4-beat count-in.
 
-## Panel Controls
+---
 
-- **Keys (27 keys)**: Play 6 polyphonic voices; played notes illuminate on-screen in Roland red.
-- **`ENC_PRESETS`**: Turn to browse and instantly load any of the 128 factory Juno-106 patches.
-- **`ENC_KNOB1..4`**: Direct hands-on control of the 4 sliders on the current page with live visual fader response.
-- **`BTN_HOME` / `BTN_EDIT`**: Cycle through parameter edit pages:
-  - **VCF / DCO**: Cutoff Frequency, Resonance, Envelope Mod, Sub-Osc Level.
-  - **ENVELOPE**: Attack, Decay, Sustain, Release (ADSR).
-  - **DCO / PWM**: LFO Mod Depth, PWM Depth, Noise Level, HPF Mode.
-  - **LFO / ARP**: LFO Rate, LFO Delay, Arp Rate, Arp Range.
-- **`BTN_FX`**: Cycle Chorus mode: **OFF** &rarr; **I** &rarr; **II** &rarr; **I+II**.
-- **`BTN_ENV`**: Quick jump to Envelope edit page.
-- **`BTN_LFO`**: Quick jump to LFO/Arp edit page.
-- **`BTN_SEL`**: Toggle VCA mode (**ENV** &harr; **GATE**).
-- **`BTN_OCT_DOWN` / `BTN_OCT_UP`**: Octave shift (-2 to +2 octaves).
-- **`BTN_ARP`**: Toggle Arpeggiator.
+## Parameter Edit Pages
 
-## Quick Start
+Turn the **`SELECT`** encoder or tap **`EDIT`** to move through the 10 sound design pages:
 
-### Build & Test on Host
+| Page | Fader 1 (Knob 1) | Fader 2 (Knob 2) | Fader 3 (Knob 3) | Fader 4 (Knob 4) |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. VCF** | `FREQ`: Cutoff (0..127) | `RES`: Resonance (0..127) | `ENV`: Env Depth (0..127) | `LFO`: LFO Depth (0..127) |
+| **2. VCF 2** | `KBD`: Key Track (0..127) | `INV`: Polarity (NORM/INV) | `B.DCO`: Bend&rarr;DCO (0..127)| `B.VCF`: Bend&rarr;VCF (0..127)|
+| **3. DCO** | `RNG`: Octave (16', 8', 4')| `PULSE`: Pulse (OFF/ON) | `SAW`: Sawtooth (OFF/ON) | `SUBSW`: Sub-Osc (OFF/ON) |
+| **4. DCO 2** | `SUB`: Sub Level (0..127) | `NOISE`: Noise (0..127) | `PWM`: Width/Depth (0..127)| `DCOLFO`: Pitch LFO (0..127) |
+| **5. ENVELOPE** | `ATK`: Attack (0..127) | `DEC`: Decay (0..127) | `SUS`: Sustain (0..127) | `REL`: Release (0..127) |
+| **6. LFO** | `RATE`: Frequency (0..127)| `DELAY`: Onset (0..127) | `PWM MD`: LFO / MAN | *(Unassigned)* |
+| **7. ARP** | `ARP`: Arp (OFF/ON) | `MODE`: UP, U&D, DN | `ARAT`: Rate (0..127) | `ARNG`: Octaves (1..3) |
+| **8. FX** | `CHO`: Chorus (OFF..I+II) | `HPF`: BST / FLT / 236 / 754| `VCA`: Mode (ENV / GATE) | `LEVEL`: Volume (0..127) |
+| **9. TAPE** | `TYPE`: WARM / VINT / LOFI| `MIX`: Wet/Dry (0..127) | `RATE`: Speed/Flutter (0..127)| `CHAR`: Drive & Tone (0..127)|
+| **10. REVERB**| `REV`: Shimmer (OFF/ON) | `MIX`: Wet/Dry (0..127) | `DECAY`: Tail Length (0..127)| `SHIM`: Pitch Shimmer (0..127)|
 
-Host mode runs FM-106 natively on macOS or Linux without needing hardware:
+---
 
+## Step Sequencer & Piano Roll
+
+The onboard sequencer stores up to 128 steps per patch with an interactive piano roll view:
+
+- **Step Entry**: Scroll through steps with `SELECT`; play notes on the keyboard or dial pitches with Knob 2 (`NOTE`).
+- **Live Recording**: Tap `BTN_REC`, then press `BTN_PLAY`. A 4-beat visual metronome count-in runs before capturing live performance and gate duration.
+- **Step Options (Tap `EDIT`)**:
+  - `RATCHET (1..4)`: Trigger micro-burst ratchets per step.
+  - `TIE`: Connect notes into smooth legato phrases without envelope re-triggers.
+  - `ACCENT` / `SLIDE`: Classic acid bassline punch and portamento glide.
+  - `PROB (0%..100%, MUTE)`: Generative rhythm probability.
+  - `P-LOCKS`: Per-step knob parameter automation.
+- **Global Options (Hold `EDIT` 500ms)**: Set length (1..128 steps), tempo (40..240 BPM), clock division, swing percentage, or duplicate active bars (`DUP BARS`).
+
+---
+
+## MIDI CC Configuration & Learn
+
+FM-106 includes an on-device MIDI continuous controller engine controlling 45 parameters. 
+
+### How to Use Live MIDI Learn:
+1. Press `BTN_GLO` &rarr; **MIDI SETUP** &rarr; **CC CONFIG**.
+2. Scroll to the parameter you want to assign (e.g. `[VCF] CUTOFF`).
+3. Press `BTN_SEL`. The screen flashes **`MIDI LEARN: SEND CC`**.
+4. Wiggle any knob, slider, or pedal on your external MIDI controller.
+5. The CC is instantly mapped, saved to flash, and ready to use!
+6. Tap `BTN_EDIT` to reset the selected parameter to its factory default CC.
+
+*(For the complete 45-parameter default CC chart, refer to [manual.html](manual.html#midi-cc-reference)).*
+
+---
+
+## Web Simulator & Patch Librarian
+
+- **[simulator.html](simulator.html)**: Interactive WebAssembly simulator running the exact FM-106 audio DSP engine and UI directly in your web browser.
+- **[Librarian.html](Librarian.html)**: Visual patch librarian supporting Web MIDI. Connect the FM-106 over USB to audition, back up, and load standard Roland Juno-106 SysEx files (`.syx`).
+
+---
+
+## Building & Installation
+
+### Prerequisites
+- macOS or Linux with Docker (for cross-compiling via JieLi toolchain / AC79 SDK).
+- Python 3 with `pyserial` and `mido` for USB installation.
+
+### 1. Build Firmware
 ```sh
-tests/run_host.sh
-```
-Outputs:
-- `build/host/fm106.wav`: High-quality 44.1 kHz 16-bit stereo audio render.
-- `build/host/fm106-1000.png` & `build/host/fm106-3000.png`: Exact 240x240 LCD screen captures.
-
-### Build Target Firmware
-
-Prerequisites: Docker (running on macOS) and the JieLi toolchain / AC79 SDK:
-
-```sh
-# Single-core build:
-./build.sh                                  # -> build/fm106.fwsc
+# Single-core build (ultra-stable, FPU accelerated):
+./build.sh
 
 # Dual-core build (CPU0 + CPU1 parallel audio):
-DINGHY_DUAL_CORE=1 ./build.sh              # -> build/fm106.fwsc
+DINGHY_DUAL_CORE=1 ./build.sh
 ```
 
-### Install to M-VAVE FM-1
-
-Install over USB from the command line:
-
+### 2. Build WebAssembly Simulator
 ```sh
-python3 tools/fm1_install.py build/fm106.fwsc
+./emu/build.sh
+node emu/emu_test.mjs
 ```
 
-Or via WebUSB at the [FM-1 Firmware Hub](https://fm1.designburgapps.com).
+### 3. Install to M-VAVE FM-1
+Connect your FM-1 via USB-C and flash the package:
+```sh
+python3 tools/fm1_install.py build/fm106.fwsc --yes
+```
+
+*Hardware Recovery:* If needed, hold `BTN_OCT_DOWN` while powering on to enter the hardware bootloader rescue mode.
+
+---
 
 ## License
 
-GPL-3.0-only. Built upon Felucca / SLOOP / Dinghy platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89. DSP models ported and adapted from Ultramaster KR-106 by Kayrock Screenprinting and Melodee by Kerem Kilic.
+GPL-3.0-only. Built upon the Felucca / SLOOP / Dinghy platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89. DSP models adapted from Ultramaster KR-106 by Kayrock Screenprinting and Melodee by Kerem Kilic.
