@@ -57,7 +57,7 @@ typedef struct {
     uint8_t ever_played[FM106_NUM_VOICES];
 
     /* Current Patch Parameters */
-    uint8_t patch_idx;          /* 0..127 */
+    uint16_t patch_idx;         /* 0..259 (65 per bank x 4 banks) */
     char patch_name[16];
 
     /* DCO */

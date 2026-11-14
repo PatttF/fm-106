@@ -1010,15 +1010,15 @@ footer.keyboard-footer {
         <div class="hardware-sync-bar">
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
                 <button class="synth-btn primary" id="btn-save-slot" title="Write current sound to hardware slot">Write Slot</button>
-                <button class="synth-btn amber" id="btn-burn-flash" title="Burn presets to FM-1 SPI Flash">Burn Flash</button>
+                <button class="synth-btn amber" id="btn-burn-flash" title="Burn presets permanently to FM-1 SPI Flash">Burn Flash (128)</button>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                <button class="synth-btn" id="btn-sync-bank-to-hw" title="Send current bank (64 presets) to FM-1 RAM">Send Bank 64</button>
-                <button class="synth-btn" id="btn-sync-all-to-hw" title="Send all 128 user presets to FM-1 RAM">Send User 128</button>
+                <button class="synth-btn" id="btn-sync-bank-to-hw" title="Send active bank (64 presets) to FM-1 RAM">Send Bank</button>
+                <button class="synth-btn" id="btn-sync-all-to-hw" title="Send all 128 user presets to FM-1 RAM">Send All 128</button>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:6px;">
-                <button class="synth-btn" id="btn-read-bank-from-hw" title="Pull current bank (64 presets) from FM-1">Read Bank 64</button>
-                <button class="synth-btn" id="btn-read-all-from-hw" title="Pull all 128 user presets from FM-1">Read User 128</button>
+                <button class="synth-btn" id="btn-read-bank-from-hw" title="Pull active bank (64 presets) from FM-1">Read Bank</button>
+                <button class="synth-btn" id="btn-read-all-from-hw" title="Pull all 128 user presets from FM-1">Read All 128</button>
             </div>
             <div class="sync-status-text" id="sync-status">Ready. Hardware: Disconnected</div>
         </div>
@@ -1584,13 +1584,16 @@ footer.keyboard-footer {
             Burning writes presets into FM-106 hardware SPI flash so they survive power-off. Select how you want to burn:
         </p>
         <div style="display:flex; flex-direction:column; gap:10px;">
+            <button class="synth-btn amber" id="btn-burn-all" style="padding:14px; text-align:left; display:flex; flex-direction:column; gap:4px; font-weight:700; border:2px solid var(--accent-amber);">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:13px; color:white;">🔥 Send & Burn All 128 User Patches (User A & B)</span>
+                    <span style="font-size:9px; background:var(--accent-amber); color:black; font-weight:800; padding:2px 6px; border-radius:3px;">RECOMMENDED</span>
+                </div>
+                <span style="font-size:10px; color:#cfd5e2; font-weight:400;">Transfers the complete 128-preset library to User Bank A & B and permanently commits to hardware SPI flash.</span>
+            </button>
             <button class="synth-btn primary" id="btn-burn-bank" style="padding:12px; text-align:left; display:flex; flex-direction:column; gap:4px; font-weight:700;">
                 <span id="burn-bank-title" style="font-size:13px; color:white;">🔥 Send & Burn Current Bank (User A - 64 Patches)</span>
                 <span style="font-size:10px; color:#cfd5e2; font-weight:400;">Transfers the 64 patches of the active bank to the synth and commits to flash without overwriting the other user bank.</span>
-            </button>
-            <button class="synth-btn amber" id="btn-burn-all" style="padding:12px; text-align:left; display:flex; flex-direction:column; gap:4px; font-weight:700;">
-                <span style="font-size:13px; color:white;">🔥 Send & Burn All 128 User Patches (User A & B)</span>
-                <span style="font-size:10px; color:#cfd5e2; font-weight:400;">Transfers all 128 library patches to both User Bank A & B and commits to flash.</span>
             </button>
             <button class="synth-btn" id="btn-burn-ram-only" style="padding:10px; text-align:left; display:flex; flex-direction:column; gap:4px;">
                 <span style="font-size:12px; color:var(--text-white);">💾 Commit Synth RAM Only (SysEx 0x35)</span>
@@ -4607,20 +4610,62 @@ function makeBlankPreset(idx) {
     };
 }
 
-// State: 256 Presets total (0..63 Factory A, 64..127 Factory B, 128..191 User A, 192..255 User B)
-// Factory banks are ROM defaults; User banks default to blank and sync from synth hardware
+function makeInitPreset(name = 'Init Saw') {
+    return {
+        name: name,
+        isBlank: false,
+        isInit: true,
+        sliders: [60, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 64, 127, 20, 0],
+        sw1: 0x14, // 8' range, Saw on
+        sw2: 0x10, // HPF 1
+        assign: 1, // POLY I
+        b_dco: 0,
+        b_vcf: 0,
+        sub_sw: 0,
+        arp_on: 0,
+        arp_mode: 0,
+        arp_rate: 64,
+        arp_range: 1,
+        tape_type: 0,
+        tape_mix: 0,
+        tape_rate: 0,
+        tape_char: 0,
+        rev_on: 0,
+        rev_mix: 48,
+        rev_decay: 84,
+        rev_shim: 68
+    };
+}
+
+// State: 260 Presets total (65 per bank x 4 banks: FA, FB, UA, UB)
+// Slot 0 of each bank is 00 (clean Init Saw).
+// Slots 1..64 are 11..88 (Factory ROM defaults / User RAM presets)
 let allPresets = [];
-for (let i = 0; i < 128; i++) {
+// Bank FA (0..64)
+allPresets.push(makeInitPreset('A00 Init Saw'));
+for (let i = 0; i < 64; i++) {
     allPresets.push(JSON.parse(JSON.stringify(FACTORY_PRESETS[i])));
 }
-for (let i = 0; i < 128; i++) {
-    allPresets.push(makeBlankPreset(128 + i));
+// Bank FB (65..129)
+allPresets.push(makeInitPreset('B00 Init Saw'));
+for (let i = 0; i < 64; i++) {
+    allPresets.push(JSON.parse(JSON.stringify(FACTORY_PRESETS[64 + i])));
+}
+// Bank UA (130..194)
+allPresets.push(makeInitPreset('UA00 Init Saw'));
+for (let i = 0; i < 64; i++) {
+    allPresets.push(makeBlankPreset(131 + i));
+}
+// Bank UB (195..259)
+allPresets.push(makeInitPreset('UB00 Init Saw'));
+for (let i = 0; i < 64; i++) {
+    allPresets.push(makeBlankPreset(196 + i));
 }
 let pendingDumpSlot = null;
 let isReadingFromHw = false;
 
 let currentBank = 'FA'; // 'FA', 'FB', 'UA', 'UB'
-let selectedSlot = 0;   // 0 .. 255
+let selectedSlot = 0;   // 0 .. 259
 let baseOctave = 3;     // C3 base note 48
 let midiAccess = null;
 let midiInput = null;
@@ -4629,31 +4674,39 @@ let isHardwareConnected = false;
 
 // Helpers
 function indexToSlot(idx) {
-    const bankIdx = Math.floor(idx / 64) % 4;
-    const subIdx = idx % 64;
-    const group = Math.floor(subIdx / 8) + 1;
-    const patch = (subIdx % 8) + 1;
+    const bankIdx = Math.floor(idx / 65) % 4;
+    const subIdx = idx % 65;
     const prefix = ['A', 'B', 'UA', 'UB'][bankIdx];
+    if (subIdx === 0) {
+        return `${prefix}00`;
+    }
+    const actualSub = subIdx - 1;
+    const group = Math.floor(actualSub / 8) + 1;
+    const patch = (actualSub % 8) + 1;
     return `${prefix}${group}${patch}`;
 }
 
 function getBankStartIdx(bank) {
     switch (bank) {
         case 'FA': return 0;
-        case 'FB': return 64;
-        case 'UA': return 128;
-        case 'UB': return 192;
+        case 'FB': return 65;
+        case 'UA': return 130;
+        case 'UB': return 195;
         default: return 0;
     }
 }
 
 function getBankFromIdx(idx) {
-    const b = Math.floor(idx / 64) % 4;
+    const b = Math.floor(idx / 65) % 4;
     return ['FA', 'FB', 'UA', 'UB'][b];
 }
 
 function isFactorySlot(idx) {
-    return idx < 128;
+    return idx < 130;
+}
+
+function isInitSlot(idx) {
+    return (idx % 65) === 0;
 }
 
 function showToast(msg, type = 'info') {
@@ -4717,6 +4770,7 @@ function loadPresetToUI(preset) {
     const slotCode = indexToSlot(selectedSlot);
     const bank = getBankFromIdx(selectedSlot);
     const isFact = isFactorySlot(selectedSlot);
+    const isInit = isInitSlot(selectedSlot);
     const badgeEl = document.getElementById('current-bank-badge');
     const slotEl = document.getElementById('current-slot-badge');
     const nameEl = document.getElementById('current-patch-name');
@@ -4724,8 +4778,10 @@ function loadPresetToUI(preset) {
     if (slotEl) slotEl.textContent = slotCode;
     if (nameEl) {
         nameEl.value = preset.name;
-        nameEl.readOnly = isFact;
-        nameEl.title = isFact ? "Factory preset (read-only; click 'Copy to User' to edit)" : "User preset name";
+        nameEl.readOnly = isFact || isInit;
+        nameEl.title = isInit
+            ? "Init preset template (clean default sound)"
+            : (isFact ? "Factory preset (read-only; click 'Copy to User' to edit)" : "User preset name");
     }
     if (badgeEl) {
         switch (bank) {
@@ -4976,7 +5032,7 @@ function renderPresetList(filter = '') {
     const container = document.getElementById('preset-list');
     container.innerHTML = '';
     const startIdx = getBankStartIdx(currentBank);
-    const endIdx = startIdx + 64;
+    const endIdx = startIdx + 65;
     const isFact = isFactorySlot(startIdx);
 
     for (let i = startIdx; i < endIdx; i++) {
@@ -4986,8 +5042,9 @@ function renderPresetList(filter = '') {
             continue;
         }
 
+        const isInit = isInitSlot(i);
         const item = document.createElement('div');
-        item.className = `preset-item ${i === selectedSlot ? 'selected' : ''} ${isFact ? 'factory-item' : 'user-item'}`;
+        item.className = `preset-item ${i === selectedSlot ? 'selected' : ''} ${isInit ? 'init-item' : (isFact ? 'factory-item' : 'user-item')}`;
         item.dataset.idx = i;
 
         const isBlank = Boolean(preset.isBlank || (preset.name && preset.name.includes('(Blank)')));
@@ -4995,8 +5052,12 @@ function renderPresetList(filter = '') {
             ? `<span style="opacity: 0.45; font-style: italic;">${preset.name}</span>`
             : preset.name;
 
+        const badgeBg = isInit ? '#1a2718' : (isFact ? '#0e2439' : '#362208');
+        const badgeColor = isInit ? '#48bb78' : (isFact ? 'var(--accent-blue)' : 'var(--accent-amber)');
+        const badgeText = isInit ? `${slotCode} [INIT]` : slotCode;
+
         item.innerHTML = `
-            <span class="preset-slot-badge" style="background:${isFact ? '#0e2439' : '#362208'}; color:${isFact ? 'var(--accent-blue)' : 'var(--accent-amber)'};">${slotCode}</span>
+            <span class="preset-slot-badge" style="background:${badgeBg}; color:${badgeColor}; font-weight:700;">${badgeText}</span>
             <span class="preset-item-name">${nameDisplay}</span>
             <div class="preset-quick-actions">
                 <button class="mini-btn play-btn" title="Audition this patch">&#9658;</button>
@@ -5031,14 +5092,25 @@ function copyPresetToClipboard(idx) {
 
 function copyCurrentToUser() {
     const current = readUIToPreset();
-    let targetSlot = selectedSlot >= 128 ? selectedSlot : selectedSlot + 128;
+    let targetSlot;
+    if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
+        targetSlot = selectedSlot;
+    } else if (selectedSlot >= 130) {
+        targetSlot = selectedSlot + 1;
+    } else {
+        targetSlot = selectedSlot + 130;
+    }
+    if (targetSlot >= 260) targetSlot = 259;
+    if (isInitSlot(targetSlot)) targetSlot++;
+
     allPresets[targetSlot] = JSON.parse(JSON.stringify(current));
-    const subIdx = targetSlot % 64;
-    const grp = Math.floor(subIdx / 8) + 1;
-    const ptc = (subIdx % 8) + 1;
-    const prefix = targetSlot < 192 ? 'UA' : 'UB';
-    allPresets[targetSlot].name = `${prefix}${grp}${ptc} ${current.name.replace(/^[A-Za-z0-9]+\s*/, '')}`.trim();
+    allPresets[targetSlot].isInit = false;
     allPresets[targetSlot].isBlank = false;
+    const pfix = targetSlot >= 195 ? 'UB' : 'UA';
+    const sub = targetSlot >= 195 ? (targetSlot - 196) : (targetSlot - 131);
+    const grp = Math.floor(sub / 8) + 1;
+    const ptc = (sub % 8) + 1;
+    allPresets[targetSlot].name = `${pfix}${grp}${ptc} ${current.name.replace(/^[A-Za-z0-9]+\s*/, '')}`.trim();
     showToast(`Copied "${current.name}" into User slot ${indexToSlot(targetSlot)}!`, 'success');
     selectSlot(targetSlot);
     if (midiOutput) {
@@ -5047,8 +5119,8 @@ function copyCurrentToUser() {
 }
 
 function deleteCurrentPatch() {
-    if (isFactorySlot(selectedSlot)) {
-        showToast('Factory Presets (ROM) are read-only and cannot be deleted.', 'warning');
+    if (isFactorySlot(selectedSlot) || isInitSlot(selectedSlot)) {
+        showToast('Factory presets and 00 Init presets cannot be deleted.', 'warning');
         return;
     }
     const slotCode = indexToSlot(selectedSlot);
@@ -5060,8 +5132,8 @@ function deleteCurrentPatch() {
 
     if (midiOutput) {
         const ch = getMidiChannel();
-        const bankOpt = selectedSlot < 192 ? 3 : 4; // 3 = User A, 4 = User B
-        const localSlot = selectedSlot % 64;
+        const bankOpt = selectedSlot < 195 ? 3 : 4; // 3 = User A, 4 = User B
+        const localSlot = selectedSlot < 195 ? (selectedSlot - 131) : (selectedSlot - 196);
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName('');
         const p = allPresets[selectedSlot];
@@ -5085,8 +5157,8 @@ function deleteCurrentPatch() {
 
 function selectSlot(idx, saveCurrentUI = true) {
     if (idx < 0) idx = 0;
-    if (idx >= 256) idx = 255;
-    if (saveCurrentUI && selectedSlot >= 128) {
+    if (idx >= 260) idx = 259;
+    if (saveCurrentUI && selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     selectedSlot = idx;
@@ -5292,12 +5364,12 @@ function handleMIDIMessage(event) {
             const bankOpt = (data[3] >> 4) & 0x07;
             let slotIdx;
             if (bankOpt >= 1 && bankOpt <= 4) {
-                slotIdx = (bankOpt - 1) * 64 + (data[4] % 64);
+                slotIdx = (bankOpt - 1) * 65 + (data[4] % 65);
             } else if (pendingDumpSlot !== null) {
                 slotIdx = pendingDumpSlot;
             } else {
                 const bIdx = getBankStartIdx(currentBank);
-                slotIdx = bIdx + (data[4] % 64);
+                slotIdx = bIdx + (data[4] % 65);
             }
 
             const sliders = Array.from(data.slice(5, 21));
@@ -5312,7 +5384,7 @@ function handleMIDIMessage(event) {
                 name = name.trim();
             }
             if (!name) {
-                if (slotIdx >= 128) {
+                if (slotIdx >= 130) {
                     name = `${indexToSlot(slotIdx)} (Blank)`;
                     isBlank = true;
                 } else {
@@ -5361,7 +5433,7 @@ function handleMIDIMessage(event) {
         // 0x33: Patch Name Response (extended)
         else if (cmd === 0x33 && data.length >= 7) {
             const bankIdx = data[5] & 0x03;
-            const slotIdx = bankIdx * 64 + (data[4] % 64);
+            const slotIdx = bankIdx * 65 + (data[4] % 65);
             let name = '';
             for (let i = 6; i < data.length - 1; i++) {
                 if (data[i] >= 32 && data[i] < 127) name += String.fromCharCode(data[i]);
@@ -5413,7 +5485,7 @@ function sendParamChange(paramIdx, ccNum, val) {
 
 // Audition Preset to Manual Edit Buffer (SysEx 0x31)
 function auditionCurrentPreset() {
-    if (selectedSlot >= 128) {
+    if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     const p = allPresets[selectedSlot];
@@ -5452,6 +5524,10 @@ function saveCurrentSlotToHardware() {
         showToast('Factory Presets (ROM) are protected. Use "Copy to User" to save edits to User Banks.', 'warning');
         return;
     }
+    if (isInitSlot(selectedSlot)) {
+        showToast('Init presets are protected templates. Select a User slot (e.g. UA11..UB88) to store custom presets.', 'warning');
+        return;
+    }
     allPresets[selectedSlot] = readUIToPreset();
     const p = allPresets[selectedSlot];
     if (!midiOutput) {
@@ -5460,8 +5536,8 @@ function saveCurrentSlotToHardware() {
         return;
     }
     const ch = getMidiChannel();
-    const bankOpt = selectedSlot < 192 ? 3 : 4; // 3 = User A, 4 = User B
-    const localSlot = selectedSlot % 64;
+    const bankOpt = selectedSlot < 195 ? 3 : 4; // 3 = User A, 4 = User B
+    const localSlot = selectedSlot < 195 ? (selectedSlot - 131) : (selectedSlot - 196); // 0..63 in User bank
     const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
     const nameBytes = encodePatchName(p.name);
     const extBytes = encodeExtendedParams(p);
@@ -5489,9 +5565,9 @@ function saveCurrentSlotToHardware() {
 function requestSlotFromHardware(slotIdx) {
     if (!midiOutput) return;
     const ch = getMidiChannel();
-    const bankIdx = Math.floor(slotIdx / 64) % 4;
+    const bankIdx = Math.floor(slotIdx / 65) % 4;
     const bankOpt = bankIdx + 1; // 1=Fact A, 2=Fact B, 3=User A, 4=User B
-    const localSlot = slotIdx % 64;
+    const localSlot = slotIdx % 65; // 0..64
     const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
     // F0 41 34 chByte localSlot F7
     const msg = [0xF0, 0x41, 0x34, chByte, localSlot & 0x7F, 0xF7];
@@ -5507,7 +5583,7 @@ function openBurnModal() {
     }
     const bankToUse = (currentBank === 'UB') ? 'UB' : 'UA';
     const bankLabel = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
-    document.getElementById('burn-bank-title').textContent = `🔥 Send & Burn Current Bank (${bankLabel} - 64 Patches)`;
+    document.getElementById('burn-bank-title').textContent = `🔥 Send & Burn Active Bank (${bankLabel} - 64 Patches)`;
     document.getElementById('burn-progress-container').style.display = 'none';
     document.getElementById('btn-burn-bank').disabled = false;
     document.getElementById('btn-burn-all').disabled = false;
@@ -5541,11 +5617,11 @@ async function executeBurn(type) {
 
     if (type === 'bank') {
         const bankToUse = (currentBank === 'UB') ? 'UB' : 'UA';
-        const startIdx = getBankStartIdx(bankToUse);
+        const startIdx = (bankToUse === 'UB') ? 196 : 131;
         const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
         const bankOpt = (bankToUse === 'UB') ? 4 : 3;
 
-        if (selectedSlot >= 128) allPresets[selectedSlot] = readUIToPreset();
+        if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) allPresets[selectedSlot] = readUIToPreset();
 
         for (let i = 0; i < 64; i++) {
             const slotIdx = startIdx + i;
@@ -5571,11 +5647,11 @@ async function executeBurn(type) {
             progressCount.textContent = `${pct}%`;
             progressLabel.textContent = `Sending ${indexToSlot(slotIdx)} (${p.name})...`;
             updateSyncStatus(`Burning: sending ${indexToSlot(slotIdx)} (${i + 1}/64)...`);
-            await new Promise(r => setTimeout(r, 45));
+            await new Promise(r => setTimeout(r, 60));
         }
 
         progressLabel.textContent = 'Committing User Bank to SPI Flash...';
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 180));
         const commitMsg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
         midiOutput.send(commitMsg);
         flashTx();
@@ -5591,12 +5667,13 @@ async function executeBurn(type) {
         }, 1200);
 
     } else if (type === 'all') {
-        if (selectedSlot >= 128) allPresets[selectedSlot] = readUIToPreset();
+        if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) allPresets[selectedSlot] = readUIToPreset();
 
-        for (let i = 128; i < 256; i++) {
-            const p = allPresets[i];
-            const bankOpt = i < 192 ? 3 : 4;
+        for (let i = 0; i < 128; i++) {
+            const slotIdx = (i < 64) ? (131 + i) : (196 + (i - 64));
+            const bankOpt = (i < 64) ? 3 : 4;
             const localSlot = i % 64;
+            const p = allPresets[slotIdx];
             const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
             const nameBytes = encodePatchName(p.name);
             const extBytes = encodeExtendedParams(p);
@@ -5612,16 +5689,16 @@ async function executeBurn(type) {
             midiOutput.send(msg);
             flashTx();
 
-            const pct = Math.round(((i - 127) / 128) * 85);
+            const pct = Math.round(((i + 1) / 128) * 85);
             progressBar.style.width = `${pct}%`;
             progressCount.textContent = `${pct}%`;
-            progressLabel.textContent = `Sending ${indexToSlot(i)} (${p.name})...`;
-            updateSyncStatus(`Burning: sending ${indexToSlot(i)} (${i - 127}/128)...`);
-            await new Promise(r => setTimeout(r, 45));
+            progressLabel.textContent = `Sending ${indexToSlot(slotIdx)} (${p.name})...`;
+            updateSyncStatus(`Burning: sending ${indexToSlot(slotIdx)} (${i + 1}/128)...`);
+            await new Promise(r => setTimeout(r, 60));
         }
 
         progressLabel.textContent = 'Committing all 128 User presets to SPI Flash...';
-        await new Promise(r => setTimeout(r, 150));
+        await new Promise(r => setTimeout(r, 180));
         const commitMsg = [0xF0, 0x41, 0x35, ch & 0x0F, 0x01, 0xF7];
         midiOutput.send(commitMsg);
         flashTx();
@@ -5658,13 +5735,13 @@ async function sendBankToHardware(targetBank = null) {
         return;
     }
     const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
-    const startIdx = getBankStartIdx(bankToUse);
+    const startIdx = (bankToUse === 'UB') ? 196 : 131;
     const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
     const bankOpt = (bankToUse === 'UB') ? 4 : 3;
 
     if (!confirm(`Send all 64 presets of ${bankName} to FM-106 hardware RAM?`)) return;
 
-    if (selectedSlot >= 128) {
+    if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     const ch = getMidiChannel();
@@ -5689,7 +5766,7 @@ async function sendBankToHardware(targetBank = null) {
         midiOutput.send(msg);
         flashTx();
         updateSyncStatus(`Sending ${bankName} preset ${i + 1}/64 (${indexToSlot(slotIdx)})...`);
-        await new Promise(r => setTimeout(r, 45));
+        await new Promise(r => setTimeout(r, 60));
     }
     showToast(`${bankName} (64 presets) sent to hardware RAM!`, 'success');
     updateSyncStatus(`${bankName} transferred to hardware RAM.`);
@@ -5702,15 +5779,16 @@ async function sendAllToHardware() {
         return;
     }
     if (!confirm('Send all 128 User presets (User A & B) to FM-106 hardware RAM? Factory presets in ROM will remain safe.')) return;
-    if (selectedSlot >= 128) {
+    if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     const ch = getMidiChannel();
 
-    for (let i = 128; i < 256; i++) {
-        const p = allPresets[i];
-        const bankOpt = i < 192 ? 3 : 4;
+    for (let i = 0; i < 128; i++) {
+        const slotIdx = (i < 64) ? (131 + i) : (196 + (i - 64));
+        const bankOpt = (i < 64) ? 3 : 4;
         const localSlot = i % 64;
+        const p = allPresets[slotIdx];
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName(p.name);
         const extBytes = encodeExtendedParams(p);
@@ -5725,8 +5803,8 @@ async function sendAllToHardware() {
         ];
         midiOutput.send(msg);
         flashTx();
-        updateSyncStatus(`Sending preset ${i - 127}/128 (${indexToSlot(i)})...`);
-        await new Promise(r => setTimeout(r, 45));
+        updateSyncStatus(`Sending preset ${i + 1}/128 (${indexToSlot(slotIdx)})...`);
+        await new Promise(r => setTimeout(r, 60));
     }
     showToast('All 128 User presets sent to hardware RAM!', 'success');
     updateSyncStatus('User presets transferred to hardware.');
@@ -5740,7 +5818,7 @@ async function readBankFromHardware(targetBank = null, interactive = true) {
     }
     if (isReadingFromHw) return;
     const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
-    const startIdx = getBankStartIdx(bankToUse);
+    const startIdx = (bankToUse === 'UB') ? 196 : 131;
     const bankName = (bankToUse === 'UB') ? 'User Bank B' : 'User Bank A';
 
     if (interactive && !confirm(`Dump all 64 presets of ${bankName} from FM-106 into library?`)) return;
@@ -5753,7 +5831,7 @@ async function readBankFromHardware(targetBank = null, interactive = true) {
         pendingDumpSlot = slotIdx;
         requestSlotFromHardware(slotIdx);
         updateSyncStatus(`Requesting ${indexToSlot(slotIdx)} from synth (${i + 1}/64)...`);
-        await new Promise(r => setTimeout(r, 40));
+        await new Promise(r => setTimeout(r, 50));
     }
     pendingDumpSlot = null;
     isReadingFromHw = false;
@@ -5774,11 +5852,12 @@ async function readAllFromHardware(interactive = true) {
     isReadingFromHw = true;
     updateSyncStatus('Reading User Bank A & B from FM-106 hardware...');
 
-    for (let i = 128; i < 256; i++) {
-        pendingDumpSlot = i;
-        requestSlotFromHardware(i);
-        updateSyncStatus(`Requesting ${indexToSlot(i)} from synth (${i - 127}/128)...`);
-        await new Promise(r => setTimeout(r, 40));
+    for (let i = 0; i < 128; i++) {
+        const slotIdx = (i < 64) ? (131 + i) : (196 + (i - 64));
+        pendingDumpSlot = slotIdx;
+        requestSlotFromHardware(slotIdx);
+        updateSyncStatus(`Requesting ${indexToSlot(slotIdx)} from synth (${i + 1}/128)...`);
+        await new Promise(r => setTimeout(r, 50));
     }
     pendingDumpSlot = null;
     isReadingFromHw = false;
@@ -5805,7 +5884,8 @@ function loadBankTemplate(templateKey, targetBank = null) {
                 const ptc = (i % 8) + 1;
                 p.name = `UA${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                 p.isBlank = false;
-                allPresets[128 + i] = { ...p, ...encodeExtendedDefaults(p) };
+                p.isInit = false;
+                allPresets[131 + i] = { ...p, ...encodeExtendedDefaults(p) };
             }
             for (let i = 0; i < 64; i++) {
                 const p = JSON.parse(JSON.stringify(lx.patches[i]));
@@ -5813,12 +5893,14 @@ function loadBankTemplate(templateKey, targetBank = null) {
                 const ptc = (i % 8) + 1;
                 p.name = `UB${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                 p.isBlank = false;
-                allPresets[192 + i] = { ...p, ...encodeExtendedDefaults(p) };
+                p.isInit = false;
+                allPresets[196 + i] = { ...p, ...encodeExtendedDefaults(p) };
             }
             showToast('Loaded Future Classic (UA) + Lixor (UB) into all 128 User slots!', 'success');
         } else if (templateKey === 'blank') {
-            for (let i = 128; i < 256; i++) {
-                allPresets[i] = makeBlankPreset(i);
+            for (let i = 0; i < 64; i++) {
+                allPresets[131 + i] = makeBlankPreset(131 + i);
+                allPresets[196 + i] = makeBlankPreset(196 + i);
             }
             showToast('Cleared all 128 User slots to blank presets.', 'info');
         } else if (templateKey === 'factory') {
@@ -5830,7 +5912,9 @@ function loadBankTemplate(templateKey, targetBank = null) {
                 const ptc = (subIdx % 8) + 1;
                 copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
                 copy.isBlank = false;
-                allPresets[128 + i] = { ...copy, ...encodeExtendedDefaults(copy) };
+                copy.isInit = false;
+                const targetIdx = (i < 64) ? (131 + i) : (196 + (i - 64));
+                allPresets[targetIdx] = { ...copy, ...encodeExtendedDefaults(copy) };
             }
             showToast('Loaded Factory presets into both User Banks (128 patches)!', 'success');
         } else if (SOUNDSET_BANKS[templateKey]) {
@@ -5840,22 +5924,22 @@ function loadBankTemplate(templateKey, targetBank = null) {
                 const grp = Math.floor(i / 8) + 1;
                 const ptc = (i % 8) + 1;
                 const clean = p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '').trim();
-                allPresets[128 + i] = { ...p, name: `UA${grp}${ptc} ${clean}`, isBlank: false, ...encodeExtendedDefaults(p) };
-                allPresets[192 + i] = { ...p, name: `UB${grp}${ptc} ${clean}`, isBlank: false, ...encodeExtendedDefaults(p) };
+                allPresets[131 + i] = { ...p, name: `UA${grp}${ptc} ${clean}`, isBlank: false, isInit: false, ...encodeExtendedDefaults(p) };
+                allPresets[196 + i] = { ...p, name: `UB${grp}${ptc} ${clean}`, isBlank: false, isInit: false, ...encodeExtendedDefaults(p) };
             }
             showToast(`Loaded "${soundset.name}" into both User Banks (128 patches)!`, 'success');
         }
 
         currentBank = 'UA';
         updateBankTabs();
-        selectSlot(128, false);
+        selectSlot(131, false);
         renderPresetList();
         return;
     }
 
     // Single bank target: 'UA' or 'UB'
     const bankToUse = effectiveTarget === 'UB' ? 'UB' : 'UA';
-    const startIdx = bankToUse === 'UB' ? 192 : 128;
+    const startIdx = bankToUse === 'UB' ? 196 : 131;
     const prefix = bankToUse;
 
     if (templateKey === 'blank') {
@@ -5871,6 +5955,7 @@ function loadBankTemplate(templateKey, targetBank = null) {
             const ptc = (i % 8) + 1;
             copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
             copy.isBlank = false;
+            copy.isInit = false;
             allPresets[startIdx + i] = { ...copy, ...encodeExtendedDefaults(copy) };
         }
         showToast(`Loaded Factory defaults into ${bankToUse}.`, 'success');
@@ -5882,6 +5967,7 @@ function loadBankTemplate(templateKey, targetBank = null) {
             const ptc = (i % 8) + 1;
             p.name = `${prefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
             p.isBlank = false;
+            p.isInit = false;
             allPresets[startIdx + i] = { ...p, ...encodeExtendedDefaults(p) };
         }
         showToast(`Loaded "${soundset.name}" into ${bankToUse}!`, 'success');
@@ -6498,15 +6584,21 @@ function handleImportedFile(file) {
     const reader = new FileReader();
     const fname = file.name.toLowerCase();
     const targetBankSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
-    let baseTargetSlot = 128;
+    let baseTargetSlot = 131;
     if (targetBankSel === 'UB') {
-        baseTargetSlot = 192;
+        baseTargetSlot = 196;
     } else if (targetBankSel === 'UA' || targetBankSel === 'both') {
-        baseTargetSlot = 128;
+        baseTargetSlot = 131;
     } else {
-        baseTargetSlot = currentBank === 'UB' ? 192 : 128;
+        baseTargetSlot = currentBank === 'UB' ? 196 : 131;
     }
-    const bankPrefix = baseTargetSlot >= 192 ? 'UB' : 'UA';
+    const bankPrefix = baseTargetSlot >= 196 ? 'UB' : 'UA';
+
+    function getTargetSlotForIdx(base, idx) {
+        if (base >= 196) return 196 + idx;
+        if (idx < 64) return 131 + idx;
+        return 196 + (idx - 64);
+    }
 
     if (fname.endsWith('.json')) {
         reader.onload = (e) => {
@@ -6515,8 +6607,8 @@ function handleImportedFile(file) {
                 if (Array.isArray(data) && data.length > 0) {
                     let importedCount = 0;
                     data.forEach((p, idx) => {
-                        const targetSlot = baseTargetSlot + idx;
-                        if (targetSlot < 256) {
+                        const targetSlot = getTargetSlotForIdx(baseTargetSlot, idx);
+                        if (targetSlot < 260) {
                             let norm = null;
                             if (p.data && Array.isArray(p.data) && p.data.length >= 18) {
                                 norm = {
@@ -6530,8 +6622,8 @@ function handleImportedFile(file) {
                                 norm = { ...p, ...encodeExtendedDefaults(p) };
                             }
                             if (norm) {
-                                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                                const subIdx = targetSlot % 64;
+                                const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                                const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
                                 const grp = Math.floor(subIdx / 8) + 1;
                                 const ptc = (subIdx % 8) + 1;
                                 norm.name = `${pfix}${grp}${ptc} ${norm.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
@@ -6557,9 +6649,9 @@ function handleImportedFile(file) {
             try {
                 const patch = parseTalPjunoxl(e.target.result);
                 if (!patch) throw new Error("Invalid or empty .pjunoxl preset.");
-                const targetSlot = selectedSlot >= 128 ? selectedSlot : baseTargetSlot;
-                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                const subIdx = targetSlot % 64;
+                const targetSlot = ((selectedSlot >= 131 && selectedSlot <= 194) || (selectedSlot >= 196 && selectedSlot <= 259)) ? selectedSlot : baseTargetSlot;
+                const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
                 const grp = Math.floor(subIdx / 8) + 1;
                 const ptc = (subIdx % 8) + 1;
                 patch.name = `${pfix}${grp}${ptc} ${patch.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
@@ -6587,11 +6679,12 @@ function handleImportedFile(file) {
                 }
                 const targetBankName = bankPrefix === 'UB' ? 'User Bank B' : 'User Bank A';
                 patches.forEach((p, idx) => {
-                    const targetSlot = baseTargetSlot + idx;
-                    if (targetSlot < 256) {
-                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                        const grp = Math.floor(idx / 8) + 1;
-                        const ptc = (idx % 8) + 1;
+                    const targetSlot = getTargetSlotForIdx(baseTargetSlot, idx);
+                    if (targetSlot < 260) {
+                        const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
                         const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
                         allPresets[targetSlot] = {
                             name: `${pfix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
@@ -6621,10 +6714,10 @@ function handleImportedFile(file) {
             const j106 = parseJ106Buffer(buf);
             if (j106 && j106.patches && j106.patches.length > 0) {
                 j106.patches.forEach((p, idx) => {
-                    const targetSlot = baseTargetSlot + idx;
-                    if (targetSlot < 256) {
-                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                        const subIdx = targetSlot % 64;
+                    const targetSlot = getTargetSlotForIdx(baseTargetSlot, idx);
+                    if (targetSlot < 260) {
+                        const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
                         const grp = Math.floor(subIdx / 8) + 1;
                         const ptc = (subIdx % 8) + 1;
                         p.name = `${pfix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
@@ -6649,11 +6742,12 @@ function handleImportedFile(file) {
                     if (tapePatches && tapePatches.length > 0) {
                         const targetBankName = bankPrefix === 'UB' ? 'User Bank B' : 'User Bank A';
                         tapePatches.forEach((p, idx) => {
-                            const targetSlot = baseTargetSlot + idx;
-                            if (targetSlot < 256) {
-                                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                                const grp = Math.floor(idx / 8) + 1;
-                                const ptc = (idx % 8) + 1;
+                            const targetSlot = getTargetSlotForIdx(baseTargetSlot, idx);
+                            if (targetSlot < 260) {
+                                const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                                const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
+                                const grp = Math.floor(subIdx / 8) + 1;
+                                const ptc = (subIdx % 8) + 1;
                                 const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
                                 allPresets[targetSlot] = {
                                     name: `${pfix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
@@ -6677,9 +6771,9 @@ function handleImportedFile(file) {
                 return;
             }
             if (patches.length === 1) {
-                const targetSlot = selectedSlot >= 128 ? selectedSlot : baseTargetSlot;
-                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                const subIdx = targetSlot % 64;
+                const targetSlot = ((selectedSlot >= 131 && selectedSlot <= 194) || (selectedSlot >= 196 && selectedSlot <= 259)) ? selectedSlot : baseTargetSlot;
+                const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
                 const grp = Math.floor(subIdx / 8) + 1;
                 const ptc = (subIdx % 8) + 1;
                 const p = patches[0].preset;
@@ -6693,10 +6787,10 @@ function handleImportedFile(file) {
                 renderPresetList();
             } else {
                 patches.forEach((item, idx) => {
-                    const targetSlot = baseTargetSlot + idx;
-                    if (targetSlot < 256) {
-                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
-                        const subIdx = targetSlot % 64;
+                    const targetSlot = getTargetSlotForIdx(baseTargetSlot, idx);
+                    if (targetSlot < 260) {
+                        const pfix = targetSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = targetSlot >= 196 ? (targetSlot - 196) : (targetSlot - 131);
                         const grp = Math.floor(subIdx / 8) + 1;
                         const ptc = (subIdx % 8) + 1;
                         const p = item.preset;
@@ -6724,19 +6818,25 @@ async function handleImportedFiles(files) {
     }
 
     const targetBankSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
-    let baseTargetSlot = 128;
+    let baseTargetSlot = 131;
     if (targetBankSel === 'UB') {
-        baseTargetSlot = 192;
+        baseTargetSlot = 196;
     } else if (targetBankSel === 'UA' || targetBankSel === 'both') {
-        baseTargetSlot = 128;
+        baseTargetSlot = 131;
     } else {
-        baseTargetSlot = currentBank === 'UB' ? 192 : 128;
+        baseTargetSlot = currentBank === 'UB' ? 196 : 131;
     }
 
     let currentSlot = baseTargetSlot;
     let importedTotal = 0;
 
-    for (let f = 0; f < files.length && currentSlot < 256; f++) {
+    function advanceSlot(slot) {
+        let next = slot + 1;
+        if (next === 195) next = 196; // skip UB00 Init
+        return next;
+    }
+
+    for (let f = 0; f < files.length && currentSlot < 260; f++) {
         const file = files[f];
         const fname = file.name.toLowerCase();
         try {
@@ -6745,7 +6845,7 @@ async function handleImportedFiles(files) {
                 const data = JSON.parse(text);
                 const list = Array.isArray(data) ? data : [data];
                 for (const p of list) {
-                    if (currentSlot >= 256) break;
+                    if (currentSlot >= 260) break;
                     let norm = null;
                     if (p.data && Array.isArray(p.data) && p.data.length >= 18) {
                         norm = {
@@ -6759,27 +6859,29 @@ async function handleImportedFiles(files) {
                         norm = { ...p, ...encodeExtendedDefaults(p) };
                     }
                     if (norm) {
-                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
-                        const subIdx = currentSlot % 64;
+                        const bankPrefix = currentSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = currentSlot >= 196 ? (currentSlot - 196) : (currentSlot - 131);
                         const grp = Math.floor(subIdx / 8) + 1;
                         const ptc = (subIdx % 8) + 1;
                         norm.name = `${bankPrefix}${grp}${ptc} ${norm.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                         norm.isBlank = false;
-                        allPresets[currentSlot++] = norm;
+                        allPresets[currentSlot] = norm;
+                        currentSlot = advanceSlot(currentSlot);
                         importedTotal++;
                     }
                 }
             } else if (fname.endsWith('.pjunoxl')) {
                 const text = await file.text();
                 const p = parseTalPjunoxl(text);
-                if (p && currentSlot < 256) {
-                    const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
-                    const subIdx = currentSlot % 64;
+                if (p && currentSlot < 260) {
+                    const bankPrefix = currentSlot >= 196 ? 'UB' : 'UA';
+                    const subIdx = currentSlot >= 196 ? (currentSlot - 196) : (currentSlot - 131);
                     const grp = Math.floor(subIdx / 8) + 1;
                     const ptc = (subIdx % 8) + 1;
                     p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                     p.isBlank = false;
-                    allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                    allPresets[currentSlot] = { ...p, ...encodeExtendedDefaults(p) };
+                    currentSlot = advanceSlot(currentSlot);
                     importedTotal++;
                 }
             } else if (fname.endsWith('.wav') || (file.type && file.type.includes('wav'))) {
@@ -6787,13 +6889,13 @@ async function handleImportedFiles(files) {
                 const patches = decodeJunoTapeWav(buf);
                 if (patches && patches.length > 0) {
                     for (const p of patches) {
-                        if (currentSlot >= 256) break;
-                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
-                        const subIdx = currentSlot % 64;
+                        if (currentSlot >= 260) break;
+                        const bankPrefix = currentSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = currentSlot >= 196 ? (currentSlot - 196) : (currentSlot - 131);
                         const grp = Math.floor(subIdx / 8) + 1;
                         const ptc = (subIdx % 8) + 1;
                         const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
-                        allPresets[currentSlot++] = {
+                        allPresets[currentSlot] = {
                             name: `${bankPrefix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
                             isBlank: false,
                             sliders: p.sliders,
@@ -6801,6 +6903,7 @@ async function handleImportedFiles(files) {
                             sw2: p.sw2,
                             ...encodeExtendedDefaults(p)
                         };
+                        currentSlot = advanceSlot(currentSlot);
                         importedTotal++;
                     }
                 }
@@ -6809,29 +6912,31 @@ async function handleImportedFiles(files) {
                 const j106 = parseJ106Buffer(buf);
                 if (j106 && j106.patches && j106.patches.length > 0) {
                     for (const p of j106.patches) {
-                        if (currentSlot >= 256) break;
-                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
-                        const subIdx = currentSlot % 64;
+                        if (currentSlot >= 260) break;
+                        const bankPrefix = currentSlot >= 196 ? 'UB' : 'UA';
+                        const subIdx = currentSlot >= 196 ? (currentSlot - 196) : (currentSlot - 131);
                         const grp = Math.floor(subIdx / 8) + 1;
                         const ptc = (subIdx % 8) + 1;
                         p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                         p.isBlank = false;
-                        allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                        allPresets[currentSlot] = { ...p, ...encodeExtendedDefaults(p) };
+                        currentSlot = advanceSlot(currentSlot);
                         importedTotal++;
                     }
                 } else {
                     const syxPatches = parseSyxBuffer(buf);
                     if (syxPatches && syxPatches.length > 0) {
                         for (const item of syxPatches) {
-                            if (currentSlot >= 256) break;
-                            const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
-                            const subIdx = currentSlot % 64;
+                            if (currentSlot >= 260) break;
+                            const bankPrefix = currentSlot >= 196 ? 'UB' : 'UA';
+                            const subIdx = currentSlot >= 196 ? (currentSlot - 196) : (currentSlot - 131);
                             const grp = Math.floor(subIdx / 8) + 1;
                             const ptc = (subIdx % 8) + 1;
                             const p = item.preset;
                             p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                             p.isBlank = false;
-                            allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                            allPresets[currentSlot] = { ...p, ...encodeExtendedDefaults(p) };
+                            currentSlot = advanceSlot(currentSlot);
                             importedTotal++;
                         }
                     }
@@ -6844,7 +6949,7 @@ async function handleImportedFiles(files) {
 
     if (importedTotal > 0) {
         showToast(`Imported ${importedTotal} patch(es) into User Bank(s)!`, 'success');
-        currentBank = baseTargetSlot >= 192 ? 'UB' : 'UA';
+        currentBank = baseTargetSlot >= 196 ? 'UB' : 'UA';
         updateBankTabs();
         selectSlot(baseTargetSlot, false);
         renderPresetList();
@@ -6872,8 +6977,8 @@ function exportSinglePatchSyx() {
     const ch = getMidiChannel();
     const nameBytes = encodePatchName(p.name);
     const extBytes = encodeExtendedParams(p);
-    const bankOpt = Math.floor(selectedSlot / 64) + 1;
-    const localSlot = selectedSlot % 64;
+    const bankOpt = Math.floor(selectedSlot / 65) + 1;
+    const localSlot = selectedSlot % 65;
     const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
     // 55-byte extended SysEx
     const bytes = [
@@ -6893,13 +6998,13 @@ function exportSinglePatchSyx() {
 function exportBankSyx() {
     const ch = getMidiChannel();
     const startIdx = getBankStartIdx(currentBank);
-    const endIdx = startIdx + 64;
-    const bankOpt = Math.floor(startIdx / 64) + 1;
+    const endIdx = startIdx + 65;
+    const bankOpt = Math.floor(startIdx / 65) + 1;
     const allBytes = [];
 
     for (let i = startIdx; i < endIdx; i++) {
         const p = allPresets[i];
-        const localSlot = i % 64;
+        const localSlot = i % 65;
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName(p.name);
         const extBytes = encodeExtendedParams(p);
@@ -6916,17 +7021,17 @@ function exportBankSyx() {
     }
     const blob = new Blob([new Uint8Array(allBytes)], { type: 'application/octet-stream' });
     downloadBlob(blob, `FM106_BANK_${currentBank}.syx`);
-    showToast(`Exported Bank ${currentBank} .syx (64 patches)`, 'success');
+    showToast(`Exported Bank ${currentBank} .syx (65 patches)`, 'success');
 }
 
 function exportLibraryJson() {
-    if (selectedSlot >= 128) {
+    if (selectedSlot >= 130) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     const jsonStr = JSON.stringify(allPresets, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
-    downloadBlob(blob, 'FM106_Library_256.json');
-    showToast('Exported full library backup JSON (256 patches)', 'success');
+    downloadBlob(blob, 'FM106_Library_260.json');
+    showToast('Exported full library backup JSON (260 patches)', 'success');
 }
 
 // Setup UI Event Listeners
@@ -6940,17 +7045,17 @@ function setupEventListeners() {
     document.getElementById('tab-bank-fb').addEventListener('click', () => {
         currentBank = 'FB';
         updateBankTabs();
-        selectSlot(64);
+        selectSlot(65);
     });
     document.getElementById('tab-bank-ua').addEventListener('click', () => {
         currentBank = 'UA';
         updateBankTabs();
-        selectSlot(128);
+        selectSlot(130);
     });
     document.getElementById('tab-bank-ub').addEventListener('click', () => {
         currentBank = 'UB';
         updateBankTabs();
-        selectSlot(192);
+        selectSlot(195);
         updateTemplateTargetLabel();
     });
     document.getElementById('tab-bank-ua').addEventListener('click', () => {
@@ -6999,7 +7104,7 @@ function setupEventListeners() {
 
     // Patch Name input
     document.getElementById('current-patch-name').addEventListener('input', (e) => {
-        if (selectedSlot >= 128) {
+        if (selectedSlot >= 130 && !isInitSlot(selectedSlot)) {
             allPresets[selectedSlot].name = e.target.value;
             const itemEl = document.querySelector(`.preset-item[data-idx="${selectedSlot}"] .preset-item-name`);
             if (itemEl) itemEl.textContent = e.target.value;
@@ -7034,13 +7139,13 @@ function setupEventListeners() {
             if (EXT_FADER_MAP[rawCtrl]) {
                 const mapping = EXT_FADER_MAP[rawCtrl];
                 sendParamChange(mapping.param, mapping.cc, val);
-                if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                     allPresets[selectedSlot][mapping.key] = val;
                 }
             } else {
                 const ctrlId = parseInt(rawCtrl, 10);
                 sendIPR(ctrlId, val);
-                if (selectedSlot >= 128 && allPresets[selectedSlot] && allPresets[selectedSlot].sliders) {
+                if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot] && allPresets[selectedSlot].sliders) {
                     allPresets[selectedSlot].sliders[ctrlId] = val;
                 }
             }
@@ -7053,7 +7158,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-sub', 'val', val);
             sendParamChange(25, 21, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].sub_sw = val;
             }
         });
@@ -7065,7 +7170,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-arp-on', 'val', val);
             sendParamChange('arp_enable', null, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].arp_on = val;
             }
         });
@@ -7077,7 +7182,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-arp-mode', 'val', val);
             sendParamChange(30, 36, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].arp_mode = val;
             }
         });
@@ -7089,7 +7194,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-arp-range', 'val', val);
             sendParamChange(31, 37, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].arp_range = val;
             }
         });
@@ -7101,7 +7206,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-tape-type', 'val', val);
             sendParamChange(36, 25, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].tape_type = val;
             }
         });
@@ -7113,7 +7218,7 @@ function setupEventListeners() {
             const val = parseInt(opt.dataset.val, 10);
             setSwitchGroupActive('sw-rev-on', 'val', val);
             sendParamChange(45, 29, val);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].rev_on = val;
             }
         });
@@ -7161,7 +7266,7 @@ function setupEventListeners() {
             const mode = parseInt(btn.dataset.assign, 10);
             setAssignActive(mode);
             sendIPR(0x12, mode);
-            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].assign = mode;
             }
         });
@@ -7232,7 +7337,10 @@ function setupEventListeners() {
                 const grp = Math.floor(subIdx / 8) + 1;
                 const ptc = (subIdx % 8) + 1;
                 copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
-                allPresets[128 + i] = copy;
+                copy.isBlank = false;
+                copy.isInit = false;
+                const targetIdx = (i < 64) ? (131 + i) : (196 + (i - 64));
+                allPresets[targetIdx] = { ...copy, ...encodeExtendedDefaults(copy) };
             }
             loadPresetToUI(allPresets[selectedSlot]);
             renderPresetList();
@@ -7246,11 +7354,17 @@ function setupEventListeners() {
             showToast('Factory Presets are read-only ROM. Click "Copy to User" to initialize and edit.', 'warning');
             return;
         }
+        if (isInitSlot(selectedSlot)) {
+            showToast('Init presets are templates and cannot be overridden. Select a User slot (UA11..UB88).', 'warning');
+            return;
+        }
         allPresets[selectedSlot] = {
             name: `${indexToSlot(selectedSlot)} Init Saw`,
             sliders: [0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 30, 100, 20, 0],
             sw1: 0x12, // 8', Saw on
-            sw2: 0x10  // HPF Flat
+            sw2: 0x10, // HPF Flat
+            isBlank: false,
+            ...encodeExtendedDefaults({ sliders: [0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 30, 100, 20, 0] })
         };
         loadPresetToUI(allPresets[selectedSlot]);
         renderPresetList();

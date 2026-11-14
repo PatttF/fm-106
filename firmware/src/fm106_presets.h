@@ -10,10 +10,28 @@ typedef struct {
 
 #define FM106_NUM_FACTORY_PRESETS 128u
 #define FM106_NUM_USER_PRESETS    128u
-#define FM106_PRESETS_PER_BANK     64u
+#define FM106_PRESETS_PER_BANK     65u
 #define FM106_NUM_BANKS             4u
-#define FM106_TOTAL_PRESETS       256u
+#define FM106_TOTAL_PRESETS       260u
 #define FM106_NUM_PRESETS         FM106_NUM_FACTORY_PRESETS
+
+static inline int fm106_patch_is_user_stored(uint16_t patch_idx)
+{
+    return (patch_idx >= 131u && patch_idx <= 194u) || (patch_idx >= 196u && patch_idx <= 259u);
+}
+
+static inline uint8_t fm106_patch_to_user_slot(uint16_t patch_idx)
+{
+    if (patch_idx >= 196u) return (uint8_t)(64u + (patch_idx - 196u));
+    if (patch_idx >= 131u) return (uint8_t)(patch_idx - 131u);
+    return 0u;
+}
+
+static inline uint16_t fm106_user_slot_to_patch(uint8_t user_slot)
+{
+    if (user_slot >= 64u) return (uint16_t)(196u + (user_slot - 64u));
+    return (uint16_t)(131u + user_slot);
+}
 static const fm106_preset_t FM106_PRESETS[FM106_NUM_FACTORY_PRESETS] = {
     {"A11 Brass", {0, 0, 120, 20, 49, 0, 102, 0, 0, 1, 35, 13, 58, 0, 86, 108, 3, 49, 45, 32, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 1}},
     {"A12 Brass Swell", {0, 0, 120, 6, 48, 0, 56, 70, 0, 0, 43, 17, 26, 0, 84, 75, 64, 118, 38, 37, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 2, 0, 0, 0, 1}},

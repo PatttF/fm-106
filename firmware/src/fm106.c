@@ -437,7 +437,7 @@ static uint8_t g_cc_learn_active = 0;
 /* Save / load settings */
 typedef struct {
     int8_t octave;
-    uint8_t patch;
+    uint16_t patch;
     uint8_t midi_channel;   /* 0 = All (omni), 1..16 */
     uint8_t midi_out_ch;    /* 1..16: channel for everything we send */
     uint8_t midi_local;     /* 1 = panel keys play engine, 0 = send-only */
@@ -1460,56 +1460,39 @@ static void draw_battery_indicator(int32_t x, int32_t y)
     if (bars >= 3) cv_rect(x + 12, y + 2, 4, 5, bar_col);
 }
 
+static void fm106_format_slot_code(uint16_t patch_idx, char *out);
+
 /* 1. Header + Voice LEDs + Page Title (y=0..75, single blit) */
-static void draw_top_section(uint8_t patch_idx, const char *patch_name)
+static void draw_top_section(uint16_t patch_idx, const char *patch_name)
 {
     g_where = 0xB0;
-    /* 4 Banks x 64 Presets:
-     * Bank 0: Factory A (A11..A88,    0..63)
-     * Bank 1: Factory B (B11..B88,   64..127)
-     * Bank 2: User A    (UA11..UA88, 128..191)
-     * Bank 3: User B    (UB11..UB88, 192..255)
+    /* 4 Banks x 65 Presets (00 + 11..88):
+     * Bank 0: Factory A (A00, A11..A88,    0..64)
+     * Bank 1: Factory B (B00, B11..B88,   65..129)
+     * Bank 2: User A    (UA00, UA11..UA88, 130..194)
+     * Bank 3: User B    (UB00, UB11..UB88, 195..259)
      */
-    uint32_t bank_idx = (uint32_t)patch_idx / 64u;
-    uint32_t local = (uint32_t)patch_idx % 64u;
-    uint32_t bank_num = (local / 8u) + 1u;
-    uint32_t patch_num = (local % 8u) + 1u;
+    uint32_t bank_idx = (uint32_t)patch_idx / 65u;
+    uint32_t local = (uint32_t)patch_idx % 65u;
 
     char code[8];
     const char *badge_str;
     uint16_t badge_color;
 
     if (bank_idx == 0u) {
-        code[0] = 'A';
-        code[1] = (char)('0' + bank_num);
-        code[2] = (char)('0' + patch_num);
-        code[3] = '\0';
         badge_str = "[FACT A]";
         badge_color = C_STRIPE_CYAN;
     } else if (bank_idx == 1u) {
-        code[0] = 'B';
-        code[1] = (char)('0' + bank_num);
-        code[2] = (char)('0' + patch_num);
-        code[3] = '\0';
         badge_str = "[FACT B]";
         badge_color = C_STRIPE_CYAN;
     } else if (bank_idx == 2u) {
-        code[0] = 'U';
-        code[1] = 'A';
-        code[2] = (char)('0' + bank_num);
-        code[3] = (char)('0' + patch_num);
-        code[4] = '\0';
         badge_str = "[USER A]";
         badge_color = C_ROLAND_AMBER;
     } else {
-        code[0] = 'U';
-        code[1] = 'B';
-        code[2] = (char)('0' + bank_num);
-        code[3] = (char)('0' + patch_num);
-        code[4] = '\0';
         badge_str = "[USER B]";
         badge_color = C_ROLAND_AMBER;
     }
+    fm106_format_slot_code(patch_idx, code);
 
     /* Patch Name Banner: Code + Preset Name */
     char title_buf[32];
@@ -1523,7 +1506,7 @@ static void draw_top_section(uint8_t patch_idx, const char *patch_name)
             title_buf[ti++] = patch_name[pi++];
         }
     } else {
-        const char *bl = "<Blank>";
+        const char *bl = (local == 0u) ? "Init Saw" : "<Blank>";
         while (bl[pi] && ti < sizeof(title_buf) - 1u) {
             title_buf[ti++] = bl[pi++];
         }
@@ -2929,12 +2912,10 @@ static void draw_menu_cc_map(void)
     cv_blit(0, 160);
 }
 
-static void fm106_format_slot_code(uint8_t patch_idx, char *out)
+static void fm106_format_slot_code(uint16_t patch_idx, char *out)
 {
-    uint32_t bank_idx = (uint32_t)patch_idx / 64u;
-    uint32_t local = (uint32_t)patch_idx % 64u;
-    uint32_t b_num = (local / 8u) + 1u;
-    uint32_t p_num = (local % 8u) + 1u;
+    uint32_t bank_idx = (uint32_t)patch_idx / 65u;
+    uint32_t local = (uint32_t)patch_idx % 65u;
     uint32_t i = 0;
     if (bank_idx == 0u) {
         out[i++] = 'A';
@@ -2947,8 +2928,16 @@ static void fm106_format_slot_code(uint8_t patch_idx, char *out)
         out[i++] = 'U';
         out[i++] = 'B';
     }
-    out[i++] = (char)('0' + b_num);
-    out[i++] = (char)('0' + p_num);
+    if (local == 0u) {
+        out[i++] = '0';
+        out[i++] = '0';
+    } else {
+        uint32_t sub = local - 1u;
+        uint32_t b_num = (sub / 8u) + 1u;
+        uint32_t p_num = (sub % 8u) + 1u;
+        out[i++] = (char)('0' + b_num);
+        out[i++] = (char)('0' + p_num);
+    }
     out[i] = '\0';
 }
 
@@ -2969,18 +2958,19 @@ static void fm106_set_banner(const char *prefix, const char *suffix)
 
 static int fm106_find_next_preset(uint32_t cur_patch, int32_t dir)
 {
-    uint32_t bank = cur_patch / 64u;
-    uint32_t slot = cur_patch % 64u;
+    uint32_t bank = cur_patch / 65u;
+    uint32_t slot = cur_patch % 65u;
 
     int32_t ns = (int32_t)slot + dir;
-    while (ns < 0) ns += 64;
-    while (ns >= 64) ns -= 64;
-    return (int)(bank * 64u + (uint32_t)ns);
+    while (ns < 0) ns += 65;
+    while (ns >= 65) ns -= 65;
+    return (int)(bank * 65u + (uint32_t)ns);
 }
 
 static uint32_t fm106_bank_first_preset(uint32_t bank, uint32_t fallback_slot)
 {
-    return bank * 64u + (fallback_slot % 64u);
+    (void)fallback_slot;
+    return bank * 65u;
 }
 
 static void fm106_enter_save_menu(void)
@@ -2988,8 +2978,8 @@ static void fm106_enter_save_menu(void)
     g_save_del_confirm = 0;
     g_save_cursor = 0;
 
-    if (g_synth.patch_idx >= 128u) {
-        g_save_slot = g_synth.patch_idx - 128u;
+    if (fm106_patch_is_user_stored(g_synth.patch_idx)) {
+        g_save_slot = fm106_patch_to_user_slot(g_synth.patch_idx);
         uint32_t len = 0;
         while (g_synth.patch_name[len] && len < 15u) {
             g_save_name[len] = g_synth.patch_name[len];
@@ -3025,10 +3015,10 @@ static void fm106_enter_save_menu(void)
     }
 }
 
-static void fm106_do_short_save(fm106_settings_t *set)
+static void fm106_do_short_save(fm106_settings_t *set_ptr)
 {
     char code_buf[8];
-    if (g_synth.patch_idx < 128u) {
+    if (!fm106_patch_is_user_stored(g_synth.patch_idx)) {
         int first_blank = -1;
         for (uint32_t i = 0; i < FM106_NUM_USER_PRESETS; i++) {
             if (g_user_presets[i].name[0] == '\0') {
@@ -3052,11 +3042,11 @@ static void fm106_do_short_save(fm106_settings_t *set)
         if (rc != 0) {
             fm106_set_banner("SAVE FAILED!", "FLASH ERR");
         } else {
-            g_synth.patch_idx = (uint8_t)(128u + (uint32_t)first_blank);
+            g_synth.patch_idx = fm106_user_slot_to_patch((uint8_t)first_blank);
             str_cpy(g_synth.patch_name, target_name, sizeof(g_synth.patch_name));
-            set->patch = g_synth.patch_idx;
-            set->octave = (int8_t)g_synth.octave_shift;
-            settings_save(set, sizeof(*set));
+            set_ptr->patch = g_synth.patch_idx;
+            set_ptr->octave = (int8_t)g_synth.octave_shift;
+            settings_save(set_ptr, sizeof(*set_ptr));
             if (g_seq_flash_dirty) {
                 fm106_seq_save_flash(&g_synth.seq);
                 g_seq_flash_dirty = 0;
@@ -3065,7 +3055,7 @@ static void fm106_do_short_save(fm106_settings_t *set)
             fm106_set_banner("SAVED TO ", code_buf);
         }
     } else {
-        uint32_t uidx = g_synth.patch_idx - 128u;
+        uint32_t uidx = fm106_patch_to_user_slot(g_synth.patch_idx);
         const char *name_to_use = g_synth.patch_name[0] ? g_synth.patch_name : "User Patch";
         fm106_save_engine_to_preset(&g_user_presets[uidx], &g_synth, name_to_use);
         int rc = fm106_user_presets_save_flash();
@@ -3073,9 +3063,9 @@ static void fm106_do_short_save(fm106_settings_t *set)
             fm106_set_banner("SAVE FAILED!", "FLASH ERR");
         } else {
             str_cpy(g_synth.patch_name, name_to_use, sizeof(g_synth.patch_name));
-            set->patch = g_synth.patch_idx;
-            set->octave = (int8_t)g_synth.octave_shift;
-            settings_save(set, sizeof(*set));
+            set_ptr->patch = g_synth.patch_idx;
+            set_ptr->octave = (int8_t)g_synth.octave_shift;
+            settings_save(set_ptr, sizeof(*set_ptr));
             if (g_seq_flash_dirty) {
                 fm106_seq_save_flash(&g_synth.seq);
                 g_seq_flash_dirty = 0;
@@ -3103,7 +3093,7 @@ static void draw_save_menu(void)
     cv_rect(6, 71, 228, 1, C_LINE_DIV);
 
     char target_code[8];
-    fm106_format_slot_code(128u + g_save_slot, target_code);
+    fm106_format_slot_code(fm106_user_slot_to_patch(g_save_slot), target_code);
     cv_text(12, 46, &FONT_S, target_code, C_LED_ON);
 
     const char *target_exist = g_user_presets[g_save_slot].name;
@@ -3254,6 +3244,7 @@ static void fm106_app_init(void)
         set.sync_mode = 0;
         fm106_cc_map_init_defaults();
     }
+    if (set.patch >= 260u) set.patch = 0;
     if (set.octave < -2 || set.octave > 2) set.octave = 0;
     if (set.midi_channel > 16) set.midi_channel = 0;    /* 0 = All (omni) */
     if (set.midi_out_ch < 1 || set.midi_out_ch > 16) set.midi_out_ch = 1;
@@ -3614,13 +3605,14 @@ static void fm106_app_frame(void)
                         /* Confirmed delete of selected user slot */
                         uint32_t uidx = g_save_slot;
                         char code_buf[8];
-                        fm106_format_slot_code(128u + (uint32_t)g_save_slot, code_buf);
+                        uint16_t target_user_patch = fm106_user_slot_to_patch(g_save_slot);
+                        fm106_format_slot_code(target_user_patch, code_buf);
                         memset(&g_user_presets[uidx], 0, sizeof(fm106_preset_t));
                         int rc = fm106_user_presets_save_flash();
                         if (rc != 0) {
                             fm106_set_banner("DELETE ERR", "FLASH ERR");
                         } else {
-                            if (g_synth.patch_idx == (uint8_t)(128u + (uint32_t)g_save_slot)) {
+                            if (g_synth.patch_idx == target_user_patch) {
                                 fm106_load_user_preset(&g_synth, g_synth.patch_idx);
                                 set.patch = g_synth.patch_idx;
                                 settings_save(&set, sizeof(set));
@@ -3804,7 +3796,7 @@ static void fm106_app_frame(void)
                 if (rc != 0) {
                     fm106_set_banner("SAVE FAILED!", "FLASH ERR");
                 } else {
-                    g_synth.patch_idx = (uint8_t)(128u + g_save_slot);
+                    g_synth.patch_idx = fm106_user_slot_to_patch(g_save_slot);
                     str_cpy(g_synth.patch_name, clean_name, sizeof(g_synth.patch_name));
                     set.patch = g_synth.patch_idx;
                     set.octave = (int8_t)g_synth.octave_shift;
@@ -3866,9 +3858,9 @@ static void fm106_app_frame(void)
                 int np = fm106_find_next_preset(g_synth.patch_idx, enc_p);
                 if (np != (int)g_synth.patch_idx) {
                     fm106_load_user_preset(&g_synth, (uint32_t)np);
-                    set.patch = (uint8_t)np;
+                    set.patch = (uint16_t)np;
                     dirty_screen = 1;
-                    panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u));
+                    panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 65u));
                 }
             }
         }
@@ -3978,17 +3970,16 @@ static void fm106_app_frame(void)
                 g_save_cursor = (uint8_t)ncur;
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_NORMAL && !g_seq_menu_on && !g_note_menu_on) {
-                int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
-                int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
+                int32_t cur_bank = (int32_t)g_synth.patch_idx / 65;
                 int32_t nb = cur_bank + ealgo;
                 while (nb < 0) nb += 4;
                 while (nb >= 4) nb -= 4;
-                uint32_t np = fm106_bank_first_preset((uint32_t)nb, (uint32_t)cur_slot);
+                uint32_t np = (uint32_t)nb * 65u; /* Jump to first slot (00) of target bank */
                 fm106_load_user_preset(&g_synth, np);
-                set.patch = (uint8_t)np;
+                set.patch = (uint16_t)np;
                 dirty_screen = 1;
                 panel_send_cc(0xB0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 0u, (uint8_t)nb);
-                panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), (uint8_t)(np % 64u));
+                panel_send_pc(0xC0u | ((g_synth.midi_out_ch - 1u) & 0x0Fu), 0u);
             } else if (g_ui_mode == UI_MODE_MIDI) {
                 if (g_midi_sel == 0) {          /* MIDI IN: 0 = All, 1..16 */
                     int32_t nc = (int32_t)g_synth.midi_channel + ealgo;
@@ -4281,10 +4272,10 @@ static void fm106_app_frame(void)
                 g_synth.pitch_bend_val = (int16_t)(raw - 8192);
             } else if (type == 0xC0u) {  /* Program Change (gated by PC IN + self-echo guard) */
                 if (!g_synth.pc_in || pc_is_self_echo()) continue;
-                int32_t cur_bank = (int32_t)g_synth.patch_idx / 64;
-                uint32_t target_patch = (uint32_t)(cur_bank * 64 + (d1 % 64u));
+                int32_t cur_bank = (int32_t)g_synth.patch_idx / 65;
+                uint32_t target_patch = (uint32_t)(cur_bank * 65 + (d1 % 65u));
                 fm106_load_user_preset(&g_synth, target_patch);
-                set.patch = (uint8_t)target_patch;
+                set.patch = (uint16_t)target_patch;
                 dirty_screen = 1;
             } else if (type == 0xB0u) {  /* Control Change */
                 if (d1 != 119u && d1 != 64u && cc_is_self_echo(d1)) continue;
@@ -4308,10 +4299,9 @@ static void fm106_app_frame(void)
 
                 if (d1 == 0 || d1 == 32) { /* Bank Select MSB/LSB */
                     uint32_t nb = d2 & 3u;
-                    int32_t cur_slot = (int32_t)g_synth.patch_idx % 64;
-                    uint32_t target_patch = nb * 64u + (uint32_t)cur_slot;
+                    uint32_t target_patch = nb * 65u; /* Jump to slot 00 of target bank */
                     fm106_load_user_preset(&g_synth, target_patch);
-                    set.patch = (uint8_t)target_patch;
+                    set.patch = (uint16_t)target_patch;
                     dirty_screen = 1;
                 } else if (d1 == 119 && d2 == 1u) {  /* Peak-hold timing telemetry (read + clear) */
                     /* CC114: peak whole-ISR % of the 139,320-tick block budget (>100 = late)

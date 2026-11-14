@@ -188,6 +188,41 @@ static int fm106_seq_save_flash(const fm106_seq_t *s)
     return seq_flash_save(img, sizeof(fm106_seq_flash_t));
 }
 
+static void fm106_load_init_preset(fm106_engine_t *e, const char *name)
+{
+    if (name) {
+        str_cpy(e->patch_name, name, sizeof(e->patch_name));
+    } else {
+        e->patch_name[0] = '\0';
+    }
+    e->bender_dco = 0; e->bender_vcf = 0;
+    e->arp_rate = 120; e->lfo_rate = 60; e->lfo_delay = 0;
+    e->dco_lfo_depth = 0; e->dco_pwm_depth = 0; e->dco_sub_level = 0; e->dco_noise_level = 0;
+    e->hpf.mode = 1;
+    e->vcf_cutoff = 100; e->vcf_resonance = 0; e->vcf_env_mod = 0; e->vcf_lfo_mod = 0;
+    e->vcf_kbd_track = 0; e->vca_level = 100;
+    e->env_a = 0; e->env_d = 64; e->env_s = 127; e->env_r = 20;
+    e->dco_pulse_on = 0; e->dco_saw_on = 1; e->dco_sub_on = 0;
+    e->chorus.mode = FM106_CHORUS_OFF;
+    e->dco_range = 1; e->arp_mode = 0; e->arp_range = 1;
+    e->dco_pwm_mode = 0; e->vcf_env_polarity = 0; e->vca_mode = 0;
+    e->fx[0].type = FM106_FX_OFF; e->fx[0].mix = 0;
+    e->fx[1].type = FM106_FX_OFF; e->fx[1].mix = 0;
+    e->fx[2].type = FM106_FX_OFF; e->fx[2].mix = 0;
+    e->fx[3].type = FM106_FX_OFF; e->fx[3].mix = 0;
+    e->reverb.on = 0u; e->reverb.mix = 48u; e->reverb.decay = 84u; e->reverb.shimmer = 68u;
+    for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
+        fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
+        e->voice[i].dco.saw_on = 1; e->voice[i].dco.pulse_on = 0; e->voice[i].dco.sub_on = 0;
+        e->voice[i].dco.sub_level = 0; e->voice[i].dco.noise_level = 0;
+        if (e->voice[i].note != 255u) {
+            e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
+            if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
+        }
+    }
+    fm106_param_snapshot(e);
+}
+
 /* Load a preset from the 4 banks (Factory A, Factory B, User A, User B) into the synth engine */
 static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
 {
@@ -196,39 +231,46 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     if (audio_worker_online) audio_worker_join();
 #endif
     if (idx >= FM106_TOTAL_PRESETS) idx = 0;
-    e->patch_idx = (uint8_t)idx;
+    e->patch_idx = (uint16_t)idx;
+    uint32_t bank_idx = idx / 65u;
+    uint32_t local = idx % 65u;
 
-    if (idx >= 128u && g_user_presets[idx - 128u].name[0] == '\0') {
-        /* Blank user preset: load clean default initialized sound */
-        e->patch_name[0] = '\0';
-        e->bender_dco = 0; e->bender_vcf = 0;
-        e->arp_rate = 120; e->lfo_rate = 60; e->lfo_delay = 0;
-        e->dco_lfo_depth = 0; e->dco_pwm_depth = 0; e->dco_sub_level = 0; e->dco_noise_level = 0;
-        e->hpf.mode = 1;
-        e->vcf_cutoff = 100; e->vcf_resonance = 0; e->vcf_env_mod = 0; e->vcf_lfo_mod = 0;
-        e->vcf_kbd_track = 0; e->vca_level = 100;
-        e->env_a = 0; e->env_d = 64; e->env_s = 127; e->env_r = 20;
-        e->dco_pulse_on = 0; e->dco_saw_on = 1; e->dco_sub_on = 0;
-        e->chorus.mode = FM106_CHORUS_OFF;
-        e->dco_range = 1; e->arp_mode = 0; e->arp_range = 1;
-        e->dco_pwm_mode = 0; e->vcf_env_polarity = 0; e->vca_mode = 0;
-        e->fx[0].type = FM106_FX_OFF; e->fx[0].mix = 0;
-        e->reverb.on = 0u; e->reverb.mix = 48u; e->reverb.decay = 84u; e->reverb.shimmer = 68u;
-        for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
-            fm106_adsr_params(&e->voice[i].adsr, e->env_a, e->env_d, e->env_s, e->env_r);
-            e->voice[i].dco.saw_on = 1; e->voice[i].dco.pulse_on = 0; e->voice[i].dco.sub_on = 0;
-            e->voice[i].dco.sub_level = 0; e->voice[i].dco.noise_level = 0;
-            if (e->voice[i].note != 255u) {
-                e->voice[i].base_inc = fm106_calc_inc(e->voice[i].note, 0, e->dco_range);
-                if (!e->voice[i].gliding) e->voice[i].curr_inc = e->voice[i].base_inc;
-            }
-        }
-        fm106_param_snapshot(e);
+    if (local == 0u) {
+        /* Slot 00 of any bank is the Init preset */
+        const char *init_name = "Init Saw";
+        if (bank_idx == 0u) init_name = "A00 Init";
+        else if (bank_idx == 1u) init_name = "B00 Init";
+        else if (bank_idx == 2u) init_name = "UA00 Init";
+        else init_name = "UB00 Init";
+        fm106_load_init_preset(e, init_name);
         fm1_irq_on();
         return;
     }
 
-    const fm106_preset_t *p = (idx < 128u) ? &FM106_PRESETS[idx] : &g_user_presets[idx - 128u];
+    uint32_t slot_in_bank = local - 1u;
+    const fm106_preset_t *p;
+    if (bank_idx < 2u) {
+        p = &FM106_PRESETS[bank_idx * 64u + slot_in_bank];
+    } else {
+        uint32_t uidx = (bank_idx - 2u) * 64u + slot_in_bank;
+        p = &g_user_presets[uidx];
+        if (p->name[0] == '\0') {
+            /* Blank user preset: load clean default initialized sound */
+            char default_name[16];
+            uint32_t b_num = (slot_in_bank / 8u) + 1u;
+            uint32_t p_num = (slot_in_bank % 8u) + 1u;
+            default_name[0] = 'U';
+            default_name[1] = (bank_idx == 2u) ? 'A' : 'B';
+            default_name[2] = (char)('0' + b_num);
+            default_name[3] = (char)('0' + p_num);
+            default_name[4] = ' ';
+            default_name[5] = 'I'; default_name[6] = 'n'; default_name[7] = 'i'; default_name[8] = 't';
+            default_name[9] = '\0';
+            fm106_load_init_preset(e, default_name);
+            fm1_irq_on();
+            return;
+        }
+    }
 
     uint32_t pi = 0;
     while (p->name[pi] && pi < sizeof(e->patch_name) - 1u) {
@@ -604,20 +646,54 @@ static void fm106_ext_to_engine(fm106_engine_t *e, const uint8_t *x)
 }
 
 /* Transmit a patch dump APR SysEx message over USB-MIDI */
-static void fm106_sysex_dump_patch(uint8_t patch_idx)
+static void fm106_sysex_dump_patch(uint16_t patch_idx)
 {
-    const fm106_preset_t *p = (patch_idx < 128u) ? &FM106_PRESETS[patch_idx] : &g_user_presets[patch_idx - 128u];
-
-    uint8_t bank_opt = (patch_idx / 64u) + 1u; /* 1=Fact A, 2=Fact B, 3=User A, 4=User B */
+    uint32_t bank_idx = (uint32_t)patch_idx / 65u;
+    uint32_t local = (uint32_t)patch_idx % 65u;
+    uint8_t bank_opt = (uint8_t)(bank_idx + 1u); /* 1=Fact A, 2=Fact B, 3=User A, 4=User B */
     uint8_t ch = (g_synth.midi_channel - 1u) & 0x0Fu;
     uint8_t ch_byte = ((bank_opt << 4) & 0x70u) | ch;
+
+    fm106_preset_t temp_preset;
+    const fm106_preset_t *p;
+
+    if (local == 0u) {
+        memset(&temp_preset, 0, sizeof(temp_preset));
+        const char *nm = "A00 Init";
+        if (bank_idx == 1u) nm = "B00 Init";
+        else if (bank_idx == 2u) nm = "UA00 Init";
+        else if (bank_idx == 3u) nm = "UB00 Init";
+        uint32_t nli = 0;
+        while (nm[nli] && nli < sizeof(temp_preset.name) - 1u) {
+            temp_preset.name[nli] = nm[nli];
+            nli++;
+        }
+        temp_preset.name[nli] = '\0';
+        temp_preset.p[3] = 60;   /* lfo_rate */
+        temp_preset.p[10] = 100; /* vcf_cutoff */
+        temp_preset.p[15] = 100; /* vca_level */
+        temp_preset.p[17] = 64;  /* env_d */
+        temp_preset.p[18] = 127; /* env_s */
+        temp_preset.p[19] = 20;  /* env_r */
+        temp_preset.p[24] = 1;   /* saw_on */
+        temp_preset.p[29] = 1;   /* dco_range = 8' */
+        temp_preset.p[9] = 1;    /* hpf = 1 */
+        p = &temp_preset;
+    } else {
+        uint32_t slot_in_bank = local - 1u;
+        if (bank_idx < 2u) {
+            p = &FM106_PRESETS[bank_idx * 64u + slot_in_bank];
+        } else {
+            p = &g_user_presets[(bank_idx - 2u) * 64u + slot_in_bank];
+        }
+    }
 
     uint8_t msg[40 + FM106_EXT_N];
     msg[0]  = 0xF0;
     msg[1]  = 0x41; /* Roland */
     msg[2]  = 0x30; /* APR patch format */
     msg[3]  = ch_byte;
-    msg[4]  = patch_idx % 64u;
+    msg[4]  = (uint8_t)(local & 0x7Fu);
 
     /* 16 sliders */
     msg[5]  = p->p[3] & 0x7Fu;  /* lfo_rate */
@@ -666,8 +742,8 @@ static void fm106_sysex_dump_patch(uint8_t patch_idx)
         nmsg[1] = 0x41;
         nmsg[2] = 0x33;
         nmsg[3] = ch_byte;
-        nmsg[4] = patch_idx % 64u;
-        nmsg[5] = (uint8_t)(patch_idx / 64u);
+        nmsg[4] = (uint8_t)(local & 0x7Fu);
+        nmsg[5] = (uint8_t)bank_idx;
         uint32_t nlen = 0;
         while (p->name[nlen] && nlen < 15u) {
             nmsg[6 + nlen] = (uint8_t)p->name[nlen] & 0x7Fu;
@@ -788,9 +864,9 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
     if (cmd == 0x30 && n >= 22) {
         uint8_t user_slot;
         if (bank_opt == 3u) {
-            user_slot = p[3] % 64u;         /* Explicit User A */
+            user_slot = p[3] % 64u;         /* Explicit User A: 0..63 */
         } else if (bank_opt == 4u) {
-            user_slot = 64u + (p[3] % 64u); /* Explicit User B */
+            user_slot = 64u + (p[3] % 64u); /* Explicit User B: 64..127 */
         } else {
             user_slot = p[3] % FM106_NUM_USER_PRESETS; /* Standard 0..127 */
         }
@@ -800,10 +876,12 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
         }
         fm106_store_apr_to_preset(&g_user_presets[user_slot], p + 4, p[20], p[21], nm[0] ? nm : 0, (n < 38u));
         if (n >= 38u + FM106_EXT_N) fm106_ext_to_preset(&g_user_presets[user_slot], p + 38);
-        if ((128u + user_slot) == g_synth.patch_idx) {
-            fm106_load_user_preset(&g_synth, 128u + user_slot);
+
+        uint16_t cur_user_patch = fm106_user_slot_to_patch(user_slot);
+        if (cur_user_patch == g_synth.patch_idx) {
+            fm106_load_user_preset(&g_synth, cur_user_patch);
+            g_dirty_screen = 1;
         }
-        g_dirty_screen = 1;
         return;
     }
 
@@ -823,33 +901,32 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
             len++;
         }
         ((char *)g_user_presets[user_slot].name)[len] = '\0';
-        if ((128u + user_slot) == g_synth.patch_idx) {
+        uint16_t cur_user_patch = fm106_user_slot_to_patch(user_slot);
+        if (cur_user_patch == g_synth.patch_idx) {
             for (uint32_t i = 0; i < 16u; i++) {
                 g_synth.patch_name[i] = g_user_presets[user_slot].name[i];
             }
+            g_dirty_screen = 1;
         }
-        g_dirty_screen = 1;
         return;
     }
 
     /* 5. Request Patch Dump: 41 34 0n pp */
     if (cmd == 0x34 && n >= 4) {
-        uint8_t target_patch;
+        uint16_t target_patch;
+        uint32_t local = p[3] % 65u;
         if (bank_opt == 1u) {
-            target_patch = p[3] % 64u;          /* Factory A */
+            target_patch = (uint16_t)local;
         } else if (bank_opt == 2u) {
-            target_patch = 64u + (p[3] % 64u);  /* Factory B */
+            target_patch = (uint16_t)(65u + local);
         } else if (bank_opt == 3u) {
-            target_patch = 128u + (p[3] % 64u); /* User A */
+            target_patch = (uint16_t)(130u + local);
         } else if (bank_opt == 4u) {
-            target_patch = 192u + (p[3] % 64u); /* User B */
+            target_patch = (uint16_t)(195u + local);
         } else {
-            /* Vintage Roland fallback: follows active synth bank or 0..127 */
-            if (g_synth.patch_idx >= 128u) {
-                target_patch = 128u + (p[3] % 128u);
-            } else {
-                target_patch = p[3] % 128u;
-            }
+            /* Vintage Roland fallback: follows active synth bank */
+            uint32_t cur_bank = (uint32_t)g_synth.patch_idx / 65u;
+            target_patch = (uint16_t)(cur_bank * 65u + local);
         }
         fm106_sysex_dump_patch(target_patch);
         return;
@@ -858,6 +935,7 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
     /* 6. Commit All User Presets to SPI Flash: 41 35 0n 01 */
     if (cmd == 0x35 && n >= 4 && p[3] == 0x01) {
         fm106_user_presets_save_flash();
+        g_dirty_screen = 1;
         /* Send ACK */
         uint8_t ack[6] = {0xF0, 0x41, 0x35, ch, 0x00, 0xF7};
         fm106_sysex_send(ack, sizeof(ack));
@@ -877,11 +955,11 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
 
     /* 8. Remote Patch / Bank Select: 41 37 0n pp */
     if (cmd == 0x37 && n >= 4) {
-        uint8_t target_patch;
+        uint16_t target_patch;
         if (bank_opt >= 1u && bank_opt <= 4u) {
-            target_patch = (bank_opt - 1u) * 64u + (p[3] % 64u);
+            target_patch = (uint16_t)((bank_opt - 1u) * 65u + (p[3] % 65u));
         } else {
-            target_patch = p[3];
+            target_patch = (uint16_t)(p[3] % 260u);
         }
         fm106_load_user_preset(&g_synth, target_patch);
         g_dirty_screen = 1;
