@@ -198,12 +198,19 @@ button.synth-btn.amber {
 /* Main Workspace Layout */
 .workspace {
     display: grid;
-    grid-template-columns: 340px 1fr;
+    grid-template-columns: 380px 1fr;
     flex: 1;
     overflow: hidden;
+    min-height: 0;
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 1200px) {
+    .workspace {
+        grid-template-columns: 350px 1fr;
+    }
+}
+
+@media (max-width: 900px) {
     .workspace {
         grid-template-columns: 1fr;
     }
@@ -216,6 +223,7 @@ aside.library-sidebar {
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-width: 0;
 }
 
 .sidebar-header {
@@ -975,28 +983,36 @@ footer.keyboard-footer {
             <button class="synth-btn amber" id="btn-clear-user" title="Clear current user bank to blank">Clear Bank</button>
         </div>
 
-        <div class="bank-template-panel" style="padding: 8px 12px; background: #16181f; border-bottom: 1px solid var(--panel-mid); display: flex; flex-direction: column; gap: 6px;">
+        <div class="bank-template-panel" style="padding: 10px 14px; background: #16181f; border-bottom: 1px solid var(--panel-mid); display: flex; flex-direction: column; gap: 8px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-                <span style="font-size: 10px; font-weight: 700; color: var(--accent-amber); letter-spacing: 0.5px;">// LOAD SOUNDSET TEMPLATE</span>
-                <span style="font-size: 10px; color: var(--text-muted);">Target: <b id="template-target-label" style="color: var(--accent-blue);">User Bank A</b></span>
+                <span style="font-size: 11px; font-weight: 800; color: var(--accent-amber); letter-spacing: 0.5px;">// LOAD SOUNDSET TEMPLATE</span>
+                <span style="font-size: 11px; color: var(--text-muted);">Target: <b id="template-target-label" style="color: var(--accent-blue);">User Bank A</b></span>
             </div>
-            <div style="display: flex; gap: 6px;">
-                <select id="select-bank-template" style="flex: 1; font-size: 11px; padding: 6px 8px; background: #0d0e12; color: var(--text-white); border: 1px solid var(--panel-light); border-radius: 3px;">
-                    <option value="future_classic">Future Classic (LFO Store) (64 Patches)</option>
-                    <option value="lixor">Lixor (64 Patches)</option>
-                    <option value="future_classic_and_lixor">Future Classic (UA) + Lixor (UB) (128 Patches)</option>
-                    <option value="factory">Factory Presets Copy (64/128 Patches)</option>
-                    <option value="blank">All Blank / Empty Bank (64/128 Patches)</option>
-                </select>
-                <select id="select-bank-target" style="width: 105px; font-size: 11px; padding: 6px 6px; background: #0d0e12; color: var(--accent-amber); border: 1px solid var(--panel-light); border-radius: 3px;" title="Target User Bank">
-                    <option value="auto">Active User</option>
-                    <option value="UA">User Bank A</option>
-                    <option value="UB">User Bank B</option>
+            
+            <!-- Soundset template select: Full width so long names are fully visible -->
+            <select id="select-bank-template" class="synth-select" style="width: 100%; font-size: 12px; padding: 7px 8px; background: #0d0e12; color: var(--text-white); border: 1px solid #442298; border-radius: 4px; box-sizing: border-box;">
+                <option value="future_classic">Future Classic (LFO Store) (64 Patches)</option>
+                <option value="lixor">Lixor (64 Patches)</option>
+                <option value="future_classic_and_lixor">Future Classic (UA) + Lixor (UB) (128 Patches)</option>
+                <option value="factory">Factory Presets Copy (64/128 Patches)</option>
+                <option value="blank">All Blank / Empty Bank (64/128 Patches)</option>
+            </select>
+            
+            <!-- Target Bank and Load Bank Button in clean 2-column grid -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: center;">
+                <select id="select-bank-target" class="synth-select" style="width: 100%; font-size: 11px; padding: 7px 8px; background: #0d0e12; color: var(--accent-amber); border: 1px solid #442298; border-radius: 4px; box-sizing: border-box;" title="Target User Bank">
+                    <option value="auto">Active User Bank</option>
+                    <option value="UA">User Bank A (UA)</option>
+                    <option value="UB">User Bank B (UB)</option>
                     <option value="both">Both (128 Slots)</option>
                 </select>
-                <button class="synth-btn primary" id="btn-load-template" style="padding: 6px 12px; font-size: 11px;" title="Load into selected User Bank">Load</button>
+                <button class="synth-btn primary" id="btn-load-template" style="width: 100%; padding: 7px 10px; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; background: linear-gradient(180deg, #2de2e6 0%, #0099cc 100%); border-color: #2de2e6; color: #000; text-shadow: none;" title="Load selected soundset template into user memory">
+                    📥 LOAD BANK
+                </button>
             </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end; font-size: 10px; flex-wrap: wrap;">
+            
+            <!-- Direct Download Links -->
+            <div style="display: flex; gap: 8px; justify-content: space-between; font-size: 10px; flex-wrap: wrap; padding-top: 2px;">
                 <a href="presets/Future_Classic_Bank.syx" download="Future_Classic_Bank.syx" style="color: var(--accent-amber); text-decoration: none; font-weight:700;" title="Download Future Classic .syx bank">&#8595; Future Classic .SYX</a>
                 <a href="presets/Lixor_Bank.syx" download="Lixor_Bank.syx" style="color: var(--accent-blue); text-decoration: none; font-weight:700;" title="Download Lixor .syx bank">&#8595; Lixor .SYX</a>
                 <a href="presets/Lixor_Bank.json" download="Lixor_Bank.json" style="color: var(--text-muted); text-decoration: none;" title="Download Lixor .json bank">&#8595; Lixor .JSON</a>
@@ -7070,9 +7086,38 @@ function setupEventListeners() {
 
     function updateTemplateTargetLabel() {
         const el = document.getElementById('template-target-label');
-        if (el) {
-            el.textContent = currentBank === 'UB' ? 'User Bank B' : 'User Bank A';
+        const targetSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
+        if (!el) return;
+        if (targetSel === 'UB') {
+            el.textContent = 'User Bank B (UB)';
+            el.style.color = 'var(--accent-amber)';
+        } else if (targetSel === 'UA') {
+            el.textContent = 'User Bank A (UA)';
+            el.style.color = 'var(--accent-amber)';
+        } else if (targetSel === 'both') {
+            el.textContent = 'Both Banks (128 Patches)';
+            el.style.color = 'var(--accent-green)';
+        } else {
+            const activeName = (currentBank === 'UB') ? 'User Bank B (UB)' : 'User Bank A (UA)';
+            el.textContent = `${activeName}`;
+            el.style.color = 'var(--accent-blue)';
         }
+    }
+
+    if (document.getElementById('select-bank-target')) {
+        document.getElementById('select-bank-target').addEventListener('change', updateTemplateTargetLabel);
+    }
+
+    if (document.getElementById('select-bank-template')) {
+        document.getElementById('select-bank-template').addEventListener('change', (e) => {
+            if (e.target.value === 'future_classic_and_lixor') {
+                const targetEl = document.getElementById('select-bank-target');
+                if (targetEl) {
+                    targetEl.value = 'both';
+                    updateTemplateTargetLabel();
+                }
+            }
+        });
     }
 
     document.getElementById('btn-load-template').addEventListener('click', () => {
