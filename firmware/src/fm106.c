@@ -74,9 +74,10 @@ enum {
     PAGE_ARP,           /* ON MODE RATE RANGE */
     PAGE_FX,            /* CHO HPF VCA LEVEL */
     PAGE_TAPE,          /* TAPE: TYPE MIX RATE CHAR */
+    PAGE_DIM,           /* DIM: MODE MIX WIDTH COLOR */
     PAGE_REVERB,        /* SHIMMER: REV MIX DECAY SHIM */
     PAGE_SEQ,           /* SEQ: STEP PITCH GATE VEL (piano-roll edit) */
-    PAGE_COUNT = 11
+    PAGE_COUNT = 12
 };
 
 static uint8_t g_current_page = PAGE_VCF;
@@ -92,6 +93,7 @@ static const char *const N_INV[2]    = {"NORM", "INV"};
 static const char *const N_ARMD[3]   = {"UP", "U&D", "DN"};
 static const char *const N_ARNG[3]   = {"1OC", "2OC", "3OC"};
 static const char *const N_CHOR[4]   = {"OFF", "I", "II", "I+II"};
+static const char *const N_DIM[5]    = {"OFF", "DIM 1", "DIM 2", "DIM 3", "DIM 4"};
 static const char *const N_HPF[4]    = {"BST", "FLT", "236", "754"};
 static const char *const N_VCA[2]    = {"ENV", "GATE"};
 static const char *const N_FX[FM106_FX_COUNT] = {"OFF", "ON"};
@@ -133,6 +135,9 @@ static const fm1_slot_t FM1_SLOTS[PAGE_COUNT][4] = {
     /* PAGE_TAPE: single tape insert */
     {{"TAPE", SLOT_MODE, FM106_FX_COUNT, N_FX},  {"MIX", SLOT_FADER, 0, 0},
      {"RATE", SLOT_FADER, 0, 0},  {"CHAR", SLOT_FADER, 0, 0}},
+    /* PAGE_DIM: Roland Dimension D spatial stereo widener */
+    {{"DIM", SLOT_MODE, 5, N_DIM}, {"MIX", SLOT_FADER, 0, 0},
+     {"WIDTH", SLOT_FADER, 0, 0},  {"COLOR", SLOT_FADER, 0, 0}},
     /* PAGE_REVERB: 1980s stereo shimmer reverb (post-chain) */
     {{"REV", SLOT_MODE, 2, N_BOOL}, {"MIX", SLOT_FADER, 0, 0},
      {"DECAY", SLOT_FADER, 0, 0},   {"SHIM", SLOT_FADER, 0, 0}},
@@ -225,6 +230,16 @@ static int32_t fm1_slot_val(uint8_t page, int i)
         case 1: return fx->mix;
         case 2: return fx->rate;
         case 3: return fx->character;
+        }
+        break;
+    }
+    case PAGE_DIM: {
+        const fm106_dimension_t *dim = &g_synth.dimension;
+        switch (i) {
+        case 0: return dim->mode > 4 ? 4 : dim->mode;
+        case 1: return dim->mix;
+        case 2: return dim->width;
+        case 3: return dim->color;
         }
         break;
     }
@@ -353,7 +368,7 @@ static uint16_t seq_ui_edit_idx(void)
  * One CC per sound param (out: on panel/menu/knob change; in: controller
  * edits). Seq params get 102-106, transport 107, edit helpers 108-113. */
 
-#define CC_MAP_COUNT 46u
+#define CC_MAP_COUNT 50u
 
 typedef struct {
     const char *group;
@@ -401,6 +416,10 @@ static const cc_entry_def_t CC_ENTRIES[CC_MAP_COUNT] = {
     {"FX",  "TAPE MIX",   84, 37},
     {"FX",  "TAPE RATE",  85, 38},
     {"FX",  "TAPE CHAR",  86, 39},
+    {"FX",  "DIM MODE",   24, 40},
+    {"FX",  "DIM MIX",    25, 41},
+    {"FX",  "DIM WIDTH",  26, 42},
+    {"FX",  "DIM COLOR",  27, 43},
     {"FX",  "REV ON",     20, 45},
     {"FX",  "REV MIX",    21, 46},
     {"FX",  "REV DECAY",  22, 47},
@@ -485,6 +504,7 @@ static uint8_t param_cc_value(uint8_t i, uint8_t v)
     case 9: case 29: case 30: return (uint8_t)(v * 42u);            /* 0..3 / 0..2 enums */
     case 31: return v <= 1u ? 0u : (v == 2u ? 64u : 127u);          /* arp range 1..3 */
     case 36: return v ? 127u : 0u;                                  /* fx type */
+    case 40: return (uint8_t)(v * 31u);                             /* dim mode 0..4 */
     case 49: return (uint8_t)(v * 63u);                             /* assign mode 0..2 */
     case 23: case 24: case 25: case 27: case 28:
     case 33: case 34: case 35: case 45: return v ? 127u : 0u;       /* flags */
@@ -502,6 +522,7 @@ static uint8_t cc_to_param_value(uint8_t idx, uint8_t v)
     case 29: return v / 42u > 2u ? 2u : v / 42u;                    /* dco range 0-2 */
     case 30: return v >= 84u ? 2u : (v >= 42u ? 1u : 0u);           /* arp mode 0-2 */
     case 31: return v >= 85u ? 3u : (v >= 42u ? 2u : 1u);           /* arp range 1-3 */
+    case 40: return v / 26u > 4u ? 4u : v / 26u;                    /* dim mode 0-4 */
     case 49: return v >= 85u ? 2u : (v >= 42u ? 1u : 0u);           /* assign mode 0-2 */
     default: return v;
     }
@@ -795,68 +816,80 @@ static void fm106_apply_cc(uint8_t entry, uint8_t d2)
         fm106_cc_fx(&g_synth.fx[0], 3, d2);
         break;
     case 29:
-        g_synth.reverb.on = (d2 >= 64u) ? 1u : 0u;
+        fm106_param_set(&g_synth, 40, cc_to_param_value(40, d2));
         break;
     case 30:
-        g_synth.reverb.mix = d2;
+        g_synth.dimension.mix = d2 > 127u ? 127u : d2;
         break;
     case 31:
-        g_synth.reverb.decay = d2;
+        g_synth.dimension.width = d2 > 127u ? 127u : d2;
         break;
     case 32:
+        g_synth.dimension.color = d2 > 127u ? 127u : d2;
+        break;
+    case 33:
+        g_synth.reverb.on = (d2 >= 64u) ? 1u : 0u;
+        break;
+    case 34:
+        g_synth.reverb.mix = d2;
+        break;
+    case 35:
+        g_synth.reverb.decay = d2;
+        break;
+    case 36:
         g_synth.reverb.shimmer = d2;
         break;
 
     /* PERF & ARP */
-    case 33:
+    case 37:
         fm106_param_set(&g_synth, 0, cc_to_param_value(0, d2));
         break;
-    case 34:
+    case 38:
         fm106_param_set(&g_synth, 1, cc_to_param_value(1, d2));
         break;
-    case 35:
+    case 39:
         g_synth.arp_rate = d2;
         break;
-    case 36:
+    case 40:
         fm106_param_set(&g_synth, 30, cc_to_param_value(30, d2));
         break;
-    case 37:
+    case 41:
         fm106_param_set(&g_synth, 31, cc_to_param_value(31, d2));
         break;
-    case 38:
+    case 42:
         fm106_param_set(&g_synth, 49, cc_to_param_value(49, d2));
         break;
 
     /* SEQUENCER */
-    case 39: {
+    case 43: {
         uint32_t bpm = (uint32_t)d2 * 2u + 40u;
         g_synth.seq.bpm = (uint8_t)(bpm > 240u ? 240u : bpm);
         seq_mark_modified();
         break;
     }
-    case 40:
+    case 44:
         g_synth.seq.sdiv = d2 > 9u ? 3u : d2;
         seq_mark_modified();
         break;
-    case 41:
+    case 45:
         fm1_irq_off();
         g_synth.seq.slen = (uint16_t)((uint32_t)d2 + 1u);
         if (g_seq_cursor >= g_synth.seq.slen) g_seq_cursor = (uint16_t)(g_synth.seq.slen - 1u);
         fm1_irq_on();
         seq_mark_modified();
         break;
-    case 42:
+    case 46:
         g_synth.seq.sgate = d2 ? d2 : 1u;
         seq_mark_modified();
         break;
-    case 43:
+    case 47:
         g_synth.seq.swing = d2 > 100u ? 100u : d2;
         seq_mark_modified();
         break;
-    case 44:
+    case 48:
         seq_transport_cmd(d2 == 0u ? 0u : d2 == 1u ? 1u : d2 == 2u ? 2u : 3u, 0);
         break;
-    case 45:
+    case 49:
         g_seq_rec_arm = d2 >= 64u;
         if (!g_seq_rec_arm) count_in_cancel();
         break;
@@ -1531,6 +1564,7 @@ static void draw_top_section(uint16_t patch_idx, const char *patch_name)
     case PAGE_ARP:      title = "ARPEGGIATOR"; break;
     case PAGE_FX:       title = "FX (CHORUS)";  break;
     case PAGE_TAPE:     title = "FX (TAPE)";    break;
+    case PAGE_DIM:      title = "FX (DIMENSION)"; break;
     case PAGE_REVERB:   title = "FX (SHIMMER)"; break;
     case PAGE_SEQ:      title = "SEQUENCER";    break;
     default:            title = "FX (SHIMMER)"; break;
@@ -3465,12 +3499,13 @@ static void fm106_app_frame(void)
         }
 
         if (g_ui_mode == UI_MODE_NORMAL) {
-            /* FX button: cycle Chorus -> Tape -> Shimmer Reverb (jumps to Chorus from outside FX) */
+            /* FX button: cycle Chorus -> Tape -> Dimension -> Shimmer Reverb (jumps to Chorus from outside FX) */
             if (b & (1u << BTN_FX)) {
                 g_seq_menu_on = 0u;
                 g_note_menu_on = 0u;
                 if (g_current_page == PAGE_FX)          g_current_page = PAGE_TAPE;
-                else if (g_current_page == PAGE_TAPE)   g_current_page = PAGE_REVERB;
+                else if (g_current_page == PAGE_TAPE)   g_current_page = PAGE_DIM;
+                else if (g_current_page == PAGE_DIM)    g_current_page = PAGE_REVERB;
                 else                                    g_current_page = PAGE_FX;
                 dirty_screen = 1;
             }
@@ -4216,7 +4251,15 @@ static void fm106_app_frame(void)
                 if (k4) fx->character = (uint8_t)fm106_clamp(fx->character + k4 * 3, 0, 127);
                 break;
             }
-            case PAGE_REVERB: {
+            case PAGE_DIM: {
+                fm106_dimension_t *dim = &g_synth.dimension;
+                if (k1) dim->mode = (uint8_t)fm106_clamp(dim->mode + k1, 0, 4);
+                if (k2) dim->mix = (uint8_t)fm106_clamp(dim->mix + k2 * 3, 0, 127);
+                if (k3) dim->width = (uint8_t)fm106_clamp(dim->width + k3 * 3, 0, 127);
+                if (k4) dim->color = (uint8_t)fm106_clamp(dim->color + k4 * 3, 0, 127);
+                break;
+            }
+    case PAGE_REVERB: {
                 fm106_reverb_t *rv = &g_synth.reverb;
                 if (k1) {
                     rv->on = (k1 > 0) ? 1u : 0u;
@@ -4428,6 +4471,7 @@ static void fm106_app_frame(void)
         fm1_led_key(BTN_OCT_UP, g_synth.octave_shift > 0);
         fm1_led_key(BTN_FX, g_synth.chorus.mode != FM106_CHORUS_OFF ||
                             g_synth.fx[0].type != FM106_FX_OFF ||
+                            g_synth.dimension.mode != 0u ||
                             g_synth.reverb.on != 0u);
         fm1_led_key(BTN_ARP, g_synth.arp_on);
         fm1_led_key(BTN_SEQ, g_synth.seq.playing);

@@ -1553,6 +1553,53 @@ footer.keyboard-footer {
                 </div>
             </div>
 
+            <!-- DIMENSION D STEREO WIDENER -->
+            <div class="synth-module blue-top" style="grid-column: span 2;">
+                <div class="module-title">DIMENSION D (SPATIAL STEREO WIDENER)</div>
+                <div class="module-controls">
+                    <div class="switch-control">
+                        <div class="switch-options" id="sw-dim-mode" style="display:flex; flex-direction:column; gap:2px;">
+                            <div class="switch-opt active" data-val="0">OFF</div>
+                            <div class="switch-opt" data-val="1">DIM 1</div>
+                            <div class="switch-opt" data-val="2">DIM 2</div>
+                            <div class="switch-opt" data-val="3">DIM 3</div>
+                            <div class="switch-opt" data-val="4">DIM 4</div>
+                        </div>
+                        <div class="fader-label">DIM</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="dim-mix">
+                        <div class="fader-val" id="val-dim-mix">96</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-dim-mix"></div>
+                            <input type="range" class="fader-input" id="fader-dim-mix" min="0" max="127" value="96">
+                        </div>
+                        <div class="fader-label">MIX</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="dim-width">
+                        <div class="fader-val" id="val-dim-width">90</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-dim-width"></div>
+                            <input type="range" class="fader-input" id="fader-dim-width" min="0" max="127" value="90">
+                        </div>
+                        <div class="fader-label">WIDTH</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="dim-color">
+                        <div class="fader-val" id="val-dim-color">70</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-dim-color"></div>
+                            <input type="range" class="fader-input" id="fader-dim-color" min="0" max="127" value="70">
+                        </div>
+                        <div class="fader-label">COLOR</div>
+                    </div>
+                </div>
+            </div>
+
         </div>
     </main>
 </div>
@@ -4622,7 +4669,11 @@ function makeBlankPreset(idx) {
         rev_on: 0,
         rev_mix: 48,
         rev_decay: 84,
-        rev_shim: 68
+        rev_shim: 68,
+        dim_mode: 0,
+        dim_mix: 96,
+        dim_width: 90,
+        dim_color: 70
     };
 }
 
@@ -4649,7 +4700,11 @@ function makeInitPreset(name = 'Init Saw') {
         rev_on: 0,
         rev_mix: 48,
         rev_decay: 84,
-        rev_shim: 68
+        rev_shim: 68,
+        dim_mode: 0,
+        dim_mix: 96,
+        dim_width: 90,
+        dim_color: 70
     };
 }
 
@@ -4886,6 +4941,11 @@ function loadPresetToUI(preset) {
     updateFaderCap('rev-mix', preset.rev_mix !== undefined ? preset.rev_mix : 48);
     updateFaderCap('rev-decay', preset.rev_decay !== undefined ? preset.rev_decay : 84);
     updateFaderCap('rev-shim', preset.rev_shim !== undefined ? preset.rev_shim : 68);
+
+    setSwitchGroupActive('sw-dim-mode', 'val', preset.dim_mode !== undefined ? preset.dim_mode : 0);
+    updateFaderCap('dim-mix', preset.dim_mix !== undefined ? preset.dim_mix : 96);
+    updateFaderCap('dim-width', preset.dim_width !== undefined ? preset.dim_width : 90);
+    updateFaderCap('dim-color', preset.dim_color !== undefined ? preset.dim_color : 70);
 }
 
 function setSwitchGroupActive(containerId, attr, val) {
@@ -5019,6 +5079,18 @@ function readUIToPreset() {
     const revShimEl = document.getElementById('fader-rev-shim');
     const rev_shim = revShimEl ? parseInt(revShimEl.value, 10) : 68;
 
+    const dimModeOpt = document.querySelector('#sw-dim-mode .switch-opt.active');
+    const dim_mode = dimModeOpt ? parseInt(dimModeOpt.dataset.val, 10) : 0;
+
+    const dimMixEl = document.getElementById('fader-dim-mix');
+    const dim_mix = dimMixEl ? parseInt(dimMixEl.value, 10) : 96;
+
+    const dimWidthEl = document.getElementById('fader-dim-width');
+    const dim_width = dimWidthEl ? parseInt(dimWidthEl.value, 10) : 90;
+
+    const dimColorEl = document.getElementById('fader-dim-color');
+    const dim_color = dimColorEl ? parseInt(dimColorEl.value, 10) : 70;
+
     return {
         name: name,
         sliders: sliders,
@@ -5039,7 +5111,11 @@ function readUIToPreset() {
         rev_on: rev_on,
         rev_mix: rev_mix,
         rev_decay: rev_decay,
-        rev_shim: rev_shim
+        rev_shim: rev_shim,
+        dim_mode: dim_mode,
+        dim_mix: dim_mix,
+        dim_width: dim_width,
+        dim_color: dim_color
     };
 }
 
@@ -5323,7 +5399,7 @@ function encodePatchName(name) {
     return bytes;
 }
 
-// 15-byte FM-106 extended patch block
+// 19-byte FM-106 extended patch block
 function encodeExtendedParams(p) {
     return [
         (p.b_dco !== undefined ? p.b_dco : 0) & 0x7F,
@@ -5340,7 +5416,11 @@ function encodeExtendedParams(p) {
         (p.rev_mix !== undefined ? p.rev_mix : 48) & 0x7F,
         (p.rev_decay !== undefined ? p.rev_decay : 84) & 0x7F,
         (p.rev_shim !== undefined ? p.rev_shim : 68) & 0x7F,
-        (p.assign !== undefined ? p.assign : 1) & 0x03
+        (p.assign !== undefined ? p.assign : 1) & 0x03,
+        (p.dim_mode !== undefined ? p.dim_mode : 0) & 0x07,
+        (p.dim_mix !== undefined ? p.dim_mix : 96) & 0x7F,
+        (p.dim_width !== undefined ? p.dim_width : 90) & 0x7F,
+        (p.dim_color !== undefined ? p.dim_color : 70) & 0x7F
     ];
 }
 
@@ -5361,7 +5441,11 @@ function encodeExtendedDefaults(p = {}) {
         rev_mix: p.rev_mix !== undefined ? p.rev_mix : 48,
         rev_decay: p.rev_decay !== undefined ? p.rev_decay : 84,
         rev_shim: p.rev_shim !== undefined ? p.rev_shim : 68,
-        assign: p.assign !== undefined ? p.assign : 1
+        assign: p.assign !== undefined ? p.assign : 1,
+        dim_mode: p.dim_mode !== undefined ? p.dim_mode : 0,
+        dim_mix: p.dim_mix !== undefined ? p.dim_mix : 96,
+        dim_width: p.dim_width !== undefined ? p.dim_width : 90,
+        dim_color: p.dim_color !== undefined ? p.dim_color : 70
     };
 }
 
@@ -5427,6 +5511,17 @@ function handleMIDIMessage(event) {
                     rev_shim: data[52] & 0x7F,
                     assign: data[53] > 2 ? 1 : data[53]
                 };
+                if (data.length >= 59) {
+                    ext.dim_mode = data[54] > 4 ? 0 : data[54];
+                    ext.dim_mix = data[55] & 0x7F;
+                    ext.dim_width = data[56] & 0x7F;
+                    ext.dim_color = data[57] & 0x7F;
+                } else {
+                    ext.dim_mode = 0;
+                    ext.dim_mix = 96;
+                    ext.dim_width = 90;
+                    ext.dim_color = 70;
+                }
             } else {
                 ext = encodeExtendedDefaults({ sliders: sliders });
             }
@@ -7169,7 +7264,10 @@ function setupEventListeners() {
         'tape-char': { param: 39, cc: 28, key: 'tape_char' },
         'rev-mix': { param: 46, cc: 30, key: 'rev_mix' },
         'rev-decay': { param: 47, cc: 31, key: 'rev_decay' },
-        'rev-shim': { param: 48, cc: 32, key: 'rev_shim' }
+        'rev-shim': { param: 48, cc: 32, key: 'rev_shim' },
+        'dim-mix': { param: 41, cc: 25, key: 'dim_mix' },
+        'dim-width': { param: 42, cc: 26, key: 'dim_width' },
+        'dim-color': { param: 43, cc: 27, key: 'dim_color' }
     };
 
     // Fader sliders (Standard 16 sliders + 9 Extended controls)
@@ -7265,6 +7363,18 @@ function setupEventListeners() {
             sendParamChange(45, 29, val);
             if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
                 allPresets[selectedSlot].rev_on = val;
+            }
+        });
+    });
+
+    // Dimension D Mode Switch (OFF, DIM 1..4)
+    document.querySelectorAll('#sw-dim-mode .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-dim-mode', 'val', val);
+            sendParamChange(40, 24, val);
+            if (selectedSlot >= 130 && !isInitSlot(selectedSlot) && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].dim_mode = val;
             }
         });
     });

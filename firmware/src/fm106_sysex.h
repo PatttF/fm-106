@@ -321,6 +321,7 @@ static void fm106_load_user_preset(fm106_engine_t *e, uint32_t idx)
     e->fx[0].rate      = p->p[38] > 127 ? 127 : p->p[38];
     e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
     fm106_reverb_apply_preset(&e->reverb, p);
+    fm106_dimension_apply_preset(&e->dimension, p);
 
     /* Voice allocation mode (0 = default/Poly I, 1 = Mono unison, 2 = Poly I, 3 = Poly II) */
     if (p->p[49] == 1u) {
@@ -416,6 +417,12 @@ static void fm106_save_engine_to_preset(fm106_preset_t *p, const fm106_engine_t 
 
     /* Voice Mode (1 = Mono unison, 2 = Poly I, 3 = Poly II) */
     p->p[49] = (e->voice_mode == FM106_MODE_MONO) ? 1u : (e->voice_mode == FM106_MODE_POLY2) ? 3u : 2u;
+
+    /* Dimension Stereo Widener params */
+    p->p[50] = e->dimension.mode > 4u ? 0u : e->dimension.mode;
+    p->p[51] = e->dimension.mix;
+    p->p[52] = e->dimension.width;
+    p->p[53] = e->dimension.color;
 }
 
 /* Decode Switch Byte 1 (SW1): Octave, Pulse, Saw, Chorus */
@@ -562,6 +569,7 @@ static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8
     p->p[36] = 0; p->p[37] = 0; p->p[38] = 0; p->p[39] = 0;
     p->p[45] = 0; p->p[46] = 0; p->p[47] = 0; p->p[48] = 0;
     p->p[49] = 2;            /* POLY I */
+    p->p[50] = 0; p->p[51] = 96; p->p[52] = 90; p->p[53] = 70;
 
     if (name && name[0]) {
         while (*name == ' ') name++;
@@ -582,10 +590,11 @@ static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8
 }
 
 /* ---- FM-106 extended patch block (appended after the 16 name bytes of 0x30/0x31) ----
- * 15 bytes, all 7-bit: B.DCO, B.VCF, ARP RATE, ARP MODE, ARP RANGE(1..3), SUB SW,
+ * 19 bytes, all 7-bit: B.DCO, B.VCF, ARP RATE, ARP MODE, ARP RANGE(1..3), SUB SW,
  * TAPE TYPE, TAPE MIX, TAPE RATE, TAPE CHAR, REV ON, REV MIX, REV DECAY, REV SHIM,
- * ASSIGN (0 MONO, 1 POLY I, 2 POLY II). Old firmware ignores the extra bytes. */
-#define FM106_EXT_N 15u
+ * ASSIGN (0 MONO, 1 POLY I, 2 POLY II), DIM MODE, DIM MIX, DIM WIDTH, DIM COLOR.
+ * Old firmware ignores the extra bytes. */
+#define FM106_EXT_N 19u
 
 static void fm106_ext_from_preset(const fm106_preset_t *p, uint8_t *x)
 {
@@ -604,9 +613,13 @@ static void fm106_ext_from_preset(const fm106_preset_t *p, uint8_t *x)
     x[12] = p->p[47] & 0x7Fu;
     x[13] = p->p[48] & 0x7Fu;
     x[14] = (p->p[49] == 1u) ? 0u : (p->p[49] == 3u) ? 2u : 1u;
+    x[15] = p->p[50] > 4u ? 0u : p->p[50];
+    x[16] = p->p[51] & 0x7Fu;
+    x[17] = p->p[52] & 0x7Fu;
+    x[18] = p->p[53] & 0x7Fu;
 }
 
-static void fm106_ext_to_preset(fm106_preset_t *p, const uint8_t *x)
+static void fm106_ext_to_preset(fm106_preset_t *p, const uint8_t *x, uint32_t len)
 {
     p->p[0]  = x[0] & 0x7Fu;
     p->p[1]  = x[1] & 0x7Fu;
@@ -623,10 +636,16 @@ static void fm106_ext_to_preset(fm106_preset_t *p, const uint8_t *x)
     p->p[47] = x[12] & 0x7Fu;
     p->p[48] = x[13] & 0x7Fu;
     p->p[49] = (x[14] == 0u) ? 1u : (x[14] == 2u) ? 3u : 2u;
+    if (len >= 19u) {
+        p->p[50] = x[15] > 4u ? 0u : x[15];
+        p->p[51] = x[16] & 0x7Fu;
+        p->p[52] = x[17] & 0x7Fu;
+        p->p[53] = x[18] & 0x7Fu;
+    }
 }
 
 /* Apply an extended block to the live engine (audition) */
-static void fm106_ext_to_engine(fm106_engine_t *e, const uint8_t *x)
+static void fm106_ext_to_engine(fm106_engine_t *e, const uint8_t *x, uint32_t len)
 {
     fm106_param_set(e, 0, x[0] & 0x7Fu);
     fm106_param_set(e, 1, x[1] & 0x7Fu);
@@ -643,6 +662,12 @@ static void fm106_ext_to_engine(fm106_engine_t *e, const uint8_t *x)
     fm106_param_set(e, 47, x[12] & 0x7Fu);
     fm106_param_set(e, 48, x[13] & 0x7Fu);
     fm106_param_set(e, 49, x[14] > 2u ? 1u : x[14]);
+    if (len >= 19u) {
+        fm106_param_set(e, 40, x[15] > 4u ? 0u : x[15]);
+        fm106_param_set(e, 41, x[16] & 0x7Fu);
+        fm106_param_set(e, 42, x[17] & 0x7Fu);
+        fm106_param_set(e, 43, x[18] & 0x7Fu);
+    }
 }
 
 /* Transmit a patch dump APR SysEx message over USB-MIDI */
@@ -855,7 +880,7 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
             }
             g_synth.patch_name[len] = '\0';
         }
-        if (n >= 38u + FM106_EXT_N) fm106_ext_to_engine(&g_synth, p + 38);
+        if (n >= 38u + 15u) fm106_ext_to_engine(&g_synth, p + 38, n - 38u);
         g_dirty_screen = 1;
         return;
     }
@@ -875,7 +900,7 @@ static void fm106_sysex_handle(const uint8_t *p, uint32_t n)
             for (uint32_t i = 0; i < 15u && (22u + i) < n; i++) nm[i] = (char)p[22 + i];
         }
         fm106_store_apr_to_preset(&g_user_presets[user_slot], p + 4, p[20], p[21], nm[0] ? nm : 0, (n < 38u));
-        if (n >= 38u + FM106_EXT_N) fm106_ext_to_preset(&g_user_presets[user_slot], p + 38);
+        if (n >= 38u + 15u) fm106_ext_to_preset(&g_user_presets[user_slot], p + 38, n - 38u);
 
         uint16_t cur_user_patch = fm106_user_slot_to_patch(user_slot);
         if (cur_user_patch == g_synth.patch_idx) {

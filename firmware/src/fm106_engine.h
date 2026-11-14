@@ -10,6 +10,7 @@
 #include "fm106_adsr.h"
 #include "fm106_chorus.h"
 #include "fm106_fx.h"
+#include "fm106_dimension.h"
 #include "fm106_reverb.h"
 #include "fm106_seq.h"
 #include "fm106_presets.h"
@@ -109,6 +110,9 @@ typedef struct {
     /* Global insert FX chain (Melodee-derived: phaser/width/formant/tape/spit/echo/room/reverb;
      * page order = chain order, chorus precedes) */
     fm106_fx_t fx[FM106_FX_SLOTS];
+
+    /* Dedicated Roland Dimension D Spatial Stereo Widener */
+    fm106_dimension_t dimension;
 
     /* Post-chain 1980s Stereo Shimmer Reverb (runs after Chorus & Tape) */
     fm106_reverb_t reverb;
@@ -228,6 +232,19 @@ static inline void fm106_reverb_apply_preset(fm106_reverb_t *r, const fm106_pres
     }
 }
 
+static inline void fm106_dimension_apply_preset(fm106_dimension_t *dim, const fm106_preset_t *p)
+{
+    dim->mode  = p->p[50] > 4u ? 0u : p->p[50];
+    dim->mix   = p->p[51] > 127u ? 127u : (p->p[51] == 0u && dim->mode != 0u ? 96u : p->p[51]);
+    dim->width = p->p[52] > 127u ? 127u : (p->p[52] == 0u && dim->mode != 0u ? 90u : p->p[52]);
+    dim->color = p->p[53] > 127u ? 127u : (p->p[53] == 0u && dim->mode != 0u ? 70u : p->p[53]);
+    if (dim->mode == 0u && p->p[51] == 0u) {
+        dim->mix = 96u;
+        dim->width = 90u;
+        dim->color = 70u;
+    }
+}
+
 /* Load preset patch into engine */
 static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
 {
@@ -289,6 +306,7 @@ static void fm106_load_preset(fm106_engine_t *e, uint32_t idx)
     e->fx[0].rate      = p->p[38] > 127 ? 127 : p->p[38];
     e->fx[0].character = p->p[39] > 127 ? 127 : p->p[39];
     fm106_reverb_apply_preset(&e->reverb, p);
+    fm106_dimension_apply_preset(&e->dimension, p);
 
     /* SEQ track params */
     e->seq.bpm    = p->p[40] < 40 ? 120 : (p->p[40] > 240 ? 240 : p->p[40]);
@@ -364,6 +382,7 @@ static void fm106_engine_init(fm106_engine_t *e)
     fm106_hpf_init(&e->hpf);
     fm106_chorus_init(&e->chorus);
     for (uint32_t i = 0; i < FM106_FX_SLOTS; i++) fm106_fx_init(&e->fx[i], i);
+    fm106_dimension_init(&e->dimension);
     fm106_reverb_init(&e->reverb);
 
     for (uint32_t i = 0; i < FM106_NUM_VOICES; i++) {
@@ -916,6 +935,10 @@ static uint8_t fm106_param_get(const fm106_engine_t *e, uint8_t idx)
     case 37: return (uint8_t)e->fx[0].mix;
     case 38: return (uint8_t)e->fx[0].rate;
     case 39: return (uint8_t)e->fx[0].character;
+    case 40: return e->dimension.mode > 4 ? 4 : e->dimension.mode;
+    case 41: return e->dimension.mix;
+    case 42: return e->dimension.width;
+    case 43: return e->dimension.color;
     case 45: return e->reverb.on & 1u;
     case 46: return e->reverb.mix;
     case 47: return e->reverb.decay;
@@ -998,6 +1021,10 @@ static void fm106_param_set(fm106_engine_t *e, uint8_t idx, uint8_t v)
     case 37: e->fx[0].mix = v; break;
     case 38: e->fx[0].rate = v; break;
     case 39: e->fx[0].character = v; break;
+    case 40: e->dimension.mode = v > 4 ? 0 : v; break;
+    case 41: e->dimension.mix = v > 127 ? 127 : v; break;
+    case 42: e->dimension.width = v > 127 ? 127 : v; break;
+    case 43: e->dimension.color = v > 127 ? 127 : v; break;
     case 45: e->reverb.on = v ? 1u : 0u; break;
     case 46: e->reverb.mix = v > 127u ? 127u : v; break;
     case 47: e->reverb.decay = v > 127u ? 127u : v; break;
@@ -1661,6 +1688,9 @@ static void fm106_audio_render(int32_t *out, uint32_t n)
 
     /* Insert FX chain, in-place on the interleaved stereo buffer (page order = chain order; no-op when OFF) */
     for (uint32_t i = 0; i < FM106_FX_SLOTS; i++) fm106_fx_run(&e->fx[i], out, n);
+
+    /* Dedicated Roland Dimension D Spatial Stereo Widener */
+    fm106_dimension_run(&e->dimension, out, n);
 
 #if FELUCCA_UAC
     uac_isr_service();
