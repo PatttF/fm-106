@@ -235,13 +235,13 @@ static inline void fm106_reverb_apply_preset(fm106_reverb_t *r, const fm106_pres
 static inline void fm106_dimension_apply_preset(fm106_dimension_t *dim, const fm106_preset_t *p)
 {
     dim->mode  = p->p[50] > 4u ? 0u : p->p[50];
-    dim->mix   = p->p[51] > 127u ? 127u : (p->p[51] == 0u && dim->mode != 0u ? 96u : p->p[51]);
-    dim->width = p->p[52] > 127u ? 127u : (p->p[52] == 0u && dim->mode != 0u ? 90u : p->p[52]);
-    dim->color = p->p[53] > 127u ? 127u : (p->p[53] == 0u && dim->mode != 0u ? 70u : p->p[53]);
+    dim->mix   = p->p[51] > 127u ? 127u : (p->p[51] == 0u && dim->mode != 0u ? 110u : p->p[51]);
+    dim->width = p->p[52] > 127u ? 127u : (p->p[52] == 0u && dim->mode != 0u ? 100u : p->p[52]);
+    dim->color = p->p[53] > 127u ? 127u : (p->p[53] == 0u && dim->mode != 0u ? 80u : p->p[53]);
     if (dim->mode == 0u && p->p[51] == 0u) {
-        dim->mix = 96u;
-        dim->width = 90u;
-        dim->color = 70u;
+        dim->mix = 110u;
+        dim->width = 100u;
+        dim->color = 80u;
     }
 }
 

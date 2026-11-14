@@ -3,9 +3,10 @@
  *
  * Dedicated stereo effect slot (placed after Juno Chorus & Tape, before Reverb).
  * Emulates the iconic Roland Dimension D spatial enhancer:
- * - Anti-phase low-frequency dual sine modulation (~0.20 to 0.38 Hz)
+ * - Anti-phase low-frequency dual sine modulation (~0.25 to 0.68 Hz)
  * - 4-point Hermite cubic interpolation for artifact-free fractional delay
  * - High-pass side cross-coupling matrix preserving solid mono bass
+ * - Wide Mid/Side spatial expansion with up to 2.8x width scaling
  * - Flawless mono compatibility with zero hollow comb cancellation
  */
 
@@ -15,7 +16,7 @@
 #include <stdint.h>
 #include "fm106_chorus.h"
 
-#define FM106_DIM_BUF_LEN 512u
+#define FM106_DIM_BUF_LEN 1024u
 #define FM106_DIM_BUF_MASK (FM106_DIM_BUF_LEN - 1u)
 
 typedef struct {
@@ -28,7 +29,7 @@ typedef struct {
     uint8_t width;      /* 0..127 stereo field expansion */
     uint8_t color;      /* 0..127 high frequency tone warmth */
     float lp_l, lp_r;   /* 1-pole tone filter */
-    float hp_l, hp_r;   /* 1-pole bass guard side filter (~120 Hz) */
+    float hp_s;         /* 1-pole bass guard side filter (~130 Hz) */
 } fm106_dimension_t;
 
 static inline void fm106_dimension_init(fm106_dimension_t *d)
@@ -40,32 +41,34 @@ static inline void fm106_dimension_init(fm106_dimension_t *d)
     d->wr_idx = 0;
     d->lfo_ph = 0;
     d->mode = 0;        /* Default OFF so legacy patches sound identical */
-    d->mix = 96;        /* Default 75% mix when turned on */
-    d->width = 90;      /* Default lush spatial width */
-    d->color = 70;      /* Warm Roland analog tone */
+    d->mix = 110;       /* Rich, prominent wet mix when turned on */
+    d->width = 100;     /* Broad, immersive spatial width */
+    d->color = 80;      /* Warm Roland analog tone */
     d->lp_l = 0.0f;
     d->lp_r = 0.0f;
-    d->hp_l = 0.0f;
-    d->hp_r = 0.0f;
+    d->hp_s = 0.0f;
 }
 
 static inline void fm106_dimension_run(fm106_dimension_t *d, int32_t *out, uint32_t n)
 {
     if (d->mode == 0) return;
 
-    /* LFO phase increments for ~0.20 Hz, ~0.25 Hz, ~0.30 Hz, ~0.38 Hz at 44.1 kHz */
-    static const uint32_t lfo_incs[5] = { 0, 19493u, 24367u, 29240u, 37038u };
-    /* Modulation depths in fractional samples (around 160 sample center delay = ~3.63 ms) */
-    static const float depths[5] = { 0.0f, 9.0f, 14.0f, 20.0f, 28.0f };
+    /* Enhanced 4 Modes:
+     * Mode 1: Classic Dimension Subtle (~0.25 Hz, +-32 smp)
+     * Mode 2: Lush Dimension Wide (~0.38 Hz, +-54 smp)
+     * Mode 3: Rich Ensemble Spread (~0.52 Hz, +-78 smp)
+     * Mode 4: Ultra 3D Wall-of-Sound (~0.68 Hz, +-105 smp) */
+    static const uint32_t lfo_incs[5] = { 0, 24367u, 37038u, 50684u, 66278u };
+    static const float depths[5] = { 0.0f, 32.0f, 54.0f, 78.0f, 105.0f };
+    static const float centers[5] = { 0.0f, 180.0f, 220.0f, 270.0f, 330.0f };
 
     uint8_t m = d->mode > 4 ? 4 : d->mode;
     uint32_t inc = lfo_incs[m];
     float depth = depths[m];
-    float k_cross = 0.55f * ((float)d->width * (1.0f / 64.0f));
-    float k_direct = 0.72f;
-    float mix_wet = (float)d->mix * (1.0f / 127.0f);
-    float mix_dry = 1.0f - mix_wet * 0.25f;
-    float lp_alpha = 0.35f + ((float)d->color * (0.45f / 127.0f));
+    float center = centers[m];
+    float width_gain = ((float)d->width * (2.8f / 127.0f));
+    float mix = (float)d->mix * (1.0f / 127.0f);
+    float lp_alpha = 0.35f + ((float)d->color * (0.50f / 127.0f));
 
     uint32_t wr = d->wr_idx;
 
@@ -73,7 +76,7 @@ static inline void fm106_dimension_run(fm106_dimension_t *d, int32_t *out, uint3
         int32_t in_l = out[2u * i];
         int32_t in_r = out[2u * i + 1u];
 
-        /* Write dry audio into delay line */
+        /* Write audio into delay line */
         d->buf_l[wr] = (int16_t)(in_l > 32767 ? 32767 : (in_l < -32768 ? -32768 : in_l));
         d->buf_r[wr] = (int16_t)(in_r > 32767 ? 32767 : (in_r < -32768 ? -32768 : in_r));
 
@@ -86,8 +89,8 @@ static inline void fm106_dimension_run(fm106_dimension_t *d, int32_t *out, uint3
         lfo_f = lfo_f * (1.5f - 0.5f * lfo_f * lfo_f); /* Polynomial sine shaping */
 
         float mod = lfo_f * depth;
-        float del_l = 160.0f + mod;
-        float del_r = 160.0f - mod;
+        float del_l = center + mod;
+        float del_r = center - mod;
 
         /* Left fractional delay read via 4-point Hermite cubic interpolation */
         int32_t idel_l = (int32_t)del_l;
@@ -115,19 +118,21 @@ static inline void fm106_dimension_run(fm106_dimension_t *d, int32_t *out, uint3
         wet_l = d->lp_l;
         wet_r = d->lp_r;
 
-        /* High-pass filter on side signal to prevent bass cancellation */
-        d->hp_l += 0.017f * (wet_l - d->hp_l);
-        d->hp_r += 0.017f * (wet_r - d->hp_r);
-        float wet_l_hi = wet_l - d->hp_l;
-        float wet_r_hi = wet_r - d->hp_r;
+        /* Spatial side difference */
+        float side_diff = (wet_l - wet_r) * 0.5f;
 
-        /* Dimension D cross-coupling matrix */
-        float spatial_l = k_direct * wet_l - k_cross * wet_r_hi;
-        float spatial_r = k_direct * wet_r - k_cross * wet_l_hi;
+        /* High-pass filter on side signal to prevent bass cancellation below ~130 Hz */
+        d->hp_s += 0.018f * (side_diff - d->hp_s);
+        float side_hi = side_diff - d->hp_s;
 
-        /* Combine dry and spatial wet signals */
-        float y_l = (float)in_l * mix_dry + spatial_l * mix_wet;
-        float y_r = (float)in_r * mix_dry + spatial_r * mix_wet;
+        /* Width-scaled spatial component */
+        float spatial_side = side_hi * width_gain;
+
+        /* Stereo expansion:
+         * Left  = In_L + SpatialSide * Mix
+         * Right = In_R - SpatialSide * Mix */
+        float y_l = (float)in_l + spatial_side * mix;
+        float y_r = (float)in_r - spatial_side * mix;
 
         out[2u * i]      = (int32_t)(y_l > 32767.0f ? 32767.0f : (y_l < -32768.0f ? -32768.0f : y_l));
         out[2u * i + 1u] = (int32_t)(y_r > 32767.0f ? 32767.0f : (y_r < -32768.0f ? -32768.0f : y_r));

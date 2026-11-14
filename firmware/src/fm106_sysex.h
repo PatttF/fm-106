@@ -569,7 +569,7 @@ static void fm106_store_apr_to_preset(fm106_preset_t *p, const uint8_t *s, uint8
     p->p[36] = 0; p->p[37] = 0; p->p[38] = 0; p->p[39] = 0;
     p->p[45] = 0; p->p[46] = 0; p->p[47] = 0; p->p[48] = 0;
     p->p[49] = 2;            /* POLY I */
-    p->p[50] = 0; p->p[51] = 96; p->p[52] = 90; p->p[53] = 70;
+    p->p[50] = 0; p->p[51] = 110; p->p[52] = 100; p->p[53] = 80;
 
     if (name && name[0]) {
         while (*name == ' ') name++;

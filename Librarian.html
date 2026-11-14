@@ -1568,32 +1568,32 @@ footer.keyboard-footer {
                         <div class="fader-label">DIM</div>
                     </div>
                     <div class="fader-control" data-ctrl="dim-mix">
-                        <div class="fader-val" id="val-dim-mix">96</div>
+                        <div class="fader-val" id="val-dim-mix">110</div>
                         <div class="fader-track-wrap">
                             <div class="fader-track-ticks"></div>
                             <div class="fader-slot"></div>
                             <div class="fader-cap" id="cap-dim-mix"></div>
-                            <input type="range" class="fader-input" id="fader-dim-mix" min="0" max="127" value="96">
+                            <input type="range" class="fader-input" id="fader-dim-mix" min="0" max="127" value="110">
                         </div>
                         <div class="fader-label">MIX</div>
                     </div>
                     <div class="fader-control" data-ctrl="dim-width">
-                        <div class="fader-val" id="val-dim-width">90</div>
+                        <div class="fader-val" id="val-dim-width">100</div>
                         <div class="fader-track-wrap">
                             <div class="fader-track-ticks"></div>
                             <div class="fader-slot"></div>
                             <div class="fader-cap" id="cap-dim-width"></div>
-                            <input type="range" class="fader-input" id="fader-dim-width" min="0" max="127" value="90">
+                            <input type="range" class="fader-input" id="fader-dim-width" min="0" max="127" value="100">
                         </div>
                         <div class="fader-label">WIDTH</div>
                     </div>
                     <div class="fader-control" data-ctrl="dim-color">
-                        <div class="fader-val" id="val-dim-color">70</div>
+                        <div class="fader-val" id="val-dim-color">80</div>
                         <div class="fader-track-wrap">
                             <div class="fader-track-ticks"></div>
                             <div class="fader-slot"></div>
                             <div class="fader-cap" id="cap-dim-color"></div>
-                            <input type="range" class="fader-input" id="fader-dim-color" min="0" max="127" value="70">
+                            <input type="range" class="fader-input" id="fader-dim-color" min="0" max="127" value="80">
                         </div>
                         <div class="fader-label">COLOR</div>
                     </div>
@@ -4671,9 +4671,9 @@ function makeBlankPreset(idx) {
         rev_decay: 84,
         rev_shim: 68,
         dim_mode: 0,
-        dim_mix: 96,
-        dim_width: 90,
-        dim_color: 70
+        dim_mix: 110,
+        dim_width: 100,
+        dim_color: 80
     };
 }
 
@@ -4702,9 +4702,9 @@ function makeInitPreset(name = 'Init Saw') {
         rev_decay: 84,
         rev_shim: 68,
         dim_mode: 0,
-        dim_mix: 96,
-        dim_width: 90,
-        dim_color: 70
+        dim_mix: 110,
+        dim_width: 100,
+        dim_color: 80
     };
 }
 
@@ -5443,9 +5443,9 @@ function encodeExtendedDefaults(p = {}) {
         rev_shim: p.rev_shim !== undefined ? p.rev_shim : 68,
         assign: p.assign !== undefined ? p.assign : 1,
         dim_mode: p.dim_mode !== undefined ? p.dim_mode : 0,
-        dim_mix: p.dim_mix !== undefined ? p.dim_mix : 96,
-        dim_width: p.dim_width !== undefined ? p.dim_width : 90,
-        dim_color: p.dim_color !== undefined ? p.dim_color : 70
+        dim_mix: p.dim_mix !== undefined ? p.dim_mix : 110,
+        dim_width: p.dim_width !== undefined ? p.dim_width : 100,
+        dim_color: p.dim_color !== undefined ? p.dim_color : 80
     };
 }
 
@@ -5518,9 +5518,9 @@ function handleMIDIMessage(event) {
                     ext.dim_color = data[57] & 0x7F;
                 } else {
                     ext.dim_mode = 0;
-                    ext.dim_mix = 96;
-                    ext.dim_width = 90;
-                    ext.dim_color = 70;
+                    ext.dim_mix = 110;
+                    ext.dim_width = 100;
+                    ext.dim_color = 80;
                 }
             } else {
                 ext = encodeExtendedDefaults({ sliders: sliders });
