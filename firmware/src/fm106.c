@@ -2700,7 +2700,7 @@ static void draw_menu_about(void)
     cv_text(48, 28, &FONT_S, "FM-106 SYNTHESIZER", C_STRIPE_CYAN);
     cv_rect(24, 46, 192, 1, C_LINE_DIV);
     cv_text(60, 54, &FONT_S, "Firmware: ", C_TEXT_DIM);
-    cv_text(136, 54, &FONT_S, "1.01", C_ROLAND_AMBER);
+    cv_text(136, 54, &FONT_S, "1.02", C_ROLAND_AMBER);
     cv_blit(0, 0);
 
     /* Band 2: y=80..159 */

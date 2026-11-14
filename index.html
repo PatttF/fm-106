@@ -920,7 +920,7 @@ const sayK = (k, arg = "") => { lastKey = k; lastArg = arg; $("status").textCont
 const say = (txt) => { lastKey = null; $("status").textContent = txt; };
 const log = (t) => { $("log").textContent += t + "\n"; };
 let image = null;
-const meta = {"version": "1.01", "product": "FM-1_907", "pkg": "https://patttf.github.io/fm-106/fm106.fwsc"};
+const meta = {"version": "1.02", "product": "FM-1_907", "pkg": "https://patttf.github.io/fm-106/fm106.fwsc"};
 
 let writing = false, stock = null, stockFileEpoch = 0;
 const lockInstaller = (on) => { writing = on; $("go").disabled = on || !image; $("stock-go").disabled = on || !stock; $("stock-file").disabled = on; $("stock-recovery").disabled = on; };
