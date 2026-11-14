@@ -393,4 +393,16 @@ EXPORT uint16_t *web_screen(void) { return web_fb; }
 EXPORT uint32_t web_screen_draws(void) { return web_draws; }
 EXPORT uint32_t web_now_ms(void) { return fm1_ms; }
 EXPORT uint32_t web_sample_rate(void) { return FS; }
+EXPORT uint32_t web_current_page(void) { return g_current_page; }
+EXPORT uint32_t web_seq_menu_on(void) { return g_seq_menu_on; }
+EXPORT uint32_t web_note_menu_on(void) { return g_note_menu_on; }
+EXPORT uint32_t web_step_n(uint32_t step) {
+    return (step < FM106_NSTEP) ? g_synth.seq.step[step].n : 0;
+}
+EXPORT uint32_t web_step_note(uint32_t step, uint32_t idx) {
+    return (step < FM106_NSTEP && idx < 4) ? g_synth.seq.step[step].note[idx] : 0;
+}
+EXPORT uint32_t web_step_time(uint32_t step) {
+    return (step < FM106_NSTEP) ? g_synth.seq.step[step].time : 0;
+}
 

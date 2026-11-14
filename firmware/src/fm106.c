@@ -292,11 +292,9 @@ static inline void seq_mark_modified(void)
     g_t_seq_edit = fm106_now_ms();
 }
 
-/* SEQ options menu (long-press EDIT on the roll) */
+/* SEQ options menu */
 static uint8_t  g_seq_menu_on   = 0;
 static uint8_t  g_seq_menu_sel  = 0;
-static uint32_t t_edit_down    = 0;
-static uint8_t  edit_held_active= 0;
 static uint32_t t_sel_down     = 0;
 static uint8_t  sel_held_active= 0;
 #define SEQ_MENU_COUNT 8u
@@ -946,24 +944,81 @@ static void seq_ui_clear_all(void)
     g_dirty_screen = 1;
 }
 
+/* Remove any subsequent contiguous TIE steps tied to this note */
+static void seq_remove_associated_ties(uint16_t start_step, uint8_t pitch)
+{
+    fm106_seq_t *s = &g_synth.seq;
+    uint16_t len = s->slen ? s->slen : 1u;
+    if (len <= 1u) return;
+
+    for (uint16_t k = 1u; k < len; k++) {
+        uint16_t step_idx = (uint16_t)((start_step + k) % len);
+        fm106_step_t *st = &s->step[step_idx];
+
+        if (st->time != FM106_ST_TIE) break;
+
+        int8_t note_idx = -1;
+        for (uint8_t i = 0; i < st->n; i++) {
+            if (st->note[i] == pitch) {
+                note_idx = (int8_t)i;
+                break;
+            }
+        }
+
+        if (note_idx >= 0) {
+            for (uint8_t j = (uint8_t)note_idx; j + 1u < st->n; j++) {
+                st->note[j] = st->note[j + 1u];
+            }
+            st->n--;
+            if (st->n == 0u) {
+                st->time = FM106_ST_NOTE;
+                st->acc = 0u;
+                st->vel = 0u;
+                st->flags = 0u;
+                st->probability = 0u;
+                st->ratchet = 0u;
+                fm106_plock_clear_step(s, step_idx);
+            }
+        } else {
+            break;
+        }
+    }
+}
+
 /* SEL short: remove the note at the cursor cell (step x row); none there = wipe the step */
 static void seq_ui_clear_step(void)
 {
     fm1_irq_off();
-    fm106_step_t *st = &g_synth.seq.step[g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)];
+    fm106_seq_t *s = &g_synth.seq;
+    uint16_t len = s->slen ? s->slen : 1u;
+    uint16_t cur = (uint16_t)(g_seq_cursor % len);
+    fm106_step_t *st = &s->step[cur];
     uint8_t found = 0;
     for (uint8_t i = 0; i < st->n; i++) {
         if (st->note[i] == g_seq_row) {
             for (uint8_t j = i; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
             st->n--;
             found = 1;
+            seq_remove_associated_ties(cur, g_seq_row);
+            if (st->time == FM106_ST_TIE && st->n == 0u) {
+                st->time = FM106_ST_NOTE;
+                st->acc = 0u;
+                st->vel = 0u;
+                st->flags = 0u;
+                st->probability = 0u;
+                st->ratchet = 0u;
+                fm106_plock_clear_step(s, cur);
+            }
             break;
         }
     }
     if (!found) {
+        for (uint8_t i = 0; i < st->n; i++) {
+            seq_remove_associated_ties(cur, st->note[i]);
+        }
         st->n = 0; st->time = FM106_ST_NOTE; st->flags = 0;
         st->acc = 0; st->vel = 0; st->probability = 0; st->ratchet = 0;
-        fm106_plock_clear_step(&g_synth.seq, (uint16_t)(g_seq_cursor % (g_synth.seq.slen ? g_synth.seq.slen : 1u)));
+        fm106_plock_clear_step(s, cur);
     }
     g_seq_step_active = 0;
     g_seq_step_held = 0;
@@ -1017,6 +1072,7 @@ static void seq_ui_adjust_vel(int32_t d)
     if (v <= 0) {           /* velocity 0: the note leaves the step */
         for (uint8_t j = (uint8_t)idx; j + 1 < st->n; j++) st->note[j] = st->note[j + 1];
         st->n--;
+        seq_remove_associated_ties(seq_ui_edit_idx(), g_seq_row);
         if (!st->n) { st->time = FM106_ST_NOTE; st->flags = 0; st->acc = 0; st->vel = 0; }
         seq_mark_modified();
         fm1_irq_on();
@@ -1054,6 +1110,9 @@ static void seq_ui_note_adjust(int32_t d)
     case 1: /* TIE (copy preceding notes if empty so tie bar renders visibly) */
         if (st->time == FM106_ST_TIE) {
             st->time = FM106_ST_NOTE;
+            for (uint8_t i = 0; i < st->n; i++) {
+                seq_remove_associated_ties(eidx, st->note[i]);
+            }
         } else {
             st->time = FM106_ST_TIE;
             if (!st->n) {
@@ -1144,6 +1203,9 @@ static void seq_note_entry(uint8_t pitch, uint8_t vel)
         }
         fm106_step_t *st = &s->step[idx % len];
         if (st->time == FM106_ST_TIE) {
+            for (uint8_t i = 0; i < st->n; i++) {
+                seq_remove_associated_ties((uint16_t)(idx % len), st->note[i]);
+            }
             st->n = 0;
             st->time = FM106_ST_NOTE;
         }
@@ -1179,6 +1241,9 @@ static void seq_note_entry(uint8_t pitch, uint8_t vel)
         fm106_step_t *st = &s->step[g_seq_cursor % len];
         if (!g_seq_step_active || g_seq_step_held == 0u) {
             /* First key of a new step gesture: overwrite step cleanly */
+            for (uint8_t i = 0; i < st->n; i++) {
+                seq_remove_associated_ties((uint16_t)(g_seq_cursor % len), st->note[i]);
+            }
             st->n = 1u;
             st->note[0] = pitch;
             st->time = FM106_ST_NOTE;
@@ -1659,19 +1724,27 @@ static void draw_waveform_section(void)
     for (uint32_t s = search_start; s < search_end; s++) {
         int16_t s0 = g_scope_ring[s & (SCOPE_RING_SIZE - 1u)];
         int16_t s1 = g_scope_ring[(s + 1u) & (SCOPE_RING_SIZE - 1u)];
-        if (s0 <= 0 && s1 > 64) {
+        if (s0 <= 0 && s1 > 12) {
             trig = s;
             break;
         }
     }
 
-    /* Render waveform trace in Roland cyan */
+    /* Render waveform trace in Roland cyan with calibrated amplification & soft saturation */
     int32_t prev_y = 45;
     for (int32_t x = 8; x <= 231; x++) {
         int16_t s = g_scope_ring[(trig + (uint32_t)(x - 8)) & (SCOPE_RING_SIZE - 1u)];
-        /* Map +-32768 to +-38 pixels around y=45 */
-        int32_t y = 45 - ((int32_t)s * 38) / 32768;
-        if (y < 4) y = 4;
+        /* 14x amplification brings typical single voice (~1300 Q15) to +-22 px (+-50% reticle) */
+        int32_t v = (int32_t)s * 14;
+        if (v > 18000) {
+            int32_t d = v - 18000;
+            v = 18000 + (int32_t)(((int64_t)15000 * d) / (d + 20000));
+        } else if (v < -18000) {
+            int32_t d = -v - 18000;
+            v = -(18000 + (int32_t)(((int64_t)15000 * d) / (d + 20000)));
+        }
+        int32_t y = 45 - (v * 38) / 32768;
+        if (y < 5) y = 5;
         if (y > 85) y = 85;
         if (x == 8) {
             cv_pset(x, y, C_STRIPE_CYAN);
@@ -1900,10 +1973,18 @@ static void draw_seq_menu(void)
         menu_row_draw(10, (i - 4u) * 18u, i == g_seq_menu_sel, opts[i], val);
     }
     cv_blit(0, 118);
-    draw_seq_fader_guide();
+
+    /* Dedicated menu footer (own clean menu, not seq fader guide) */
+    cv_begin(240, 50, C_BG);
+    cv_rect(6, 4, 228, 42, C_BLACK);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 45, 228, 1, C_LINE_DIV);
+    cv_text(16, 12, &FONT_S, "[SEL] Navigate    [ALGO] Adjust", C_TEXT_DIM);
+    cv_text(16, 28, &FONT_S, "[SEQ] Piano Roll    [HOME] VCF", C_ROLAND_AMBER);
+    cv_blit(0, 190);
 }
 
-/* ---- note options menu (short-press EDIT): glo-menu style ---- */
+/* ---- note options menu: glo-menu style ---- */
 static void note_menu_value(uint32_t i, const fm106_step_t *st, uint16_t eidx, char *val)
 {
     switch (i) {
@@ -1973,7 +2054,15 @@ static void draw_note_menu(void)
         menu_row_draw(10, (i - 4u) * 18u, i == g_note_menu_sel, opts[i], val);
     }
     cv_blit(0, 118);
-    draw_seq_fader_guide();
+
+    /* Dedicated menu footer */
+    cv_begin(240, 50, C_BG);
+    cv_rect(6, 4, 228, 42, C_BLACK);
+    cv_rect(6, 4, 228, 1, C_LINE_DIV);
+    cv_rect(6, 45, 228, 1, C_LINE_DIV);
+    cv_text(16, 12, &FONT_S, "[SEL] Navigate    [ALGO] Adjust", C_TEXT_DIM);
+    cv_text(16, 28, &FONT_S, "[SEQ] Seq Options   [HOME] VCF", C_ROLAND_AMBER);
+    cv_blit(0, 190);
 }
 
 /* fader-style knob guide for the SEQ page bottom (matches draw_faders_section) */
@@ -3387,6 +3476,8 @@ static void fm106_app_frame(void)
         if (g_ui_mode == UI_MODE_NORMAL) {
             /* FX button: cycle Chorus -> Tape -> Shimmer Reverb (jumps to Chorus from outside FX) */
             if (b & (1u << BTN_FX)) {
+                g_seq_menu_on = 0u;
+                g_note_menu_on = 0u;
                 if (g_current_page == PAGE_FX)          g_current_page = PAGE_TAPE;
                 else if (g_current_page == PAGE_TAPE)   g_current_page = PAGE_REVERB;
                 else                                    g_current_page = PAGE_FX;
@@ -3396,16 +3487,13 @@ static void fm106_app_frame(void)
 
         /* Page jump buttons */
         if (b & (1u << BTN_HOME)) {
-            if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ && (g_seq_menu_on || g_note_menu_on)) {
-                g_seq_menu_on = 0u;      /* HOME closes the SEQ menus first */
-                g_note_menu_on = 0u;
-                dirty_screen = 1;
-            } else if (g_ui_mode == UI_MODE_SAVE) {
+            if (g_ui_mode == UI_MODE_SAVE) {
                 if (g_save_del_confirm) {
                     g_save_del_confirm = 0;
                     dirty_screen = 1;
                 } else {
                     g_ui_mode = UI_MODE_NORMAL;
+                    g_current_page = PAGE_VCF;
                     dirty_screen = 1;
                 }
             } else if (g_ui_mode != UI_MODE_NORMAL) {
@@ -3433,23 +3521,20 @@ static void fm106_app_frame(void)
 #else
                     g_ui_mode = UI_MODE_MENU;
 #endif
-                } else g_ui_mode = UI_MODE_NORMAL;
+                } else {
+                    g_ui_mode = UI_MODE_NORMAL;
+                    g_current_page = PAGE_VCF;
+                }
                 dirty_screen = 1;
             } else {
+                g_seq_menu_on = 0u;
+                g_note_menu_on = 0u;
                 g_current_page = PAGE_VCF;
                 dirty_screen = 1;
             }
         }
-        /* SEQ page: EDIT long-press menu + short clear; REC arm; SEL/ENV flags */
+        /* SEQ page: REC arm; SEL/ENV flags */
         if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
-            if (b & (1u << BTN_EDIT)) {
-                if (g_seq_menu_on) {
-                    edit_held_active = 0u; g_seq_menu_on = 0u;
-                }
-                else if (g_note_menu_on) { g_note_menu_on = 0u; }
-                else { t_edit_down = fm1_ms; edit_held_active = 0u; }
-                dirty_screen = 1;
-            }
             if (b & (1u << BTN_REC)) { g_seq_rec_arm ^= 1u; if (!g_seq_rec_arm) count_in_cancel(); g_seq_dirty = 1; dirty_screen = 1; }
             if (b & (1u << BTN_SEL)) {
                 if (g_seq_menu_on) g_seq_menu_sel = (g_seq_menu_sel + SEQ_MENU_COUNT - 1u) % SEQ_MENU_COUNT;
@@ -3465,7 +3550,10 @@ static void fm106_app_frame(void)
             }
         }
         if (b & (1u << BTN_EDIT)) {
-            if (g_ui_mode == UI_MODE_NORMAL && g_current_page != PAGE_SEQ) {
+            if (g_ui_mode == UI_MODE_NORMAL) {
+                /* Loop through all pages: PAGE_VCF .. PAGE_SEQ -> PAGE_VCF */
+                g_seq_menu_on = 0u;
+                g_note_menu_on = 0u;
                 g_current_page = (g_current_page + 1u) % PAGE_COUNT;
                 dirty_screen = 1;
             } else if (g_ui_mode == UI_MODE_CC_MAP) {
@@ -3495,30 +3583,8 @@ static void fm106_app_frame(void)
             }
         }
 
-        /* SEQ EDIT: held 500ms opens options; release short-clears (or clears all) */
+        /* SEQ SEL: held 500ms clears ALL steps; release short clears the step */
         if (g_ui_mode == UI_MODE_NORMAL && g_current_page == PAGE_SEQ) {
-            if (!edit_held_active && !g_seq_menu_on && (fm1_in.buttons & (1u << BTN_EDIT))) {
-                if (fm1_ms - t_edit_down >= 500u) {
-                    edit_held_active = 1u;
-                    g_seq_menu_on = 1u;
-                    g_seq_menu_sel = 0u;
-                    dirty_screen = 1;
-                }
-            }
-            if (rel & (1u << BTN_EDIT)) {
-                if (edit_held_active) {
-                    /* menu opened by hold: it stays up until HOME (or EDIT tap) */
-                    edit_held_active = 0u;
-                    dirty_screen = 1;
-                } else if (!g_seq_menu_on && !g_note_menu_on) {
-                    /* short press: note options for the edited step */
-                    g_note_menu_on = 1u;
-                    g_note_menu_sel = 0u;
-                    dirty_screen = 1;
-                }
-                edit_held_active = 0u;
-            }
-            /* SEQ SEL: held 500ms clears ALL steps; release short clears the step */
             if (!sel_held_active && !g_seq_menu_on && !g_note_menu_on
                 && (fm1_in.buttons & (1u << BTN_SEL))) {
                 if (fm1_ms - t_sel_down >= 500u) {
@@ -3678,13 +3744,34 @@ static void fm106_app_frame(void)
         }
         if (b & (1u << BTN_ARP)) {
             if (g_ui_mode == UI_MODE_NORMAL) {
+                g_seq_menu_on = 0u;
+                g_note_menu_on = 0u;
                 g_current_page = PAGE_ARP;
                 dirty_screen = 1;
             }
         }
         if (b & (1u << BTN_SEQ)) {
             if (g_ui_mode == UI_MODE_NORMAL) {
-                g_current_page = PAGE_SEQ;
+                if (g_current_page == PAGE_SEQ) {
+                    /* Cycle: Piano Roll -> Step Note Options -> Global Seq Options -> Piano Roll */
+                    if (!g_note_menu_on && !g_seq_menu_on) {
+                        g_note_menu_on = 1u;
+                        g_seq_menu_on = 0u;
+                        g_note_menu_sel = 0u;
+                    } else if (g_note_menu_on) {
+                        g_note_menu_on = 0u;
+                        g_seq_menu_on = 1u;
+                        g_seq_menu_sel = 0u;
+                    } else {
+                        g_note_menu_on = 0u;
+                        g_seq_menu_on = 0u;
+                    }
+                } else {
+                    /* Jump to sequencer page (piano roll) */
+                    g_current_page = PAGE_SEQ;
+                    g_seq_menu_on = 0u;
+                    g_note_menu_on = 0u;
+                }
                 dirty_screen = 1;
             }
         }
@@ -3866,6 +3953,10 @@ static void fm106_app_frame(void)
                 int32_t npage = (int32_t)g_current_page + enc_s;
                 if (npage < 0) npage = PAGE_COUNT - 1;
                 if (npage >= PAGE_COUNT) npage = 0;
+                if ((uint8_t)npage != g_current_page) {
+                    g_seq_menu_on = 0u;
+                    g_note_menu_on = 0u;
+                }
                 g_current_page = (uint8_t)npage;
                 dirty_screen = 1;
             }
@@ -4147,10 +4238,10 @@ static void fm106_app_frame(void)
             }
             case PAGE_SEQ: {
                 if (!g_seq_menu_on && !g_note_menu_on) {   /* menus use SELECT/ALGORITHM (glo scheme) */
-                    if (k1) seq_ui_move_cursor(k1 > 0 ? 1 : -1);
-                    if (k2) seq_ui_move_row(k2 > 0 ? 1 : -1);
-                    if (k3) seq_ui_adjust_gate(k3 > 0 ? 1 : -1);
-                    if (k4) seq_ui_adjust_vel(k4 > 0 ? 1 : -1);
+                    if (k1) seq_ui_move_cursor(k1);
+                    if (k2) seq_ui_move_row(k2);
+                    if (k3) seq_ui_adjust_gate(k3);
+                    if (k4) seq_ui_adjust_vel(k4);
                 }
                 break;
             }
