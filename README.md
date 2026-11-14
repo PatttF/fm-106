@@ -159,3 +159,4 @@ python3 tools/fm1_install.py build/fm106.fwsc --yes
 
 GPL-3.0-only. Built upon the Felucca / SLOOP / Dinghy platform by Leo Kuroshita (@kurogedelic), Hügelton Instruments, and isod89. DSP models adapted from Ultramaster KR-106 by Kayrock Screenprinting and Melodee by Kerem Kilic.
 
+You can also try FM-106 in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
