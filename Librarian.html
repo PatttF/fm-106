@@ -984,8 +984,15 @@ footer.keyboard-footer {
                 <select id="select-bank-template" style="flex: 1; font-size: 11px; padding: 6px 8px; background: #0d0e12; color: var(--text-white); border: 1px solid var(--panel-light); border-radius: 3px;">
                     <option value="future_classic">Future Classic (LFO Store) (64 Patches)</option>
                     <option value="lixor">Lixor (64 Patches)</option>
-                    <option value="factory">Factory Presets Copy (64 Patches)</option>
-                    <option value="blank">All Blank / Empty Bank (64 Patches)</option>
+                    <option value="future_classic_and_lixor">Future Classic (UA) + Lixor (UB) (128 Patches)</option>
+                    <option value="factory">Factory Presets Copy (64/128 Patches)</option>
+                    <option value="blank">All Blank / Empty Bank (64/128 Patches)</option>
+                </select>
+                <select id="select-bank-target" style="width: 105px; font-size: 11px; padding: 6px 6px; background: #0d0e12; color: var(--accent-amber); border: 1px solid var(--panel-light); border-radius: 3px;" title="Target User Bank">
+                    <option value="auto">Active User</option>
+                    <option value="UA">User Bank A</option>
+                    <option value="UB">User Bank B</option>
+                    <option value="both">Both (128 Slots)</option>
                 </select>
                 <button class="synth-btn primary" id="btn-load-template" style="padding: 6px 12px; font-size: 11px;" title="Load into selected User Bank">Load</button>
             </div>
@@ -1128,6 +1135,15 @@ footer.keyboard-footer {
                             <div class="switch-opt" data-val="0">OFF</div>
                         </div>
                         <div class="fader-label">SAW</div>
+                    </div>
+
+                    <!-- Sub Wave Switch (SUBSW) -->
+                    <div class="switch-control">
+                        <div class="switch-options" id="sw-sub">
+                            <div class="switch-opt" data-val="1">ON</div>
+                            <div class="switch-opt active" data-val="0">OFF</div>
+                        </div>
+                        <div class="fader-label">SUBSW</div>
                     </div>
 
                     <!-- Sub Level Slider -->
@@ -1360,6 +1376,163 @@ footer.keyboard-footer {
                             <span>POLY II</span>
                             <span class="led-indicator"></span>
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BENDER (Pitch Bend to DCO / VCF) -->
+            <div class="synth-module">
+                <div class="module-title">BENDER</div>
+                <div class="module-controls">
+                    <div class="fader-control" data-ctrl="b-dco">
+                        <div class="fader-val" id="val-b-dco">0</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-b-dco"></div>
+                            <input type="range" class="fader-input" id="fader-b-dco" min="0" max="127" value="0">
+                        </div>
+                        <div class="fader-label">B.DCO</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="b-vcf">
+                        <div class="fader-val" id="val-b-vcf">0</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-b-vcf"></div>
+                            <input type="range" class="fader-input" id="fader-b-vcf" min="0" max="127" value="0">
+                        </div>
+                        <div class="fader-label">B.VCF</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ARPEGGIATOR -->
+            <div class="synth-module amber-top">
+                <div class="module-title">ARPEGGIATOR</div>
+                <div class="module-controls">
+                    <div class="switch-control">
+                        <div class="switch-options" id="sw-arp-on">
+                            <div class="switch-opt" data-val="1">ON</div>
+                            <div class="switch-opt active" data-val="0">OFF</div>
+                        </div>
+                        <div class="fader-label">ARP</div>
+                    </div>
+                    <div class="switch-control" style="width: 52px;">
+                        <div class="switch-options" id="sw-arp-mode">
+                            <div class="switch-opt active" data-val="0">UP</div>
+                            <div class="switch-opt" data-val="1">U&D</div>
+                            <div class="switch-opt" data-val="2">DN</div>
+                        </div>
+                        <div class="fader-label">MODE</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="arp-rate">
+                        <div class="fader-val" id="val-arp-rate">64</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-arp-rate"></div>
+                            <input type="range" class="fader-input" id="fader-arp-rate" min="0" max="127" value="64">
+                        </div>
+                        <div class="fader-label">RATE</div>
+                    </div>
+                    <div class="switch-control" style="width: 52px;">
+                        <div class="switch-options" id="sw-arp-range">
+                            <div class="switch-opt active" data-val="1">1 OCT</div>
+                            <div class="switch-opt" data-val="2">2 OCT</div>
+                            <div class="switch-opt" data-val="3">3 OCT</div>
+                        </div>
+                        <div class="fader-label">RANGE</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- VINTAGE TAPE ECHO -->
+            <div class="synth-module red-top" style="grid-column: span 2;">
+                <div class="module-title">TAPE PROCESSOR (VINTAGE TAPE ECHO)</div>
+                <div class="module-controls">
+                    <div class="switch-control" style="width: 60px;">
+                        <div class="switch-options" id="sw-tape-type">
+                            <div class="switch-opt active" data-val="0">OFF</div>
+                            <div class="switch-opt" data-val="1">WARM</div>
+                            <div class="switch-opt" data-val="2">VINT</div>
+                            <div class="switch-opt" data-val="3">LO-FI</div>
+                        </div>
+                        <div class="fader-label">TYPE</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="tape-mix">
+                        <div class="fader-val" id="val-tape-mix">0</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-tape-mix"></div>
+                            <input type="range" class="fader-input" id="fader-tape-mix" min="0" max="127" value="0">
+                        </div>
+                        <div class="fader-label">MIX</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="tape-rate">
+                        <div class="fader-val" id="val-tape-rate">0</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-tape-rate"></div>
+                            <input type="range" class="fader-input" id="fader-tape-rate" min="0" max="127" value="0">
+                        </div>
+                        <div class="fader-label">RATE</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="tape-char">
+                        <div class="fader-val" id="val-tape-char">0</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-tape-char"></div>
+                            <input type="range" class="fader-input" id="fader-tape-char" min="0" max="127" value="0">
+                        </div>
+                        <div class="fader-label">CHAR</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SHIMMER REVERB -->
+            <div class="synth-module amber-top" style="grid-column: span 2;">
+                <div class="module-title">SHIMMER REVERB (80s STEREO REVERB)</div>
+                <div class="module-controls">
+                    <div class="switch-control">
+                        <div class="switch-options" id="sw-rev-on">
+                            <div class="switch-opt" data-val="1">ON</div>
+                            <div class="switch-opt active" data-val="0">OFF</div>
+                        </div>
+                        <div class="fader-label">REV</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="rev-mix">
+                        <div class="fader-val" id="val-rev-mix">48</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-rev-mix"></div>
+                            <input type="range" class="fader-input" id="fader-rev-mix" min="0" max="127" value="48">
+                        </div>
+                        <div class="fader-label">MIX</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="rev-decay">
+                        <div class="fader-val" id="val-rev-decay">84</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-rev-decay"></div>
+                            <input type="range" class="fader-input" id="fader-rev-decay" min="0" max="127" value="84">
+                        </div>
+                        <div class="fader-label">DECAY</div>
+                    </div>
+                    <div class="fader-control" data-ctrl="rev-shim">
+                        <div class="fader-val" id="val-rev-shim">68</div>
+                        <div class="fader-track-wrap">
+                            <div class="fader-track-ticks"></div>
+                            <div class="fader-slot"></div>
+                            <div class="fader-cap" id="cap-rev-shim"></div>
+                            <input type="range" class="fader-input" id="fader-rev-shim" min="0" max="127" value="68">
+                        </div>
+                        <div class="fader-label">SHIMMER</div>
                     </div>
                 </div>
             </div>
@@ -4415,7 +4588,22 @@ function makeBlankPreset(idx) {
         sliders: [0, 0, 0, 0, 0, 100, 0, 0, 0, 0, 100, 0, 64, 127, 20, 0],
         sw1: 0x12, // 8', Saw on, Chorus OFF
         sw2: 0x10, // HPF Flat (mode 1)
-        assign: 1  // POLY I
+        assign: 1, // POLY I
+        b_dco: 0,
+        b_vcf: 0,
+        sub_sw: 0,
+        arp_on: 0,
+        arp_mode: 0,
+        arp_rate: 64,
+        arp_range: 1,
+        tape_type: 0,
+        tape_mix: 0,
+        tape_rate: 0,
+        tape_char: 0,
+        rev_on: 0,
+        rev_mix: 48,
+        rev_decay: 84,
+        rev_shim: 68
     };
 }
 
@@ -4501,13 +4689,13 @@ function updateSyncStatus(text) {
 }
 
 // Fader Cap Positioning
-function updateFaderCap(ctrlId, val) {
+function updateFaderCap(idOrCtrl, val) {
     const sliderIds = [
         'lfo-rate', 'lfo-delay', 'dco-lfo', 'dco-pwm', 'dco-noise',
         'vcf-cutoff', 'vcf-res', 'vcf-env', 'vcf-lfo', 'vcf-kybd',
         'vca-level', 'env-a', 'env-d', 'env-s', 'env-r', 'dco-sub'
     ];
-    const id = sliderIds[ctrlId];
+    const id = typeof idOrCtrl === 'number' ? sliderIds[idOrCtrl] : idOrCtrl;
     if (!id) return;
     const cap = document.getElementById(`cap-${id}`);
     const valEl = document.getElementById(`val-${id}`);
@@ -4604,6 +4792,28 @@ function loadPresetToUI(preset) {
     // Voice Assign Mode (0 = MONO, 1 = POLY I, 2 = POLY II)
     const assign = (preset.assign !== undefined) ? preset.assign : 1;
     setAssignActive(assign);
+
+    // Extended controls
+    updateFaderCap('b-dco', preset.b_dco !== undefined ? preset.b_dco : 0);
+    updateFaderCap('b-vcf', preset.b_vcf !== undefined ? preset.b_vcf : 0);
+
+    const subOn = preset.sub_sw !== undefined ? preset.sub_sw : (preset.sliders && preset.sliders[15] > 0 ? 1 : 0);
+    setSwitchGroupActive('sw-sub', 'val', subOn);
+
+    setSwitchGroupActive('sw-arp-on', 'val', preset.arp_on !== undefined ? preset.arp_on : 0);
+    setSwitchGroupActive('sw-arp-mode', 'val', preset.arp_mode !== undefined ? preset.arp_mode : 0);
+    updateFaderCap('arp-rate', preset.arp_rate !== undefined ? preset.arp_rate : 64);
+    setSwitchGroupActive('sw-arp-range', 'val', preset.arp_range !== undefined ? preset.arp_range : 1);
+
+    setSwitchGroupActive('sw-tape-type', 'val', preset.tape_type !== undefined ? preset.tape_type : 0);
+    updateFaderCap('tape-mix', preset.tape_mix !== undefined ? preset.tape_mix : 0);
+    updateFaderCap('tape-rate', preset.tape_rate !== undefined ? preset.tape_rate : 0);
+    updateFaderCap('tape-char', preset.tape_char !== undefined ? preset.tape_char : 0);
+
+    setSwitchGroupActive('sw-rev-on', 'val', preset.rev_on !== undefined ? preset.rev_on : 0);
+    updateFaderCap('rev-mix', preset.rev_mix !== undefined ? preset.rev_mix : 48);
+    updateFaderCap('rev-decay', preset.rev_decay !== undefined ? preset.rev_decay : 84);
+    updateFaderCap('rev-shim', preset.rev_shim !== undefined ? preset.rev_shim : 68);
 }
 
 function setSwitchGroupActive(containerId, attr, val) {
@@ -4691,12 +4901,73 @@ function readUIToPreset() {
     const assignBtn = document.querySelector('.assign-btn.active');
     const assign = assignBtn ? parseInt(assignBtn.dataset.assign, 10) : 1;
 
+    // Extended parameters
+    const bDcoEl = document.getElementById('fader-b-dco');
+    const b_dco = bDcoEl ? parseInt(bDcoEl.value, 10) : 0;
+
+    const bVcfEl = document.getElementById('fader-b-vcf');
+    const b_vcf = bVcfEl ? parseInt(bVcfEl.value, 10) : 0;
+
+    const subOpt = document.querySelector('#sw-sub .switch-opt.active');
+    const sub_sw = subOpt ? parseInt(subOpt.dataset.val, 10) : (sliders[15] > 0 ? 1 : 0);
+
+    const arpOnOpt = document.querySelector('#sw-arp-on .switch-opt.active');
+    const arp_on = arpOnOpt ? parseInt(arpOnOpt.dataset.val, 10) : 0;
+
+    const arpModeOpt = document.querySelector('#sw-arp-mode .switch-opt.active');
+    const arp_mode = arpModeOpt ? parseInt(arpModeOpt.dataset.val, 10) : 0;
+
+    const arpRateEl = document.getElementById('fader-arp-rate');
+    const arp_rate = arpRateEl ? parseInt(arpRateEl.value, 10) : 64;
+
+    const arpRangeOpt = document.querySelector('#sw-arp-range .switch-opt.active');
+    const arp_range = arpRangeOpt ? parseInt(arpRangeOpt.dataset.val, 10) : 1;
+
+    const tapeTypeOpt = document.querySelector('#sw-tape-type .switch-opt.active');
+    const tape_type = tapeTypeOpt ? parseInt(tapeTypeOpt.dataset.val, 10) : 0;
+
+    const tapeMixEl = document.getElementById('fader-tape-mix');
+    const tape_mix = tapeMixEl ? parseInt(tapeMixEl.value, 10) : 0;
+
+    const tapeRateEl = document.getElementById('fader-tape-rate');
+    const tape_rate = tapeRateEl ? parseInt(tapeRateEl.value, 10) : 0;
+
+    const tapeCharEl = document.getElementById('fader-tape-char');
+    const tape_char = tapeCharEl ? parseInt(tapeCharEl.value, 10) : 0;
+
+    const revOnOpt = document.querySelector('#sw-rev-on .switch-opt.active');
+    const rev_on = revOnOpt ? parseInt(revOnOpt.dataset.val, 10) : 0;
+
+    const revMixEl = document.getElementById('fader-rev-mix');
+    const rev_mix = revMixEl ? parseInt(revMixEl.value, 10) : 48;
+
+    const revDecayEl = document.getElementById('fader-rev-decay');
+    const rev_decay = revDecayEl ? parseInt(revDecayEl.value, 10) : 84;
+
+    const revShimEl = document.getElementById('fader-rev-shim');
+    const rev_shim = revShimEl ? parseInt(revShimEl.value, 10) : 68;
+
     return {
         name: name,
         sliders: sliders,
         sw1: sw1,
         sw2: sw2,
-        assign: assign
+        assign: assign,
+        b_dco: b_dco,
+        b_vcf: b_vcf,
+        sub_sw: sub_sw,
+        arp_on: arp_on,
+        arp_mode: arp_mode,
+        arp_rate: arp_rate,
+        arp_range: arp_range,
+        tape_type: tape_type,
+        tape_mix: tape_mix,
+        tape_rate: tape_rate,
+        tape_char: tape_char,
+        rev_on: rev_on,
+        rev_mix: rev_mix,
+        rev_decay: rev_decay,
+        rev_shim: rev_shim
     };
 }
 
@@ -4794,13 +5065,15 @@ function deleteCurrentPatch() {
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName('');
         const p = allPresets[selectedSlot];
-        // F0 41 30 chByte localSlot [16 sliders] sw1 sw2 [16 name bytes] F7
+        const extBytes = encodeExtendedParams(p);
+        // F0 41 30 chByte localSlot [16 sliders] sw1 sw2 [16 name bytes] [15 ext bytes] F7
         const msg = [
             0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
             ...p.sliders,
             p.sw1,
             p.sw2,
             ...nameBytes,
+            ...extBytes,
             0xF7
         ];
         midiOutput.send(msg);
@@ -4810,10 +5083,10 @@ function deleteCurrentPatch() {
     showToast(`Cleared user preset ${slotCode}.`, 'info');
 }
 
-function selectSlot(idx) {
+function selectSlot(idx, saveCurrentUI = true) {
     if (idx < 0) idx = 0;
     if (idx >= 256) idx = 255;
-    if (selectedSlot >= 128) {
+    if (saveCurrentUI && selectedSlot >= 128) {
         allPresets[selectedSlot] = readUIToPreset();
     }
     selectedSlot = idx;
@@ -4962,6 +5235,48 @@ function encodePatchName(name) {
     return bytes;
 }
 
+// 15-byte FM-106 extended patch block
+function encodeExtendedParams(p) {
+    return [
+        (p.b_dco !== undefined ? p.b_dco : 0) & 0x7F,
+        (p.b_vcf !== undefined ? p.b_vcf : 0) & 0x7F,
+        (p.arp_rate !== undefined ? p.arp_rate : 64) & 0x7F,
+        (p.arp_mode !== undefined ? p.arp_mode : 0) & 0x03,
+        (p.arp_range !== undefined ? p.arp_range : 1) & 0x03,
+        (p.sub_sw !== undefined ? p.sub_sw : (p.sliders && p.sliders[15] > 0 ? 1 : 0)) & 0x01,
+        (p.tape_type !== undefined ? p.tape_type : 0) & 0x03,
+        (p.tape_mix !== undefined ? p.tape_mix : 0) & 0x7F,
+        (p.tape_rate !== undefined ? p.tape_rate : 0) & 0x7F,
+        (p.tape_char !== undefined ? p.tape_char : 0) & 0x7F,
+        (p.rev_on !== undefined ? p.rev_on : 0) & 0x01,
+        (p.rev_mix !== undefined ? p.rev_mix : 48) & 0x7F,
+        (p.rev_decay !== undefined ? p.rev_decay : 84) & 0x7F,
+        (p.rev_shim !== undefined ? p.rev_shim : 68) & 0x7F,
+        (p.assign !== undefined ? p.assign : 1) & 0x03
+    ];
+}
+
+function encodeExtendedDefaults(p = {}) {
+    return {
+        b_dco: p.b_dco !== undefined ? p.b_dco : 0,
+        b_vcf: p.b_vcf !== undefined ? p.b_vcf : 0,
+        sub_sw: p.sub_sw !== undefined ? p.sub_sw : (p.sliders && p.sliders[15] > 0 ? 1 : 0),
+        arp_on: p.arp_on !== undefined ? p.arp_on : 0,
+        arp_mode: p.arp_mode !== undefined ? p.arp_mode : 0,
+        arp_rate: p.arp_rate !== undefined ? p.arp_rate : 64,
+        arp_range: p.arp_range !== undefined ? p.arp_range : 1,
+        tape_type: p.tape_type !== undefined ? p.tape_type : 0,
+        tape_mix: p.tape_mix !== undefined ? p.tape_mix : 0,
+        tape_rate: p.tape_rate !== undefined ? p.tape_rate : 0,
+        tape_char: p.tape_char !== undefined ? p.tape_char : 0,
+        rev_on: p.rev_on !== undefined ? p.rev_on : 0,
+        rev_mix: p.rev_mix !== undefined ? p.rev_mix : 48,
+        rev_decay: p.rev_decay !== undefined ? p.rev_decay : 84,
+        rev_shim: p.rev_shim !== undefined ? p.rev_shim : 68,
+        assign: p.assign !== undefined ? p.assign : 1
+    };
+}
+
 // Handle incoming SysEx from FM-106
 function handleMIDIMessage(event) {
     const data = event.data;
@@ -5005,12 +5320,36 @@ function handleMIDIMessage(event) {
                 }
             }
 
+            let ext = {};
+            if (data.length >= 55) {
+                ext = {
+                    b_dco: data[39] & 0x7F,
+                    b_vcf: data[40] & 0x7F,
+                    arp_rate: data[41] & 0x7F,
+                    arp_mode: data[42] & 0x03,
+                    arp_range: (data[43] < 1 || data[43] > 3) ? 1 : data[43],
+                    sub_sw: data[44] ? 1 : 0,
+                    tape_type: data[45] > 3 ? 0 : data[45],
+                    tape_mix: data[46] & 0x7F,
+                    tape_rate: data[47] & 0x7F,
+                    tape_char: data[48] & 0x7F,
+                    rev_on: data[49] ? 1 : 0,
+                    rev_mix: data[50] & 0x7F,
+                    rev_decay: data[51] & 0x7F,
+                    rev_shim: data[52] & 0x7F,
+                    assign: data[53] > 2 ? 1 : data[53]
+                };
+            } else {
+                ext = encodeExtendedDefaults({ sliders: sliders });
+            }
+
             allPresets[slotIdx] = {
                 name: name,
                 isBlank: isBlank,
                 sliders: sliders,
                 sw1: sw1,
-                sw2: sw2
+                sw2: sw2,
+                ...ext
             };
 
             if (selectedSlot === slotIdx) {
@@ -5056,6 +5395,22 @@ function sendIPR(ctrl, val) {
     flashTx();
 }
 
+function sendParamChange(paramIdx, ccNum, val) {
+    if (paramIdx !== null && paramIdx !== undefined) {
+        if (paramIdx === 'arp_enable') {
+            sendIPR(0x13, val ? 1 : 0);
+        } else if (paramIdx === 'assign') {
+            sendIPR(0x12, val);
+        } else {
+            sendIPR(0x40 + paramIdx, val);
+        }
+    }
+    if (ccNum !== null && ccNum !== undefined && midiOutput) {
+        const ch = getMidiChannel();
+        midiOutput.send([0xB0 | (ch & 0x0F), ccNum, val & 0x7F]);
+    }
+}
+
 // Audition Preset to Manual Edit Buffer (SysEx 0x31)
 function auditionCurrentPreset() {
     if (selectedSlot >= 128) {
@@ -5068,18 +5423,23 @@ function auditionCurrentPreset() {
     }
     const ch = getMidiChannel();
     const nameBytes = encodePatchName(p.name);
-    // F0 41 31 0n 00 [16 sliders] sw1 sw2 [16 name bytes] F7
+    const extBytes = encodeExtendedParams(p);
+    // F0 41 31 0n 00 [16 sliders] sw1 sw2 [16 name bytes] [15 ext bytes] F7
     const msg = [
         0xF0, 0x41, 0x31, ch & 0x0F, 0x00,
         ...p.sliders,
         p.sw1,
         p.sw2,
         ...nameBytes,
+        ...extBytes,
         0xF7
     ];
     midiOutput.send(msg);
     if (p.assign !== undefined) {
         sendIPR(0x12, p.assign);
+    }
+    if (p.arp_on !== undefined) {
+        sendIPR(0x13, p.arp_on);
     }
     flashTx();
     showToast(`Auditioning "${p.name}" on FM-106`, 'success');
@@ -5104,13 +5464,15 @@ function saveCurrentSlotToHardware() {
     const localSlot = selectedSlot % 64;
     const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
     const nameBytes = encodePatchName(p.name);
-    // F0 41 30 chByte localSlot [16 sliders] sw1 sw2 [16 name bytes] F7
+    const extBytes = encodeExtendedParams(p);
+    // F0 41 30 chByte localSlot [16 sliders] sw1 sw2 [16 name bytes] [15 ext bytes] F7
     const msg = [
         0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
         ...p.sliders,
         p.sw1,
         p.sw2,
         ...nameBytes,
+        ...extBytes,
         0xF7
     ];
     midiOutput.send(msg);
@@ -5191,12 +5553,14 @@ async function executeBurn(type) {
             const localSlot = i;
             const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
             const nameBytes = encodePatchName(p.name);
+            const extBytes = encodeExtendedParams(p);
             const msg = [
                 0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
                 ...p.sliders,
                 p.sw1,
                 p.sw2,
                 ...nameBytes,
+                ...extBytes,
                 0xF7
             ];
             midiOutput.send(msg);
@@ -5235,12 +5599,14 @@ async function executeBurn(type) {
             const localSlot = i % 64;
             const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
             const nameBytes = encodePatchName(p.name);
+            const extBytes = encodeExtendedParams(p);
             const msg = [
                 0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
                 ...p.sliders,
                 p.sw1,
                 p.sw2,
                 ...nameBytes,
+                ...extBytes,
                 0xF7
             ];
             midiOutput.send(msg);
@@ -5310,12 +5676,14 @@ async function sendBankToHardware(targetBank = null) {
         const localSlot = i;
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName(p.name);
+        const extBytes = encodeExtendedParams(p);
         const msg = [
             0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
             ...p.sliders,
             p.sw1,
             p.sw2,
             ...nameBytes,
+            ...extBytes,
             0xF7
         ];
         midiOutput.send(msg);
@@ -5345,12 +5713,14 @@ async function sendAllToHardware() {
         const localSlot = i % 64;
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName(p.name);
+        const extBytes = encodeExtendedParams(p);
         const msg = [
             0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
             ...p.sliders,
             p.sw1,
             p.sw2,
             ...nameBytes,
+            ...extBytes,
             0xF7
         ];
         midiOutput.send(msg);
@@ -5419,9 +5789,74 @@ async function readAllFromHardware(interactive = true) {
 
 // Load Soundset Bank Template into User Bank
 function loadBankTemplate(templateKey, targetBank = null) {
-    const bankToUse = targetBank || (currentBank === 'UB' ? 'UB' : 'UA');
-    const startIdx = getBankStartIdx(bankToUse);
-    const prefix = bankToUse === 'UB' ? 'UB' : 'UA';
+    const targetSel = targetBank || (document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto');
+    let effectiveTarget = targetSel;
+    if (effectiveTarget === 'auto') {
+        effectiveTarget = (currentBank === 'UB') ? 'UB' : 'UA';
+    }
+
+    if (effectiveTarget === 'both' || templateKey === 'future_classic_and_lixor') {
+        if (templateKey === 'future_classic_and_lixor') {
+            const fc = SOUNDSET_BANKS['future_classic'];
+            const lx = SOUNDSET_BANKS['lixor'];
+            for (let i = 0; i < 64; i++) {
+                const p = JSON.parse(JSON.stringify(fc.patches[i]));
+                const grp = Math.floor(i / 8) + 1;
+                const ptc = (i % 8) + 1;
+                p.name = `UA${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                p.isBlank = false;
+                allPresets[128 + i] = { ...p, ...encodeExtendedDefaults(p) };
+            }
+            for (let i = 0; i < 64; i++) {
+                const p = JSON.parse(JSON.stringify(lx.patches[i]));
+                const grp = Math.floor(i / 8) + 1;
+                const ptc = (i % 8) + 1;
+                p.name = `UB${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                p.isBlank = false;
+                allPresets[192 + i] = { ...p, ...encodeExtendedDefaults(p) };
+            }
+            showToast('Loaded Future Classic (UA) + Lixor (UB) into all 128 User slots!', 'success');
+        } else if (templateKey === 'blank') {
+            for (let i = 128; i < 256; i++) {
+                allPresets[i] = makeBlankPreset(i);
+            }
+            showToast('Cleared all 128 User slots to blank presets.', 'info');
+        } else if (templateKey === 'factory') {
+            for (let i = 0; i < 128; i++) {
+                const copy = JSON.parse(JSON.stringify(FACTORY_PRESETS[i]));
+                const prefix = i < 64 ? 'UA' : 'UB';
+                const subIdx = i % 64;
+                const grp = Math.floor(subIdx / 8) + 1;
+                const ptc = (subIdx % 8) + 1;
+                copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
+                copy.isBlank = false;
+                allPresets[128 + i] = { ...copy, ...encodeExtendedDefaults(copy) };
+            }
+            showToast('Loaded Factory presets into both User Banks (128 patches)!', 'success');
+        } else if (SOUNDSET_BANKS[templateKey]) {
+            const soundset = SOUNDSET_BANKS[templateKey];
+            for (let i = 0; i < 64; i++) {
+                const p = JSON.parse(JSON.stringify(soundset.patches[i]));
+                const grp = Math.floor(i / 8) + 1;
+                const ptc = (i % 8) + 1;
+                const clean = p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '').trim();
+                allPresets[128 + i] = { ...p, name: `UA${grp}${ptc} ${clean}`, isBlank: false, ...encodeExtendedDefaults(p) };
+                allPresets[192 + i] = { ...p, name: `UB${grp}${ptc} ${clean}`, isBlank: false, ...encodeExtendedDefaults(p) };
+            }
+            showToast(`Loaded "${soundset.name}" into both User Banks (128 patches)!`, 'success');
+        }
+
+        currentBank = 'UA';
+        updateBankTabs();
+        selectSlot(128, false);
+        renderPresetList();
+        return;
+    }
+
+    // Single bank target: 'UA' or 'UB'
+    const bankToUse = effectiveTarget === 'UB' ? 'UB' : 'UA';
+    const startIdx = bankToUse === 'UB' ? 192 : 128;
+    const prefix = bankToUse;
 
     if (templateKey === 'blank') {
         for (let i = 0; i < 64; i++) {
@@ -5429,34 +5864,33 @@ function loadBankTemplate(templateKey, targetBank = null) {
         }
         showToast(`Cleared ${bankToUse} to blank presets.`, 'info');
     } else if (templateKey === 'factory') {
+        const factStart = bankToUse === 'UB' ? 64 : 0;
         for (let i = 0; i < 64; i++) {
-            const copy = JSON.parse(JSON.stringify(FACTORY_PRESETS[i]));
-            const subIdx = i % 64;
-            const grp = Math.floor(subIdx / 8) + 1;
-            const ptc = (subIdx % 8) + 1;
+            const copy = JSON.parse(JSON.stringify(FACTORY_PRESETS[factStart + i]));
+            const grp = Math.floor(i / 8) + 1;
+            const ptc = (i % 8) + 1;
             copy.name = copy.name.replace(/^[AB]\d\d\s*/, `${prefix}${grp}${ptc} `);
             copy.isBlank = false;
-            allPresets[startIdx + i] = copy;
+            allPresets[startIdx + i] = { ...copy, ...encodeExtendedDefaults(copy) };
         }
         showToast(`Loaded Factory defaults into ${bankToUse}.`, 'success');
     } else if (SOUNDSET_BANKS[templateKey]) {
         const soundset = SOUNDSET_BANKS[templateKey];
         for (let i = 0; i < 64; i++) {
             const p = JSON.parse(JSON.stringify(soundset.patches[i]));
-            const subIdx = i % 64;
-            const grp = Math.floor(subIdx / 8) + 1;
-            const ptc = (subIdx % 8) + 1;
+            const grp = Math.floor(i / 8) + 1;
+            const ptc = (i % 8) + 1;
             p.name = `${prefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
             p.isBlank = false;
-            allPresets[startIdx + i] = p;
+            allPresets[startIdx + i] = { ...p, ...encodeExtendedDefaults(p) };
         }
         showToast(`Loaded "${soundset.name}" into ${bankToUse}!`, 'success');
     }
 
-    if (currentBank === bankToUse) {
-        selectSlot(startIdx);
-        renderPresetList();
-    }
+    currentBank = bankToUse;
+    updateBankTabs();
+    selectSlot(startIdx, false);
+    renderPresetList();
 }
 
 // Playable Virtual Keyboard
@@ -5666,14 +6100,39 @@ function parseSyxBuffer(buf) {
                         name = name.trim();
                     }
                     if (!name) name = `${indexToSlot(slot)} Imported`;
+
+                    let ext = {};
+                    if (msgLen >= 55) {
+                        ext = {
+                            b_dco: bytes[i + 39] & 0x7F,
+                            b_vcf: bytes[i + 40] & 0x7F,
+                            arp_rate: bytes[i + 41] & 0x7F,
+                            arp_mode: bytes[i + 42] & 0x03,
+                            arp_range: (bytes[i + 43] < 1 || bytes[i + 43] > 3) ? 1 : bytes[i + 43],
+                            sub_sw: bytes[i + 44] ? 1 : 0,
+                            tape_type: bytes[i + 45] > 3 ? 0 : bytes[i + 45],
+                            tape_mix: bytes[i + 46] & 0x7F,
+                            tape_rate: bytes[i + 47] & 0x7F,
+                            tape_char: bytes[i + 48] & 0x7F,
+                            rev_on: bytes[i + 49] ? 1 : 0,
+                            rev_mix: bytes[i + 50] & 0x7F,
+                            rev_decay: bytes[i + 51] & 0x7F,
+                            rev_shim: bytes[i + 52] & 0x7F,
+                            assign: bytes[i + 53] > 2 ? 1 : bytes[i + 53]
+                        };
+                    } else {
+                        ext = encodeExtendedDefaults({ sliders: sliders });
+                    }
+
                     parsedPatches.push({
                         slot: slot,
                         preset: {
                             name: name,
+                            isBlank: false,
                             sliders: sliders,
                             sw1: sw1,
                             sw2: sw2,
-                            assign: 1
+                            ...ext
                         }
                     });
                 }
@@ -6038,7 +6497,16 @@ function decodeJunoTapeWav(arrayBuffer) {
 function handleImportedFile(file) {
     const reader = new FileReader();
     const fname = file.name.toLowerCase();
-    const baseTargetSlot = currentBank === 'UB' ? 192 : 128;
+    const targetBankSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
+    let baseTargetSlot = 128;
+    if (targetBankSel === 'UB') {
+        baseTargetSlot = 192;
+    } else if (targetBankSel === 'UA' || targetBankSel === 'both') {
+        baseTargetSlot = 128;
+    } else {
+        baseTargetSlot = currentBank === 'UB' ? 192 : 128;
+    }
+    const bankPrefix = baseTargetSlot >= 192 ? 'UB' : 'UA';
 
     if (fname.endsWith('.json')) {
         reader.onload = (e) => {
@@ -6049,26 +6517,35 @@ function handleImportedFile(file) {
                     data.forEach((p, idx) => {
                         const targetSlot = baseTargetSlot + idx;
                         if (targetSlot < 256) {
+                            let norm = null;
                             if (p.data && Array.isArray(p.data) && p.data.length >= 18) {
-                                allPresets[targetSlot] = {
-                                    name: p.name || `${indexToSlot(targetSlot)} Patch`,
+                                norm = {
+                                    name: p.name || 'Patch',
                                     sliders: p.data.slice(0, 16),
                                     sw1: p.data[16],
                                     sw2: p.data[17],
-                                    assign: (p.assign !== undefined) ? p.assign : (p.data.length > 18 ? p.data[18] : 1)
+                                    ...encodeExtendedDefaults(p)
                                 };
-                                importedCount++;
                             } else if (p.sliders && p.sliders.length === 16) {
-                                allPresets[targetSlot] = {
-                                    ...p,
-                                    assign: (p.assign !== undefined) ? p.assign : 1
-                                };
+                                norm = { ...p, ...encodeExtendedDefaults(p) };
+                            }
+                            if (norm) {
+                                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
+                                const subIdx = targetSlot % 64;
+                                const grp = Math.floor(subIdx / 8) + 1;
+                                const ptc = (subIdx % 8) + 1;
+                                norm.name = `${pfix}${grp}${ptc} ${norm.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                                norm.isBlank = false;
+                                allPresets[targetSlot] = norm;
                                 importedCount++;
                             }
                         }
                     });
                     showToast(`Imported ${importedCount} patches into User Bank! Factory presets preserved.`, 'success');
-                    selectSlot(baseTargetSlot);
+                    currentBank = bankPrefix;
+                    updateBankTabs();
+                    selectSlot(baseTargetSlot, false);
+                    renderPresetList();
                 }
             } catch (err) {
                 showToast('Invalid JSON preset file: ' + err.message, 'error');
@@ -6081,15 +6558,17 @@ function handleImportedFile(file) {
                 const patch = parseTalPjunoxl(e.target.result);
                 if (!patch) throw new Error("Invalid or empty .pjunoxl preset.");
                 const targetSlot = selectedSlot >= 128 ? selectedSlot : baseTargetSlot;
-                const bankPrefix = targetSlot >= 192 ? 'UB' : 'UA';
+                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
                 const subIdx = targetSlot % 64;
                 const grp = Math.floor(subIdx / 8) + 1;
                 const ptc = (subIdx % 8) + 1;
-                patch.name = `${bankPrefix}${grp}${ptc} ${patch.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                patch.name = `${pfix}${grp}${ptc} ${patch.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
                 patch.isBlank = false;
-                allPresets[targetSlot] = patch;
+                allPresets[targetSlot] = { ...patch, ...encodeExtendedDefaults(patch) };
                 showToast(`Loaded preset "${patch.name}" into User slot ${indexToSlot(targetSlot)}!`, 'success');
-                selectSlot(targetSlot);
+                currentBank = pfix;
+                updateBankTabs();
+                selectSlot(targetSlot, false);
                 renderPresetList();
             } catch (err) {
                 console.error(".pjunoxl preset import error:", err);
@@ -6106,25 +6585,28 @@ function handleImportedFile(file) {
                     showToast('No Juno-106 tape patches found in WAV file.', 'error');
                     return;
                 }
-                const targetBankName = currentBank === 'UB' ? 'User Bank B' : 'User Bank A';
-                const prefix = currentBank === 'UB' ? 'UB' : 'UA';
+                const targetBankName = bankPrefix === 'UB' ? 'User Bank B' : 'User Bank A';
                 patches.forEach((p, idx) => {
                     const targetSlot = baseTargetSlot + idx;
                     if (targetSlot < 256) {
+                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
                         const grp = Math.floor(idx / 8) + 1;
                         const ptc = (idx % 8) + 1;
                         const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
                         allPresets[targetSlot] = {
-                            name: `${prefix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
+                            name: `${pfix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
                             isBlank: false,
                             sliders: p.sliders,
                             sw1: p.sw1,
-                            sw2: p.sw2
+                            sw2: p.sw2,
+                            ...encodeExtendedDefaults(p)
                         };
                     }
                 });
                 showToast(`Loaded ${patches.length} patches from Tape Cassette WAV into ${targetBankName}!`, 'success');
-                selectSlot(baseTargetSlot);
+                currentBank = bankPrefix;
+                updateBankTabs();
+                selectSlot(baseTargetSlot, false);
                 renderPresetList();
             } catch (err) {
                 console.error("WAV tape decode error:", err);
@@ -6140,10 +6622,21 @@ function handleImportedFile(file) {
             if (j106 && j106.patches && j106.patches.length > 0) {
                 j106.patches.forEach((p, idx) => {
                     const targetSlot = baseTargetSlot + idx;
-                    if (targetSlot < 256) allPresets[targetSlot] = p;
+                    if (targetSlot < 256) {
+                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
+                        const subIdx = targetSlot % 64;
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
+                        p.name = `${pfix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                        p.isBlank = false;
+                        allPresets[targetSlot] = { ...p, ...encodeExtendedDefaults(p) };
+                    }
                 });
                 showToast(`Loaded ${j106.patches.length} patches from .106 library ("${j106.libName}") into User Bank! Factory presets preserved.`, 'success');
-                selectSlot(baseTargetSlot);
+                currentBank = bankPrefix;
+                updateBankTabs();
+                selectSlot(baseTargetSlot, false);
+                renderPresetList();
                 return;
             }
 
@@ -6154,25 +6647,28 @@ function handleImportedFile(file) {
                 try {
                     const tapePatches = decodeJunoTapeWav(buf);
                     if (tapePatches && tapePatches.length > 0) {
-                        const targetBankName = currentBank === 'UB' ? 'User Bank B' : 'User Bank A';
-                        const prefix = currentBank === 'UB' ? 'UB' : 'UA';
+                        const targetBankName = bankPrefix === 'UB' ? 'User Bank B' : 'User Bank A';
                         tapePatches.forEach((p, idx) => {
                             const targetSlot = baseTargetSlot + idx;
                             if (targetSlot < 256) {
+                                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
                                 const grp = Math.floor(idx / 8) + 1;
                                 const ptc = (idx % 8) + 1;
                                 const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
                                 allPresets[targetSlot] = {
-                                    name: `${prefix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
+                                    name: `${pfix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
                                     isBlank: false,
                                     sliders: p.sliders,
                                     sw1: p.sw1,
-                                    sw2: p.sw2
+                                    sw2: p.sw2,
+                                    ...encodeExtendedDefaults(p)
                                 };
                             }
                         });
                         showToast(`Loaded ${tapePatches.length} patches from Tape Cassette audio into ${targetBankName}!`, 'success');
-                        selectSlot(baseTargetSlot);
+                        currentBank = bankPrefix;
+                        updateBankTabs();
+                        selectSlot(baseTargetSlot, false);
                         renderPresetList();
                         return;
                     }
@@ -6181,17 +6677,39 @@ function handleImportedFile(file) {
                 return;
             }
             if (patches.length === 1) {
-                const targetSlot = selectedSlot >= 128 ? selectedSlot : 128;
-                allPresets[targetSlot] = patches[0].preset;
-                showToast(`Loaded single patch "${patches[0].preset.name}" into User slot ${indexToSlot(targetSlot)}`, 'success');
-                selectSlot(targetSlot);
+                const targetSlot = selectedSlot >= 128 ? selectedSlot : baseTargetSlot;
+                const pfix = targetSlot >= 192 ? 'UB' : 'UA';
+                const subIdx = targetSlot % 64;
+                const grp = Math.floor(subIdx / 8) + 1;
+                const ptc = (subIdx % 8) + 1;
+                const p = patches[0].preset;
+                p.name = `${pfix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                p.isBlank = false;
+                allPresets[targetSlot] = p;
+                showToast(`Loaded single patch "${p.name}" into User slot ${indexToSlot(targetSlot)}`, 'success');
+                currentBank = pfix;
+                updateBankTabs();
+                selectSlot(targetSlot, false);
+                renderPresetList();
             } else {
                 patches.forEach((item, idx) => {
                     const targetSlot = baseTargetSlot + idx;
-                    if (targetSlot < 256) allPresets[targetSlot] = item.preset;
+                    if (targetSlot < 256) {
+                        const pfix = targetSlot >= 192 ? 'UB' : 'UA';
+                        const subIdx = targetSlot % 64;
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
+                        const p = item.preset;
+                        p.name = `${pfix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                        p.isBlank = false;
+                        allPresets[targetSlot] = p;
+                    }
                 });
                 showToast(`Loaded ${patches.length} patches into User Bank! Factory presets preserved.`, 'success');
-                selectSlot(baseTargetSlot);
+                currentBank = bankPrefix;
+                updateBankTabs();
+                selectSlot(baseTargetSlot, false);
+                renderPresetList();
             }
         };
         reader.readAsArrayBuffer(file);
@@ -6205,40 +6723,133 @@ async function handleImportedFiles(files) {
         return;
     }
 
-    const baseTargetSlot = currentBank === 'UB' ? 192 : 128;
-    const targetBankName = currentBank === 'UB' ? 'User Bank B' : 'User Bank A';
-    const prefix = currentBank === 'UB' ? 'UB' : 'UA';
-    let pjunoxlCount = 0;
+    const targetBankSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
+    let baseTargetSlot = 128;
+    if (targetBankSel === 'UB') {
+        baseTargetSlot = 192;
+    } else if (targetBankSel === 'UA' || targetBankSel === 'both') {
+        baseTargetSlot = 128;
+    } else {
+        baseTargetSlot = currentBank === 'UB' ? 192 : 128;
+    }
 
-    for (let i = 0; i < files.length && i < 64; i++) {
-        const file = files[i];
+    let currentSlot = baseTargetSlot;
+    let importedTotal = 0;
+
+    for (let f = 0; f < files.length && currentSlot < 256; f++) {
+        const file = files[f];
         const fname = file.name.toLowerCase();
-        const targetSlot = baseTargetSlot + i;
-
-        if (fname.endsWith('.pjunoxl')) {
-            try {
+        try {
+            if (fname.endsWith('.json')) {
                 const text = await file.text();
-                const patch = parseTalPjunoxl(text);
-                if (patch) {
-                    const grp = Math.floor(i / 8) + 1;
-                    const ptc = (i % 8) + 1;
-                    patch.name = `${prefix}${grp}${ptc} ${patch.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
-                    patch.isBlank = false;
-                    allPresets[targetSlot] = patch;
-                    pjunoxlCount++;
+                const data = JSON.parse(text);
+                const list = Array.isArray(data) ? data : [data];
+                for (const p of list) {
+                    if (currentSlot >= 256) break;
+                    let norm = null;
+                    if (p.data && Array.isArray(p.data) && p.data.length >= 18) {
+                        norm = {
+                            name: p.name || 'Patch',
+                            sliders: p.data.slice(0, 16),
+                            sw1: p.data[16],
+                            sw2: p.data[17],
+                            ...encodeExtendedDefaults(p)
+                        };
+                    } else if (p.sliders && p.sliders.length === 16) {
+                        norm = { ...p, ...encodeExtendedDefaults(p) };
+                    }
+                    if (norm) {
+                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
+                        const subIdx = currentSlot % 64;
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
+                        norm.name = `${bankPrefix}${grp}${ptc} ${norm.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                        norm.isBlank = false;
+                        allPresets[currentSlot++] = norm;
+                        importedTotal++;
+                    }
                 }
-            } catch(e) {
-                console.warn("Could not read preset file:", file.name, e);
+            } else if (fname.endsWith('.pjunoxl')) {
+                const text = await file.text();
+                const p = parseTalPjunoxl(text);
+                if (p && currentSlot < 256) {
+                    const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
+                    const subIdx = currentSlot % 64;
+                    const grp = Math.floor(subIdx / 8) + 1;
+                    const ptc = (subIdx % 8) + 1;
+                    p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                    p.isBlank = false;
+                    allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                    importedTotal++;
+                }
+            } else if (fname.endsWith('.wav') || (file.type && file.type.includes('wav'))) {
+                const buf = await file.arrayBuffer();
+                const patches = decodeJunoTapeWav(buf);
+                if (patches && patches.length > 0) {
+                    for (const p of patches) {
+                        if (currentSlot >= 256) break;
+                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
+                        const subIdx = currentSlot % 64;
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
+                        const cleanName = p.name.replace(/^(?:Tape\s+Patch\s+\d\d|Tape\s+\d\d|U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s*/i, '').trim();
+                        allPresets[currentSlot++] = {
+                            name: `${bankPrefix}${grp}${ptc} ${cleanName || 'Tape Patch'}`,
+                            isBlank: false,
+                            sliders: p.sliders,
+                            sw1: p.sw1,
+                            sw2: p.sw2,
+                            ...encodeExtendedDefaults(p)
+                        };
+                        importedTotal++;
+                    }
+                }
+            } else {
+                const buf = await file.arrayBuffer();
+                const j106 = parseJ106Buffer(buf);
+                if (j106 && j106.patches && j106.patches.length > 0) {
+                    for (const p of j106.patches) {
+                        if (currentSlot >= 256) break;
+                        const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
+                        const subIdx = currentSlot % 64;
+                        const grp = Math.floor(subIdx / 8) + 1;
+                        const ptc = (subIdx % 8) + 1;
+                        p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                        p.isBlank = false;
+                        allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                        importedTotal++;
+                    }
+                } else {
+                    const syxPatches = parseSyxBuffer(buf);
+                    if (syxPatches && syxPatches.length > 0) {
+                        for (const item of syxPatches) {
+                            if (currentSlot >= 256) break;
+                            const bankPrefix = currentSlot >= 192 ? 'UB' : 'UA';
+                            const subIdx = currentSlot % 64;
+                            const grp = Math.floor(subIdx / 8) + 1;
+                            const ptc = (subIdx % 8) + 1;
+                            const p = item.preset;
+                            p.name = `${bankPrefix}${grp}${ptc} ${p.name.replace(/^(?:U?[AB]?[1-8][1-8]|UA[1-8][1-8]|UB[1-8][1-8])\s+/, '')}`.trim();
+                            p.isBlank = false;
+                            allPresets[currentSlot++] = { ...p, ...encodeExtendedDefaults(p) };
+                            importedTotal++;
+                        }
+                    }
+                }
             }
+        } catch (e) {
+            console.warn("Could not import file:", file.name, e);
         }
     }
 
-    if (pjunoxlCount > 0) {
-        showToast(`Loaded ${pjunoxlCount} preset(s) into ${targetBankName}!`, 'success');
-        selectSlot(baseTargetSlot);
+    if (importedTotal > 0) {
+        showToast(`Imported ${importedTotal} patch(es) into User Bank(s)!`, 'success');
+        currentBank = baseTargetSlot >= 192 ? 'UB' : 'UA';
+        updateBankTabs();
+        selectSlot(baseTargetSlot, false);
         renderPresetList();
     } else {
-        handleImportedFile(files[0]);
+        showToast("No valid presets found in selected files.", "error");
     }
 }
 
@@ -6260,16 +6871,18 @@ function exportSinglePatchSyx() {
     const p = readUIToPreset();
     const ch = getMidiChannel();
     const nameBytes = encodePatchName(p.name);
+    const extBytes = encodeExtendedParams(p);
     const bankOpt = Math.floor(selectedSlot / 64) + 1;
     const localSlot = selectedSlot % 64;
     const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
-    // Standard 40-byte extended SysEx
+    // 55-byte extended SysEx
     const bytes = [
         0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
         ...p.sliders,
         p.sw1,
         p.sw2,
         ...nameBytes,
+        ...extBytes,
         0xF7
     ];
     const blob = new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' });
@@ -6289,12 +6902,14 @@ function exportBankSyx() {
         const localSlot = i % 64;
         const chByte = ((bankOpt << 4) & 0x70) | (ch & 0x0F);
         const nameBytes = encodePatchName(p.name);
+        const extBytes = encodeExtendedParams(p);
         const msg = [
             0xF0, 0x41, 0x30, chByte, localSlot & 0x7F,
             ...p.sliders,
             p.sw1,
             p.sw2,
             ...nameBytes,
+            ...extBytes,
             0xF7
         ];
         allBytes.push(...msg);
@@ -6358,13 +6973,15 @@ function setupEventListeners() {
     document.getElementById('btn-load-template').addEventListener('click', () => {
         const sel = document.getElementById('select-bank-template').value;
         if (!sel) return;
-        const targetBank = currentBank === 'UB' ? 'UB' : 'UA';
-        loadBankTemplate(sel, targetBank);
+        const targetSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
+        loadBankTemplate(sel, targetSel);
     });
 
     document.getElementById('btn-clear-user').addEventListener('click', () => {
-        const targetBank = currentBank === 'UB' ? 'UB' : 'UA';
-        if (confirm(`Clear all 64 presets in ${targetBank} to blank empty sounds?`)) {
+        const targetSel = document.getElementById('select-bank-target') ? document.getElementById('select-bank-target').value : 'auto';
+        const targetBank = targetSel === 'auto' ? (currentBank === 'UB' ? 'UB' : 'UA') : targetSel;
+        const label = targetBank === 'both' ? 'Both User Banks (128 Patches)' : (targetBank === 'UB' ? 'User Bank B' : 'User Bank A');
+        if (confirm(`Clear all presets in ${label} to blank empty sounds?`)) {
             loadBankTemplate('blank', targetBank);
         }
     });
@@ -6392,14 +7009,113 @@ function setupEventListeners() {
     // MIDI Connection
     document.getElementById('btn-midi-connect').addEventListener('click', () => connectMIDI());
 
-    // Fader sliders
+    // Extended fader mapping (Engine param index, MIDI CC, Preset object key)
+    const EXT_FADER_MAP = {
+        'b-dco': { param: 0, cc: 33, key: 'b_dco' },
+        'b-vcf': { param: 1, cc: 34, key: 'b_vcf' },
+        'arp-rate': { param: 2, cc: 35, key: 'arp_rate' },
+        'tape-mix': { param: 37, cc: 26, key: 'tape_mix' },
+        'tape-rate': { param: 38, cc: 27, key: 'tape_rate' },
+        'tape-char': { param: 39, cc: 28, key: 'tape_char' },
+        'rev-mix': { param: 46, cc: 30, key: 'rev_mix' },
+        'rev-decay': { param: 47, cc: 31, key: 'rev_decay' },
+        'rev-shim': { param: 48, cc: 32, key: 'rev_shim' }
+    };
+
+    // Fader sliders (Standard 16 sliders + 9 Extended controls)
     const faderControls = document.querySelectorAll('.fader-control');
     faderControls.forEach(fc => {
-        const ctrlId = parseInt(fc.dataset.ctrl, 10);
+        const rawCtrl = fc.dataset.ctrl;
         const input = fc.querySelector('.fader-input');
+        if (!input) return;
         input.addEventListener('input', () => {
-            updateFaderCap(ctrlId, parseInt(input.value, 10));
-            sendIPR(ctrlId, parseInt(input.value, 10));
+            const val = parseInt(input.value, 10);
+            updateFaderCap(rawCtrl, val);
+            if (EXT_FADER_MAP[rawCtrl]) {
+                const mapping = EXT_FADER_MAP[rawCtrl];
+                sendParamChange(mapping.param, mapping.cc, val);
+                if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                    allPresets[selectedSlot][mapping.key] = val;
+                }
+            } else {
+                const ctrlId = parseInt(rawCtrl, 10);
+                sendIPR(ctrlId, val);
+                if (selectedSlot >= 128 && allPresets[selectedSlot] && allPresets[selectedSlot].sliders) {
+                    allPresets[selectedSlot].sliders[ctrlId] = val;
+                }
+            }
+        });
+    });
+
+    // Sub Wave Switch (SUBSW)
+    document.querySelectorAll('#sw-sub .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-sub', 'val', val);
+            sendParamChange(25, 21, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].sub_sw = val;
+            }
+        });
+    });
+
+    // Arpeggiator Switch (ARP)
+    document.querySelectorAll('#sw-arp-on .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-arp-on', 'val', val);
+            sendParamChange('arp_enable', null, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].arp_on = val;
+            }
+        });
+    });
+
+    // Arpeggiator Mode Switch (UP, U&D, DN)
+    document.querySelectorAll('#sw-arp-mode .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-arp-mode', 'val', val);
+            sendParamChange(30, 36, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].arp_mode = val;
+            }
+        });
+    });
+
+    // Arpeggiator Range Switch (1, 2, 3)
+    document.querySelectorAll('#sw-arp-range .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-arp-range', 'val', val);
+            sendParamChange(31, 37, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].arp_range = val;
+            }
+        });
+    });
+
+    // Vintage Tape Echo Switch (OFF, WARM, VINT, LO-FI)
+    document.querySelectorAll('#sw-tape-type .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-tape-type', 'val', val);
+            sendParamChange(36, 25, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].tape_type = val;
+            }
+        });
+    });
+
+    // Shimmer Reverb Switch (REV ON / OFF)
+    document.querySelectorAll('#sw-rev-on .switch-opt').forEach(opt => {
+        opt.addEventListener('click', () => {
+            const val = parseInt(opt.dataset.val, 10);
+            setSwitchGroupActive('sw-rev-on', 'val', val);
+            sendParamChange(45, 29, val);
+            if (selectedSlot >= 128 && allPresets[selectedSlot]) {
+                allPresets[selectedSlot].rev_on = val;
+            }
         });
     });
 
