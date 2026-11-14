@@ -125,8 +125,8 @@ static struct {
 #endif
 #if HALF_FRAMES > 128u           /* 256-frame halves: the band X0X measured for them */
 #define UA_PRIME (128u + UA_DEEP)
-#define UA_LO (96u + UA_DEEP)
-#define UA_HI (160u + UA_DEEP)
+#define UA_LO (64u + UA_DEEP)
+#define UA_HI (192u + UA_DEEP)
 #else
 #define UA_PRIME (104u + UA_DEEP)            /* silence ahead of the first rendered frame */
 #define UA_LO (80u + UA_DEEP)                /* a render may start late: keep a packet and more in hand */
@@ -139,8 +139,8 @@ static struct {
 #define UA_DEEP48 (UA_DEEP ? UA_REND48 : 0u)
 #if HALF_FRAMES > 128u
 #define UA_PRIME48 (140u + UA_DEEP48)
-#define UA_LO48 (105u + UA_DEEP48)
-#define UA_HI48 (174u + UA_DEEP48)
+#define UA_LO48 (70u + UA_DEEP48)
+#define UA_HI48 (210u + UA_DEEP48)
 #else
 #define UA_PRIME48 (113u + UA_DEEP48)
 #define UA_LO48 (87u + UA_DEEP48)
@@ -1346,7 +1346,7 @@ static __attribute__((noinline)) void uac_tap48(const int32_t *out, uint32_t n)
 {
     uint32_t w = ua_w, i, j, k = 0, h = rs.w, ph = rs.ph, rng = uac.dither_rng ? uac.dither_rng : 0x6D2B79F5u;
     uint8_t fade = uac.fade_in;
-    if (UA_N - (w - ua_r) < n + n / 8u + 2u) {         /* nobody reads: drop the block (<= n * 160 / 147 + 1) */
+    if (UA_N - (w - ua_r) < UA_REND48 + 2u) {           /* nobody reads: drop the block (<= UA_REND48) */
         uac.overruns++;
         return;
     }
@@ -1486,11 +1486,11 @@ static uint32_t uac_packet(uint32_t *d)
     }
     if (uac.fill_min > hi) {
         n++;
-        uac.fill_min--;                                 /* single-step rate feedback: avoid 6-packet bursts */
+        uac.fill_min = hi;                              /* single-step rate feedback: avoid 6-packet bursts */
         uac.adj_up++;
     } else if (uac.fill_min < lo && uac.fill_min > 0u) {
         n--;
-        uac.fill_min++;
+        uac.fill_min = lo;
         uac.adj_down++;
     }
     r = ua_r;
