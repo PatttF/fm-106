@@ -882,36 +882,40 @@
                     <li><span class="btn-badge amber">PLAY</span>: Start or pause the sequencer playback.</li>
                     <li><span class="btn-badge red">REC</span>: Toggle record-arm. Pressing PLAY while armed begins a 4-beat visual metronome count-in (<code>CNT</code>), then records notes and lengths in real-time.</li>
                     <li><span class="btn-badge">SELECT (Turn)</span>: Scroll the piano roll viewport through all 128 steps.</li>
-                    <li><span class="btn-badge">SELECT (Tap)</span>: Clear the note on the currently selected step.</li>
+                    <li><span class="btn-badge">SELECT (Tap)</span>: Clear the note on the currently selected step (and automatically cleans up any associated forward ties).</li>
                     <li><span class="btn-badge">SELECT (Hold 500ms)</span>: Clear all steps in the sequence.</li>
-                    <li><span class="btn-badge red">EDIT (Tap)</span>: Open <strong>Step Note Options</strong> for the selected step.</li>
-                    <li><span class="btn-badge red">EDIT (Hold 500ms)</span>: Open <strong>Sequencer Global Options</strong>.</li>
+                    <li><span class="btn-badge amber">SEQ (Tap)</span>: Cycle between <strong>Step Note Options</strong> &rarr; <strong>Sequencer Global Options</strong> &rarr; <strong>Piano Roll</strong>.</li>
+                    <li><span class="btn-badge red">EDIT (Tap)</span>: Step to next sound page (loops back to Page 1 VCF after Sequencer).</li>
                     <li><span class="btn-badge amber">ENV</span>: Toggle <strong>Slide (Portamento)</strong> flag on current step.</li>
                     <li><span class="btn-badge">LFO</span>: Toggle <strong>Accent</strong> flag on current step.</li>
-                    <li><strong>Knobs 1..4:</strong> Directly tweak <code>STEP</code>, <code>NOTE</code>, <code>GATE</code>, and <code>VEL</code> for the current step.</li>
+                    <li><strong>Knobs 1..4:</strong> Directly tweak <code>STEP</code>, <code>NOTE</code>, <code>GATE</code>, and <code>VEL</code> for the current step (dialing VEL to 0 removes note and associated ties).</li>
                 </ul>
             </div>
 
-            <h3>Step Note Options Menu (Tap EDIT)</h3>
+            <h3>Step Note Options Menu (1st Press of SEQ)</h3>
             <p>
-                Highlight any step in the piano roll and tap <span class="btn-badge red">EDIT</span> to configure advanced step attributes:
+                From the piano roll, tap <span class="btn-badge amber">SEQ</span> to enter Step Note Options and configure advanced attributes for the highlighted step:
             </p>
             <ul>
-                <li><strong>RATCHET (1..4):</strong> Subdivides the step into up to 4 rapid micro-triggers (burst rolls / trap ratchets).</li>
-                <li><strong>TIE (ON/OFF):</strong> Ties the step note to the subsequent step, creating legato phrases without re-triggering envelopes.</li>
+                <li><strong>RATCHET (1..8):</strong> Subdivides the step into rapid micro-triggers (burst rolls / trap ratchets).</li>
+                <li><strong>TIE (ON/OFF):</strong> Ties the step note to the subsequent step, creating legato phrases without re-triggering envelopes. Turning off a tie automatically cleans up downstream ties.</li>
                 <li><strong>ACCENT (ON/OFF):</strong> Increases velocity and filter envelope depth for aggressive Roland TB-303-style punch.</li>
                 <li><strong>SLIDE (ON/OFF):</strong> Glides pitch smoothly from the current note to the next step.</li>
                 <li><strong>PROB (0%..100%, MUTE):</strong> Sets the firing probability of the step for generative, ever-evolving rhythms.</li>
                 <li><strong>P-LOCKS:</strong> Displays the count of automated parameter locks assigned to this specific step.</li>
             </ul>
 
-            <h3>Sequencer Global Options Menu (Hold EDIT 500ms)</h3>
+            <h3>Sequencer Global Options Menu (2nd Press of SEQ)</h3>
+            <p>
+                Tap <span class="btn-badge amber">SEQ</span> again to advance to global pattern settings:
+            </p>
             <ul>
                 <li><strong>STEPS (1..128):</strong> Set the loop pattern length.</li>
                 <li><strong>BPM (40..240):</strong> Adjust playback tempo (also syncable to external MIDI clock).</li>
                 <li><strong>DIV:</strong> Clock division (1/4, 1/8, 1/16, 1/32, triplets).</li>
                 <li><strong>GATE (8..128):</strong> Default gate length percentage.</li>
                 <li><strong>SWING (0..100%):</strong> MPC-style groove swing.</li>
+                <li><strong>REC (ON/OFF):</strong> Arm live recording overdub.</li>
                 <li><strong>DUP BARS:</strong> Automatically duplicates your active bars to double the pattern length.</li>
                 <li><strong>CLR ALL:</strong> Instantly resets all steps and parameter locks.</li>
             </ul>
